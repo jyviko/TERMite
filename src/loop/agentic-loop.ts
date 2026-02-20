@@ -52,6 +52,9 @@ export class AgenticLoop {
         break;
       }
 
+      // Report token usage
+      yield { type: "usage", input: response.usage.input, output: response.usage.output };
+
       // Extract text blocks
       for (const block of response.content) {
         if (block.type === "text") {

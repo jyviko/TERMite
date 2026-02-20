@@ -9,12 +9,14 @@
     "test:watch": "vitest",
     "sim": "tsx src/cli/sim.ts",
     "live": "tsx src/cli/live.ts",
-    "arena": "tsx src/cli/arena.ts"
+    "arena": "tsx src/cli/arena.ts",
+    "dash": "tsx src/cli/dashboard.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0"
+    "@anthropic-ai/sdk": "^0.71.2"
   },
   "devDependencies": {
+    "@types/node": "^25.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

@@ -53,8 +53,9 @@ describe("AgenticLoop", () => {
       }),
     );
 
-    expect(events).toHaveLength(1);
-    expect(events[0]!.type).toBe("text");
+    expect(events).toHaveLength(2);
+    expect(events[0]!.type).toBe("usage");
+    expect(events[1]!.type).toBe("text");
   });
 
   it("loops with tool calls and results", async () => {

@@ -89,7 +89,11 @@ export class OrganismStateMachine {
     })) {
       yield event;
 
-      // Track energy cost from brain responses
+      // Burn energy for API usage
+      if (event.type === "usage") {
+        this.state.energy.burn("forage", event.input + event.output);
+      }
+
       if (event.type === "error") break;
 
       // Check if transition was requested
@@ -186,6 +190,11 @@ export class OrganismStateMachine {
       energy: this.state.energy,
     });
 
+    // Burn resolve cost
+    if (result.usage > 0) {
+      this.state.energy.burn("resolve", result.usage);
+    }
+
     // Compute income
     const income = computeIncome(result.goalRelevance, result.outcome, this.questReward);
     if (income.amount > 0) {
@@ -199,6 +208,7 @@ export class OrganismStateMachine {
       result.outcome,
       income.amount,
       income.sources.join(", "),
+      result.goalRelevance,
     );
 
     yield {
@@ -207,7 +217,7 @@ export class OrganismStateMachine {
     };
 
     // Memorize
-    await this.memorizer.memorize({
+    const memorizeUsage = await this.memorizer.memorize({
       genome: this.state.genome,
       memories: this.state.memories,
       lesson: result.lesson,
@@ -216,6 +226,9 @@ export class OrganismStateMachine {
       actions,
       energy: this.state.energy,
     });
+    if (memorizeUsage > 0) {
+      this.state.energy.burn("memorize", memorizeUsage);
+    }
 
     // Update BMR based on memory cost
     this.state.energy.computeBmr(this.state.memories.totalTokenCost);

@@ -49,6 +49,7 @@ export interface CycleRecord {
   net: number;
   outcome: Outcome | null;
   incomeSources: string;
+  goalRelevance: number;
 }
 
 export interface Genome {
@@ -140,5 +141,6 @@ export type AgentEvent =
   | { type: "tool_use"; name: string; input: Record<string, unknown> }
   | { type: "tool_start"; name: string }
   | { type: "tool_result"; name: string; result: string }
+  | { type: "usage"; input: number; output: number }
   | { type: "error"; message: string }
   | { type: "state_change"; from: OrganismMode; to: OrganismMode };

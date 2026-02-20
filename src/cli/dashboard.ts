@@ -1,0 +1,364 @@
+/**
+ * TERMITE Arena Dashboard — live terminal monitor.
+ *
+ * Reads organism state files and displays real-time status.
+ * Run alongside the arena:
+ *
+ *     yarn arena --organisms 3 --budget 300000 &
+ *     yarn dash
+ *
+ * 1:1 port of the Python curses dashboard.
+ */
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { parseArgs } from "node:util";
+
+const { values } = parseArgs({
+  options: {
+    workspace: { type: "string", default: "./arena-workspace" },
+    interval: { type: "string", default: "1500" },
+  },
+});
+
+const SAVES_DIR = values.workspace ?? "./arena-workspace";
+const REFRESH_INTERVAL = parseInt(values.interval ?? "1500", 10);
+
+const SPARK = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588";
+const MIN_COL_W = 28;
+const CARD_ROWS = 14;
+
+// ── ANSI color codes (match curses color pairs) ────────────────────
+const RST = "\x1b[0m";
+const BOLD = "\x1b[1m";
+const GREEN = "\x1b[32m";
+const RED = "\x1b[31m";
+const YELLOW = "\x1b[33m";
+const CYAN = "\x1b[36m";
+const MAG = "\x1b[35m";
+
+// ── Helpers (identical to Python) ──────────────────────────────────
+function sparkline(vals: number[], width = 12): string {
+  if (vals.length === 0) return "";
+  const sl = vals.slice(-width);
+  const lo = Math.min(...sl);
+  const hi = Math.max(...sl);
+  const spread = hi !== lo ? hi - lo : 1;
+  return sl.map((v) => SPARK[Math.min(7, Math.floor(((v - lo) / spread) * 7))]).join("");
+}
+
+function pctBar(current: number, maximum: number, width = 10): string {
+  if (maximum <= 0) return "\u2591".repeat(width);
+  const ratio = Math.max(0, Math.min(1, current / maximum));
+  const filled = Math.floor(ratio * width);
+  return "\u2588".repeat(filled) + "\u2591".repeat(width - filled);
+}
+
+function fmt(n: number): string {
+  return n.toLocaleString();
+}
+
+function fmtSigned(n: number): string {
+  return (n > 0 ? "+" : "") + n.toLocaleString();
+}
+
+// ── Terminal primitives ────────────────────────────────────────────
+function getSize(): [number, number] {
+  return [process.stdout.rows ?? 24, process.stdout.columns ?? 80];
+}
+
+function moveTo(row: number, col: number): string {
+  return `\x1b[${row + 1};${col + 1}H`;
+}
+
+/** Safe write — clips to screen bounds like curses addnstr */
+function safe(buf: string[], row: number, col: number, text: string, color = ""): void {
+  const [h, w] = getSize();
+  if (row < 0 || row >= h || col >= w) return;
+  const maxLen = w - col;
+  // Strip ANSI to measure visible length
+  const visible = text.replace(/\x1b\[[0-9;]*m/g, "");
+  let out = text;
+  if (visible.length > maxLen) {
+    let vis = 0;
+    let cut = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === "\x1b") {
+        const end = text.indexOf("m", i);
+        if (end !== -1) { i = end; continue; }
+      }
+      vis++;
+      if (vis >= maxLen) { cut = i + 1; break; }
+    }
+    out = text.slice(0, cut);
+  }
+  buf.push(`${moveTo(row, col)}${color}${out}${RST}`);
+}
+
+// ── Data loading ───────────────────────────────────────────────────
+interface OrgData {
+  // camelCase (TS state) with fallbacks to snake_case (Python state)
+  [key: string]: unknown;
+}
+
+function loadOrganisms(): OrgData[] {
+  if (!existsSync(SAVES_DIR)) return [];
+  const organisms: OrgData[] = [];
+  for (const entry of readdirSync(SAVES_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === "shared") continue;
+    const statePath = join(SAVES_DIR, entry.name, "workspace", "state.json");
+    try {
+      organisms.push(JSON.parse(readFileSync(statePath, "utf-8")));
+    } catch {
+      // Not written yet
+    }
+  }
+  return organisms.sort((a, b) => {
+    const aid = String(a.id ?? a.organism_id ?? "");
+    const bid = String(b.id ?? b.organism_id ?? "");
+    return aid.localeCompare(bid);
+  });
+}
+
+function loadGoalBoard(): OrgData[] {
+  const boardPath = join(SAVES_DIR, "shared", "_goal_board.json");
+  try {
+    const data = JSON.parse(readFileSync(boardPath, "utf-8"));
+    return Array.isArray(data.goals) ? data.goals : [];
+  } catch {
+    return [];
+  }
+}
+
+// Field accessors — handle both camelCase and snake_case
+function g(obj: OrgData, ...keys: string[]): unknown {
+  for (const k of keys) {
+    if (obj[k] !== undefined) return obj[k];
+  }
+  return undefined;
+}
+
+function gn(obj: OrgData, ...keys: string[]): number {
+  const v = g(obj, ...keys);
+  return typeof v === "number" ? v : 0;
+}
+
+function gs(obj: OrgData, ...keys: string[]): string {
+  const v = g(obj, ...keys);
+  return typeof v === "string" ? v : "";
+}
+
+// ── Card renderer (matches Python draw_card exactly) ───────────────
+function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: number): void {
+  let r = r0;
+
+  // Row 0: organism ID (8 chars, like Python)
+  const oid = gs(org, "id", "organism_id").slice(0, 8) || "?";
+  safe(buf, r, c0, ` [${oid}]`, BOLD);
+  r++;
+
+  // Row 1: separator
+  safe(buf, r, c0, "─".repeat(colW - 1), CYAN);
+  r++;
+
+  // Row 2: alive / dead
+  const alive = Boolean(g(org, "alive"));
+  if (alive) {
+    safe(buf, r, c0, " \u25cf ALIVE", `${GREEN}${BOLD}`);
+  } else {
+    const cause = gs(org, "causeOfDeath", "cause_of_death") || "?";
+    safe(buf, r, c0, ` \u2717 ${cause}`.slice(0, colW - 1), RED);
+  }
+  r++;
+
+  // Row 3: cycle + genome version
+  const cyc = gn(org, "cycleCount", "cycle_count");
+  const genome = (g(org, "genome") ?? {}) as OrgData;
+  const gv = gn(genome, "version");
+  safe(buf, r, c0, ` Cyc ${cyc}  v${gv}`);
+  r++;
+
+  // Row 4: energy bar + reserves
+  const e = (g(org, "energy") ?? {}) as OrgData;
+  const res = gn(e, "reserves");
+  const cap = gn(e, "capacity") || 1;
+  const pct = Math.floor((res / cap) * 100);
+  const ec = pct > 40 ? GREEN : pct > 15 ? YELLOW : RED;
+  safe(buf, r, c0, ` ${String(pct).padStart(3)}% ${pctBar(res, cap, 10)}`, ec);
+  safe(buf, r, c0 + 17, `${fmt(res)}`.slice(0, colW - 18), ec);
+  r++;
+
+  // Row 5: capacity + BMR
+  safe(buf, r, c0, ` Cap=${fmt(cap)} BMR=${gn(e, "bmr")}`);
+  r++;
+
+  // Row 6-7: last cycle cost/income/net/yield
+  const ch = (g(org, "energy") as OrgData)?.cycleHistory ?? (g(org, "energy") as OrgData)?.cycle_history;
+  const history = Array.isArray(ch) ? ch as OrgData[] : [];
+  if (history.length > 0) {
+    const last = history[history.length - 1]!;
+    const ln = gn(last, "net");
+    const nc = ln >= 0 ? GREEN : RED;
+    const yld = gn(last, "goalRelevance", "goal_relevance");
+    safe(buf, r, c0, ` c=${fmt(gn(last, "cost"))} i=${fmt(gn(last, "income"))}`);
+    r++;
+    safe(buf, r, c0, ` net=${fmtSigned(ln)} yield=${yld.toFixed(2)}`, nc);
+  } else {
+    r++;
+  }
+  r++;
+
+  // Row 8: averages over last 10
+  if (history.length >= 2) {
+    const sl = history.slice(-10);
+    const ac = sl.reduce((s, x) => s + gn(x, "cost"), 0) / sl.length;
+    const ai = sl.reduce((s, x) => s + gn(x, "income"), 0) / sl.length;
+    const an = ai - ac;
+    const nc = an >= 0 ? GREEN : RED;
+    safe(buf, r, c0, ` Avg: ${ac.toFixed(0)}/${ai.toFixed(0)}`, nc);
+  }
+  r++;
+
+  // Row 9: sparkline
+  if (history.length > 0) {
+    const nets = history.map((x) => gn(x, "net"));
+    safe(buf, r, c0, ` ${sparkline(nets, colW - 4)}`, YELLOW);
+  }
+  r++;
+
+  // Row 10: lifetime balance
+  const lifetime = gn(e, "earned") - gn(e, "spent");
+  const lc = lifetime >= 0 ? GREEN : RED;
+  safe(buf, r, c0, ` Life: ${fmtSigned(lifetime)}`, lc);
+  r++;
+
+  // Row 11: tool registry
+  const tools = g(org, "tool_registry", "toolRegistry");
+  if (Array.isArray(tools) && tools.length > 0) {
+    const names = tools.map((t: OrgData) => gs(t, "name")).join(", ");
+    safe(buf, r, c0, ` T: ${names}`.slice(0, colW - 1), MAG);
+  } else {
+    safe(buf, r, c0, " T: none");
+  }
+  r++;
+
+  // Row 12: memories + drives
+  const mems = g(org, "memories");
+  const memCount = Array.isArray(mems) ? mems.length : 0;
+  const drives = (g(org, "drives") ?? {}) as OrgData;
+  const parts: string[] = [];
+  for (const [name, d] of Object.entries(drives)) {
+    if (d && typeof d === "object" && d !== null) {
+      const lv = (d as OrgData).level;
+      if (typeof lv === "number") {
+        parts.push(`${name[0]!.toUpperCase()}${lv.toFixed(1)}`);
+      }
+    }
+  }
+  safe(buf, r, c0, ` M:${memCount} ${parts.join(" ")}`.slice(0, colW - 1));
+  r++;
+
+  // Row 13: bottom separator
+  safe(buf, r, c0, "─".repeat(colW - 1), CYAN);
+}
+
+// ── Main render (matches Python draw exactly) ──────────────────────
+function render(): string {
+  const [height, width] = getSize();
+  const buf: string[] = [];
+
+  // Clear
+  buf.push("\x1b[2J\x1b[H");
+
+  const orgs = loadOrganisms();
+
+  // Global stats
+  const totalSpent = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as OrgData, "spent"), 0);
+  const totalEarned = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as OrgData, "earned"), 0);
+  const nAlive = orgs.filter((o) => Boolean(g(o, "alive"))).length;
+
+  // Goal board
+  const goals = loadGoalBoard();
+  const nOpen = goals.filter((g) => g.status === "open").length;
+  const nClaimed = goals.filter((g) => g.status === "claimed").length;
+  const nCompleted = goals.filter((g) => g.status === "completed").length;
+  const totalBounty = goals
+    .filter((g) => g.status === "open" || g.status === "claimed")
+    .reduce((s, g) => s + (typeof g.bounty === "number" ? g.bounty : 0), 0);
+
+  // Row 0: header
+  safe(buf, 0, 0, " TERM ARENA ", `${BOLD}${CYAN}`);
+  safe(buf, 0, 13, `Spent:${fmt(totalSpent)}  Earned:${fmt(totalEarned)}  Net:${fmtSigned(totalEarned - totalSpent)}`);
+  const timeStr = new Date().toTimeString().slice(0, 8);
+  safe(buf, 0, width - 20, `${nAlive}/${orgs.length} alive  ${timeStr}`, CYAN);
+
+  // Row 1: bounty board
+  if (goals.length > 0) {
+    safe(buf, 1, 0, ` Bounties: ${nOpen} open  ${nClaimed} claimed  ${nCompleted} done  (${fmt(totalBounty)}e locked)`, YELLOW);
+  }
+
+  // Empty state
+  if (orgs.length === 0) {
+    safe(buf, 3, 2, `Waiting for organisms... (${SAVES_DIR})`, YELLOW);
+    safe(buf, height - 1, 0, ` [q] quit`, CYAN);
+    return buf.join("");
+  }
+
+  // Grid layout
+  const n = orgs.length;
+  const nCols = Math.max(1, Math.floor(width / MIN_COL_W));
+  const nGridRows = Math.ceil(n / nCols);
+  const colW = Math.floor(width / nCols);
+
+  for (let idx = 0; idx < n; idx++) {
+    const gridR = Math.floor(idx / nCols);
+    const gridC = idx % nCols;
+    const r0 = 3 + gridR * CARD_ROWS;
+    const c0 = gridC * colW;
+
+    if (r0 + CARD_ROWS > height - 1) {
+      safe(buf, height - 2, 0, ` +${n - idx} more organisms (resize terminal)`, YELLOW);
+      break;
+    }
+
+    drawCard(buf, orgs[idx]!, r0, c0, colW);
+  }
+
+  // Footer
+  safe(buf, height - 1, 0, ` [q] quit  ${n} organisms  ${nCols}x${nGridRows} grid`, CYAN);
+
+  return buf.join("");
+}
+
+// ── Main loop ──────────────────────────────────────────────────────
+function tick(): void {
+  process.stdout.write(render());
+}
+
+// Raw mode for 'q' to quit (matches curses getch behavior)
+if (process.stdin.isTTY) {
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding("utf-8");
+  process.stdin.on("data", (key: string) => {
+    if (key === "q" || key === "Q" || key === "\x03") {
+      cleanup();
+    }
+  });
+}
+
+function cleanup(): void {
+  clearInterval(timer);
+  process.stdout.write("\x1b[?25h" + RST + "\n");
+  process.exit(0);
+}
+
+// Hide cursor
+process.stdout.write("\x1b[?25l");
+
+tick();
+const timer = setInterval(tick, REFRESH_INTERVAL);
+
+process.on("SIGINT", cleanup);
+process.on("exit", () => {
+  process.stdout.write("\x1b[?25h" + RST);
+});

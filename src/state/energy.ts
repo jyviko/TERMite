@@ -48,14 +48,15 @@ export class EnergyLedger {
     this.burn("bmr", this.bmr);
   }
 
-  endCycle(cycle: number, outcome: Outcome | null, income: number, sources: string): void {
+  endCycle(cycle: number, outcome: Outcome | null, income: number, sources: string, goalRelevance = 0): void {
     this.cycleHistory.push({
       cycle,
       cost: this.cycleCost,
-      income: this.cycleIncome,
-      net: this.cycleIncome - this.cycleCost,
+      income,
+      net: income - this.cycleCost,
       outcome,
       incomeSources: sources,
+      goalRelevance,
     });
     this.cycleCost = 0;
     this.cycleIncome = 0;

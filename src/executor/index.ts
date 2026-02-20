@@ -1,5 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 
 interface ExecutorConfig {
   workingDir?: string;
@@ -33,7 +34,7 @@ export class Executor {
 
   constructor(config?: ExecutorConfig) {
     this.config = {
-      workingDir: config?.workingDir ?? process.cwd() + "/workspace",
+      workingDir: resolve(config?.workingDir ?? process.cwd() + "/workspace"),
       image: config?.image ?? "termite-body",
       containerName: config?.containerName ?? `termite-${randomUUID().slice(0, 8)}`,
     };
@@ -74,7 +75,7 @@ export class Executor {
     // Open pipe to body agent via docker exec
     this.process = spawn("docker", [
       "exec", "-i", this.config.containerName,
-      "node", "/agent/body-agent.js",
+      "tsx", "/agent/body-agent.ts",
     ], { stdio: ["pipe", "pipe", "pipe"] });
 
     this.process.stdout!.on("data", (chunk: Buffer) => {

@@ -1,5 +1,8 @@
 import { parseArgs } from "node:util";
+import { loadEnv } from "./env.js";
 import { Arena } from "../arena/arena.js";
+
+loadEnv();
 
 const { values } = parseArgs({
   options: {
@@ -15,7 +18,7 @@ async function main() {
   const organismCount = parseInt(values.organisms ?? "3", 10);
   const totalBudget = parseInt(values.budget ?? "500000", 10);
 
-  console.log(`=== TERMITE ARENA ===`);
+  console.log(`=== TERM-ITE ARENA ===`);
   console.log(`Organisms: ${organismCount} | Budget: ${totalBudget}`);
 
   const arena = new Arena({
@@ -23,7 +26,7 @@ async function main() {
     totalBudget,
     workspaceRoot: values.workspace ?? "./arena-workspace",
     apiKey: values["api-key"] ?? process.env.ANTHROPIC_API_KEY,
-    baseUrl: values["base-url"],
+    baseUrl: values["base-url"] ?? process.env.ANTHROPIC_BASE_URL,
   });
 
   const shutdown = async () => {

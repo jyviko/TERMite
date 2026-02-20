@@ -9,6 +9,7 @@ export interface ResolveResult {
   lesson: string;
   goalRelevance: number;
   goalComplete: boolean;
+  usage: number;
 }
 
 const FALLBACK_RESULT: ResolveResult = {
@@ -16,6 +17,7 @@ const FALLBACK_RESULT: ResolveResult = {
   lesson: "",
   goalRelevance: 0,
   goalComplete: false,
+  usage: 0,
 };
 
 export class Resolver {
@@ -42,8 +44,9 @@ export class Resolver {
       });
 
       const text = extractText(response.content);
+      const usage = response.usage.input + response.usage.output;
 
-      return parseResolveResponse(text);
+      return { ...parseResolveResponse(text), usage };
     } catch {
       return FALLBACK_RESULT;
     }

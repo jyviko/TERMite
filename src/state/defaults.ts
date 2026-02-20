@@ -39,7 +39,7 @@ Calibration:
 - 0.8: Substantial advancement
 - 1.0: Goal completed`;
 
-export const DEFAULT_MEMORIZE_PROMPT = `You are the organism's reflective mind. After each action burst, decide what to learn.
+export const DEFAULT_MEMORIZE_PROMPT = `You are the organism's reflective mind. After each action burst, decide what to learn and how to evolve.
 
 Recent actions: {actions}
 Lesson from evaluation: {lesson}
@@ -63,13 +63,13 @@ Respond with JSON. All fields optional:
   "mutate": {"target": "systemPrompt|resolvePrompt|restPrompt|memorizePrompt", "newPrompt": "..."}
 }
 
-Rules:
-- Only store what's worth the token cost to recall
+Guidelines:
+- Store what's worth the token cost to recall
 - Forget memories that are redundant or proven wrong
 - Compress verbose memories into dense ones
 - Consolidate related memories into single insights
-- Mutate prompts ONLY if you have clear evidence the current prompt is wrong
-- A bad mutation can kill the organism. Mutate carefully.`;
+- Evolve your prompts. If you see a pattern — a better strategy, a sharper framing, a more efficient approach — mutate. Organisms that adapt survive. Organisms that stay static stagnate.
+- You can mutate any prompt including this one. Small refinements compound over generations.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   forage: { model: "claude-haiku-4-5-20251001", maxTokens: 2048 },

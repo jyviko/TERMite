@@ -42,9 +42,11 @@ export class Brain {
   private client: Anthropic;
 
   constructor(config: BrainConfig = {}) {
+    const baseURL = config.baseUrl ?? process.env.ANTHROPIC_BASE_URL;
+    console.log(`[Brain] baseURL=${baseURL ?? "(default)"}`);
     this.client = new Anthropic({
-      apiKey: config.baseUrl ? undefined : config.apiKey,
-      baseURL: config.baseUrl,
+      defaultHeaders: { 'X-Api-Key': null },  
+      baseURL,
       timeout: config.timeout ?? 120_000,
     });
   }

@@ -1,5 +1,8 @@
 import { parseArgs } from "node:util";
+import { loadEnv } from "./env.js";
 import { Brain } from "../brain/index.js";
+
+loadEnv();
 import { Executor } from "../executor/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
 import { OrganismStateMachine } from "../loop/state-machine.js";
@@ -19,7 +22,7 @@ const budget = parseInt(values.budget ?? "100000", 10);
 async function main() {
   const brain = new Brain({
     apiKey: values["api-key"] ?? process.env.ANTHROPIC_API_KEY,
-    baseUrl: values["base-url"],
+    baseUrl: values["base-url"] ?? process.env.ANTHROPIC_BASE_URL,
   });
 
   const executor = new Executor();
