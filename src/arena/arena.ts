@@ -39,8 +39,27 @@ export interface ArenaConfig {
   poolMaxBalance?: number;
 }
 
+// ANSI color palette for per-organism log coloring
+const ORG_COLORS = [
+  "\x1b[36m",  // cyan
+  "\x1b[33m",  // yellow
+  "\x1b[35m",  // magenta
+  "\x1b[32m",  // green
+  "\x1b[34m",  // blue
+  "\x1b[91m",  // bright red
+  "\x1b[96m",  // bright cyan
+  "\x1b[93m",  // bright yellow
+  "\x1b[95m",  // bright magenta
+  "\x1b[92m",  // bright green
+  "\x1b[94m",  // bright blue
+  "\x1b[97m",  // bright white
+] as const;
+const RESET = "\x1b[0m";
+const DIM = "\x1b[2m";
+
 export class Arena {
   private organisms = new Map<string, OrganismEntry>();
+  private organismColors = new Map<string, string>();
   private brain: Brain;
   private sharedBudget: SharedBudget;
   private teqPool: TEQPool;
@@ -195,6 +214,7 @@ export class Arena {
     };
 
     this.organisms.set(id, entry);
+    this.organismColors.set(id, ORG_COLORS[(this.spawnIndex - 1) % ORG_COLORS.length]!);
     return id;
   }
 
@@ -210,7 +230,7 @@ export class Arena {
         }
 
         // Check task completion periodically
-        if (event.type === "tool_result" && event.name === "check_task") {
+        if (event.type === "tool_result" && event.name === "check") {
           if (entry.graduated) {
             // Post-graduation: rate open work instead of verifying tasks
             await this.rateGraduateWork(id, entry);
@@ -424,22 +444,23 @@ export class Arena {
   }
 
   private logEvent(id: string, mode: string, event: AgentEvent): void {
-    const prefix = `[${id}] [${mode.toUpperCase()}]`;
+    const c = this.organismColors.get(id) ?? "";
+    const prefix = `${c}[${id}]${RESET} ${c}[${mode.toUpperCase()}]${RESET}`;
     switch (event.type) {
       case "text":
-        console.log(`${prefix} ${event.text.slice(0, 200)}`);
+        console.log(`${prefix} ${DIM}${event.text.slice(0, 200)}${RESET}`);
         break;
       case "tool_start":
-        console.log(`${prefix} → ${event.name}`);
+        console.log(`${prefix} ${c}→${RESET} ${event.name}`);
         break;
       case "tool_result":
-        console.log(`${prefix} ← ${event.name}: ${event.result.slice(0, 100)}`);
+        console.log(`${prefix} ${c}←${RESET} ${event.name}: ${DIM}${event.result.slice(0, 100)}${RESET}`);
         break;
       case "state_change":
-        console.log(`${prefix} ${event.from} → ${event.to}`);
+        console.log(`${prefix} ${event.from} ${c}→${RESET} ${event.to}`);
         break;
       case "error":
-        console.error(`${prefix} ERROR: ${event.message}`);
+        console.error(`${prefix} \x1b[31mERROR: ${event.message}${RESET}`);
         break;
     }
   }

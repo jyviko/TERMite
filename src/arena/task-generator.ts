@@ -86,10 +86,30 @@ else:
 
 interface TaskTemplate {
   title: string;
-  description: string;
   verifyScript: string;
   dataGenerator?: () => Record<string, string>;
 }
+
+// Developer reference only — not shown to organisms.
+// Organism discovers what to do by reading data files and the check tool.
+const _TASK_NOTES: Record<string, string> = {
+  "Hello World": "Write greeting.txt with 'Hello, World!'",
+  "Count Lines": "Count lines in numbers.txt → count.txt",
+  "Sum Numbers": "Sum integers in numbers.txt → sum.txt",
+  "Sort Numbers": "Sort numbers ascending → sorted.txt",
+  "Extract Emails": "Extract emails from contacts.txt → emails.txt sorted",
+  "Find Duplicates": "Find duplicate numbers → duplicates.txt sorted",
+  "Parse Error Logs": "Extract timestamps from 500+ status lines → errors.txt",
+  "Top Words": "Top 10 most frequent words (case-insensitive) → top10.txt",
+  "IP Frequency": "Count IP occurrences → ip_counts.csv",
+  "Sales Totals": "Aggregate amount by product+region → totals.csv",
+  "Moving Average": "7-day moving average → moving_avg.csv",
+  "Join and Aggregate": "Join orders+customers, revenue by region → region_revenue.csv",
+  "HTTP Health Server": "server.js on :8080, GET /health → 'ok'",
+  "CSV API Server": "server.js on :8080, POST/GET /data with CSV + sort",
+  "Log Processor Pipeline": "process.sh → report.json with level/service counts + error_rate",
+};
+void _TASK_NOTES; // suppress unused warning
 
 // Expected TEQ cost for a code-writing organism. Used by efficiency bonus.
 export const TIER_EXPECTED_COST: Record<number, number> = {
@@ -332,8 +352,6 @@ const TIER_TEMPLATES: Record<number, TaskTemplate[]> = {
   1: [
     {
       title: "Hello World",
-      description:
-        'Write a file at /workspace/output/greeting.txt containing exactly: Hello, World!',
       verifyScript: `#!/bin/bash
 EXPECTED="Hello, World!"
 ACTUAL=$(cat /workspace/output/greeting.txt 2>/dev/null)
@@ -341,8 +359,6 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expec
     },
     {
       title: "Count Lines",
-      description:
-        "Count the lines in /workspace/data/numbers.txt and write the count to /workspace/output/count.txt",
       verifyScript: `#!/bin/bash
 EXPECTED=$(wc -l < /workspace/data/numbers.txt | tr -d ' ')
 ACTUAL=$(cat /workspace/output/count.txt 2>/dev/null | tr -d '[:space:]')
@@ -353,8 +369,6 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expec
     },
     {
       title: "Sum Numbers",
-      description:
-        "Compute the sum of all numbers in /workspace/data/numbers.txt (one integer per line) and write the result to /workspace/output/sum.txt",
       verifyScript: `#!/bin/bash
 EXPECTED=$(awk '{s+=$1} END {print s}' /workspace/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sum.txt 2>/dev/null | tr -d '[:space:]')
@@ -367,8 +381,6 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expec
   2: [
     {
       title: "Sort Numbers",
-      description:
-        "Sort the numbers in /workspace/data/numbers.txt ascending (one per line), write to /workspace/output/sorted.txt",
       verifyScript: `#!/bin/bash
 EXPECTED=$(sort -n /workspace/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sorted.txt 2>/dev/null)
@@ -379,8 +391,6 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: outpu
     },
     {
       title: "Extract Emails",
-      description:
-        "Extract all email addresses from /workspace/data/contacts.txt (one per line), write to /workspace/output/emails.txt sorted alphabetically",
       verifyScript: `#!/bin/bash
 EXPECTED=$(grep -oE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}' /workspace/data/contacts.txt | sort)
 ACTUAL=$(sort /workspace/output/emails.txt 2>/dev/null)
@@ -391,8 +401,6 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: extra
     },
     {
       title: "Find Duplicates",
-      description:
-        "Find all duplicate numbers in /workspace/data/numbers.txt (numbers that appear more than once). Write the unique duplicate values sorted ascending to /workspace/output/duplicates.txt (one per line)",
       verifyScript: `#!/bin/bash
 EXPECTED=$(sort -n /workspace/data/numbers.txt | uniq -d | sort -n)
 ACTUAL=$(cat /workspace/output/duplicates.txt 2>/dev/null | sort -n)
@@ -405,8 +413,6 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: dupli
   3: [
     {
       title: "Parse Error Logs",
-      description:
-        "Parse /workspace/data/access.log: extract timestamps (first field) from lines where HTTP status >= 500, write to /workspace/output/errors.txt (one per line, sorted)",
       verifyScript: `#!/bin/bash
 EXPECTED=$(awk '$6 >= 500 {print $1}' /workspace/data/access.log | sort)
 ACTUAL=$(sort /workspace/output/errors.txt 2>/dev/null)
@@ -417,8 +423,6 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: error
     },
     {
       title: "Top Words",
-      description:
-        "Find the 10 most frequent words in /workspace/data/article.txt (case-insensitive, alphabetical order for ties), write to /workspace/output/top10.txt (one word per line, lowercase, most frequent first)",
       verifyScript: `#!/bin/bash
 EXPECTED=$(tr '[:upper:]' '[:lower:]' < /workspace/data/article.txt | tr -cs '[:alpha:]' '\\n' | sort | uniq -c | sort -rn -k1,1 -k2,2 | head -10 | awk '{print $2}')
 ACTUAL=$(cat /workspace/output/top10.txt 2>/dev/null)
@@ -429,8 +433,6 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: top 1
     },
     {
       title: "IP Frequency",
-      description:
-        "Count how many times each IP address appears in /workspace/data/access.log (IP is the second field). Write CSV to /workspace/output/ip_counts.csv with columns: ip,count sorted by count descending",
       verifyScript: `#!/bin/bash
 EXPECTED=$(awk '{print $2}' /workspace/data/access.log | sort | uniq -c | sort -rn | awk '{print $2","$1}')
 ACTUAL=$(cat /workspace/output/ip_counts.csv 2>/dev/null | tail -n +1)
@@ -445,8 +447,6 @@ if [ "$EXPECTED" = "$ACTUAL_CLEAN" ]; then echo "PASS"; exit 0; else echo "FAIL:
   4: [
     {
       title: "Sales Totals",
-      description:
-        "data/sales.csv has columns: date,product,region,amount. Compute total amount per product AND region. Write CSV to /workspace/output/totals.csv with columns: product,region,total (sorted by product then region)",
       verifyScript: `#!/bin/bash
 EXPECTED=$(tail -n +2 /workspace/data/sales.csv | awk -F',' '{key=$2","$3; a[key]+=$4} END {for(k in a) printf "%s,%.2f\\n",k,a[k]}' | sort)
 ACTUAL=$(tail -n +2 /workspace/output/totals.csv 2>/dev/null | sort)
@@ -457,8 +457,6 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: total
     },
     {
       title: "Moving Average",
-      description:
-        "Compute 7-day moving average from /workspace/data/timeseries.csv (columns: date,value). For each row starting from row 7, compute the average of that row and the 6 preceding rows. Write CSV to /workspace/output/moving_avg.csv with columns: date,value,moving_avg (moving_avg rounded to 2 decimal places)",
       verifyScript: `#!/bin/bash
 node -e "
 const fs = require('fs');
@@ -484,8 +482,6 @@ if (ok) { console.log('PASS'); process.exit(0); } else { process.exit(1); }
     },
     {
       title: "Join and Aggregate",
-      description:
-        "Join /workspace/data/orders.csv (columns: order_id,customer_id,product,quantity,price) with /workspace/data/customers.csv (columns: customer_id,name,region,signup_date) on customer_id. Compute total revenue (quantity*price) per region. Write CSV to /workspace/output/region_revenue.csv with columns: region,revenue (revenue as decimal with 2 places, sorted by region)",
       verifyScript: `#!/bin/bash
 node -e "
 const fs = require('fs');
@@ -519,8 +515,6 @@ if (expected === actual) { console.log('PASS'); process.exit(0); } else { consol
   5: [
     {
       title: "HTTP Health Server",
-      description:
-        "Write a script at /workspace/output/server.js that serves HTTP on port 8080 and responds to GET /health with 200 OK and body 'ok'",
       verifyScript: `#!/bin/bash
 node /workspace/output/server.js &
 PID=$!
@@ -531,8 +525,6 @@ if [ "$RESULT" = "ok" ]; then echo "PASS"; exit 0; else echo "FAIL: expected 'ok
     },
     {
       title: "CSV API Server",
-      description:
-        "Write a server at /workspace/output/server.js on port 8080. POST /data accepts JSON body {rows: [{col1: val, ...}]} and stores it. GET /data returns stored data as CSV. GET /data?sort=FIELD sorts by that field ascending. If no data stored yet, return empty CSV with no headers.",
       verifyScript: `#!/bin/bash
 node /workspace/output/server.js &
 PID=$!
@@ -554,8 +546,6 @@ if [ "$ALICE_LINE" -lt "$BOB_LINE" ]; then echo "PASS"; exit 0; else echo "FAIL:
     },
     {
       title: "Log Processor Pipeline",
-      description:
-        "Write a script at /workspace/output/process.sh that reads /workspace/data/app.log and outputs a JSON report to /workspace/output/report.json with: {total_lines: N, by_level: {INFO: N, WARN: N, ERROR: N, ...}, by_service: {name: N, ...}, error_rate: 0.XX}. error_rate = (ERROR+FATAL lines) / total_lines rounded to 2 decimal places.",
       verifyScript: `#!/bin/bash
 bash /workspace/output/process.sh 2>/dev/null
 node -e "
@@ -602,7 +592,6 @@ export class TaskGenerator {
       id: `task-${randomUUID().slice(0, 8)}`,
       tier: effectiveTier,
       title: template.title,
-      description: template.description,
       verifyScript: "tools/check",
       reward: TIER_REWARDS[effectiveTier] ?? 60_000,
       deadlineCycles: TIER_DEADLINES[effectiveTier] ?? 10,
@@ -630,8 +619,8 @@ export class TaskGenerator {
     // Seed tools — organism discovers everything through these
     if (!existsSync(join(toolsDir, "shell"))) {
       writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\neval "$*"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "count"), '#!/bin/bash\necho "TODO: implement or create new"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "sum"), '#!/bin/bash\necho "TODO: implement or create new"\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "count"), '#!/bin/bash\necho "TODO: Implement to work"\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "sum"), '#!/bin/bash\n# awk \'{s+=$1} END {print s}\' "$1"\n # Fix first\n', { mode: 0o755 });
       writeFileSync(join(toolsDir, "leaderboard"), LEADERBOARD_TOOL, { mode: 0o755 });
       writeFileSync(join(toolsDir, "peer_tools"), PEER_TOOLS_TOOL, { mode: 0o755 });
     }

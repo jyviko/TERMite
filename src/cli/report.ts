@@ -2,7 +2,10 @@
  * TERMITE Report — tabular organism summary with mutations and stats.
  *
  * Usage:
- *     yarn report                          # latest run
+ *     yarn report                          # latest run, all organisms
+ *     yarn report --org org-abc12345       # detail view for one organism
+ *     yarn report --org abc1              # partial ID match
+ *     yarn report --org abc1 --json       # raw JSON for one organism
  *     yarn report --run run-2026-02-20...  # specific run
  *     yarn report --workspace ./arena-workspace
  */
@@ -16,6 +19,7 @@ const { values } = parseArgs({
   options: {
     workspace: { type: "string", default: "./arena-workspace" },
     run: { type: "string" },
+    org: { type: "string" },
     json: { type: "boolean", default: false },
   },
 });
@@ -357,6 +361,235 @@ function renderAggregates(organisms: OrganismState[]): string[] {
   return lines;
 }
 
+// ── Detail view for single organism ──────────────────────────────────
+
+function renderDetailSection(title: string): string {
+  return `\n${BOLD}${CYAN}── ${title} ${"─".repeat(Math.max(0, 56 - title.length))}${RST}`;
+}
+
+function renderDetailIdentity(org: OrganismState): string[] {
+  const lines: string[] = [];
+  lines.push(renderDetailSection("Identity"));
+
+  const status = org.alive ? `${GREEN}ALIVE${RST}` : `${RED}DEAD${RST}`;
+  const born = new Date(org.bornAt).toISOString().replace("T", " ").slice(0, 19);
+
+  lines.push(`  ID:             ${BOLD}${org.id}${RST}`);
+  lines.push(`  Status:         ${status}${org.causeOfDeath ? `  (${org.causeOfDeath})` : ""}`);
+  lines.push(`  Generation:     ${org.generation}${org.parentId ? `  parent=${org.parentId}` : ""}`);
+  lines.push(`  Born:           ${born}`);
+  lines.push(`  Cycles:         ${org.cycleCount}`);
+  lines.push(`  Mode:           ${org.mode}`);
+  lines.push(`  Routing:        ${org.forageRouting}`);
+  if (org.goal) lines.push(`  Goal:           ${org.goal}`);
+
+  return lines;
+}
+
+function renderDetailEnergy(org: OrganismState): string[] {
+  const lines: string[] = [];
+  const e = org.energy;
+  lines.push(renderDetailSection("Energy"));
+
+  const pct = e.capacity > 0 ? Math.floor((e.reserves / e.capacity) * 100) : 0;
+  const net = e.earned - e.spent;
+
+  lines.push(`  Budget:         ${fmt(e.budget)}`);
+  lines.push(`  Reserves:       ${fmt(e.reserves)} / ${fmt(e.capacity)}  (${pct}%)`);
+  lines.push(`  Spent:          ${RED}${fmt(e.spent)}${RST}`);
+  lines.push(`  Earned:         ${GREEN}${fmt(e.earned)}${RST}  (pool: ${fmt(e.earnedFromPrizes)})`);
+  lines.push(`  Net:            ${colorize(net)}${fmtSigned(net)}${RST}`);
+  lines.push(`  BMR:            ${e.bmr}/cycle`);
+  lines.push(`  Avg cycle cost: ${fmt(Math.round(e.cycleHistory.reduce((s, r) => s + r.cost, 0) / Math.max(1, e.cycleHistory.length)))}`);
+
+  return lines;
+}
+
+function renderDetailCycleHistory(org: OrganismState): string[] {
+  const lines: string[] = [];
+  const history = org.energy.cycleHistory;
+  lines.push(renderDetailSection(`Cycle History (${history.length} cycles)`));
+
+  if (history.length === 0) {
+    lines.push(`  ${DIM}no cycle data${RST}`);
+    return lines;
+  }
+
+  // Column widths
+  const hdrs = ["#", "Model", "Cost", "Income", "Net", "Outcome", "Rel", "Out", "In", "Cache W", "Cache R"];
+  const ws =   [ 4,   5,      9,      9,        10,     8,         5,     7,     7,    8,        8];
+
+  // Header
+  const hdr = hdrs.map((h, i) => padR(h, ws[i]!)).join("  ");
+  lines.push(`  ${BOLD}${hdr}${RST}`);
+  lines.push(`  ${DIM}${ws.map((w) => "─".repeat(w)).join("──")}${RST}`);
+
+  // Rows
+  for (const c of history) {
+    const ml = modelLabel(c.model);
+    const outcomeColor =
+      c.outcome === "success" ? GREEN :
+      c.outcome === "partial" ? YELLOW :
+      c.outcome === "failure" ? RED : DIM;
+    const netColor = colorize(c.net);
+
+    const cells = [
+      padR(String(c.cycle), ws[0]!),
+      padR(ml, ws[1]!),
+      `${RED}${padR(fmt(c.cost), ws[2]!)}${RST}`,
+      `${GREEN}${padR(fmt(c.income), ws[3]!)}${RST}`,
+      `${netColor}${padR(fmtSigned(c.net), ws[4]!)}${RST}`,
+      `${outcomeColor}${padR(c.outcome ?? "?", ws[5]!)}${RST}`,
+      padR(c.goalRelevance.toFixed(2), ws[6]!),
+      padR(fmt(c.outputTokens ?? 0), ws[7]!),
+      padR(fmt(c.inputTokens ?? 0), ws[8]!),
+      padR(fmt(c.cacheCreationTokens ?? 0), ws[9]!),
+      padR(fmt(c.cacheReadTokens ?? 0), ws[10]!),
+    ];
+    lines.push(`  ${cells.join("  ")}`);
+  }
+
+  // Totals
+  const totCost = history.reduce((s, c) => s + c.cost, 0);
+  const totIncome = history.reduce((s, c) => s + c.income, 0);
+  const totNet = totIncome - totCost;
+  const totOut = history.reduce((s, c) => s + (c.outputTokens ?? 0), 0);
+  const totIn = history.reduce((s, c) => s + (c.inputTokens ?? 0), 0);
+  const totCW = history.reduce((s, c) => s + (c.cacheCreationTokens ?? 0), 0);
+  const totCR = history.reduce((s, c) => s + (c.cacheReadTokens ?? 0), 0);
+
+  lines.push(`  ${DIM}${ws.map((w) => "─".repeat(w)).join("──")}${RST}`);
+  const totCells = [
+    padR("", ws[0]!),
+    padR("Total", ws[1]!),
+    `${RED}${padR(fmt(totCost), ws[2]!)}${RST}`,
+    `${GREEN}${padR(fmt(totIncome), ws[3]!)}${RST}`,
+    `${colorize(totNet)}${padR(fmtSigned(totNet), ws[4]!)}${RST}`,
+    padR("", ws[5]!),
+    padR("", ws[6]!),
+    padR(fmt(totOut), ws[7]!),
+    padR(fmt(totIn), ws[8]!),
+    padR(fmt(totCW), ws[9]!),
+    padR(fmt(totCR), ws[10]!),
+  ];
+  lines.push(`  ${BOLD}${totCells.join("  ")}${RST}`);
+
+  // Cache ratio
+  const totalInput = totIn;
+  const cachedInput = totCW + totCR;
+  const cachePct = totalInput > 0 ? Math.floor((cachedInput / totalInput) * 100) : 0;
+  lines.push(`\n  ${DIM}Cache hit ratio: ${cachedInput}/${totalInput} input tokens = ${cachePct}%${RST}`);
+
+  return lines;
+}
+
+function renderDetailDrives(org: OrganismState): string[] {
+  const lines: string[] = [];
+  lines.push(renderDetailSection("Drives"));
+
+  const driveNames: Array<{ key: string; label: string }> = [
+    { key: "orient", label: "Orient" },
+    { key: "metabolize", label: "Metabolize" },
+    { key: "grow", label: "Grow" },
+    { key: "coordinate", label: "Coordinate" },
+  ];
+
+  for (const { key, label } of driveNames) {
+    const d = org.drives[key as keyof typeof org.drives];
+    const barLen = 20;
+    const filled = Math.round(d.level * barLen);
+    const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
+    const levelColor = d.level > d.threshold ? GREEN : d.level > d.threshold * 0.5 ? YELLOW : RED;
+    lines.push(
+      `  ${pad(label, 12)} ${levelColor}${bar}${RST} ${(d.level * 100).toFixed(0).padStart(3)}%  ` +
+      `${DIM}thresh=${(d.threshold * 100).toFixed(0)}% decay=${d.decayRate.toFixed(3)} grow=${d.growthRate.toFixed(3)}${RST}`
+    );
+  }
+
+  return lines;
+}
+
+function renderDetailMemories(org: OrganismState): string[] {
+  const lines: string[] = [];
+  lines.push(renderDetailSection(`Memories (${org.memories.length})`));
+
+  if (org.memories.length === 0) {
+    lines.push(`  ${DIM}no memories${RST}`);
+    return lines;
+  }
+
+  // Sort by importance descending
+  const sorted = [...org.memories].sort((a, b) => b.importance - a.importance);
+  const termWidth = process.stdout.columns ?? 120;
+  const contentWidth = Math.max(30, termWidth - 42);
+
+  lines.push(`  ${BOLD}${padR("Imp", 4)}  ${pad("Type", 10)}  ${padR("Acc", 4)}  ${pad("Content", contentWidth)}${RST}`);
+  lines.push(`  ${DIM}${"─".repeat(4)}──${"─".repeat(10)}──${"─".repeat(4)}──${"─".repeat(contentWidth)}${RST}`);
+
+  for (const m of sorted) {
+    const impColor = m.importance >= 0.7 ? GREEN : m.importance >= 0.4 ? YELLOW : DIM;
+    lines.push(
+      `  ${impColor}${padR(m.importance.toFixed(1), 4)}${RST}  ` +
+      `${pad(m.type, 10)}  ` +
+      `${padR(String(m.accessCount), 4)}  ` +
+      `${truncate(m.content.replace(/\n/g, " "), contentWidth)}`
+    );
+  }
+
+  return lines;
+}
+
+function renderDetailGenome(org: OrganismState): string[] {
+  const lines: string[] = [];
+  const g = org.genome;
+  lines.push(renderDetailSection("Genome"));
+
+  lines.push(`  Version:   ${MAG}v${g.version}${RST}  (${g.promptHistory.length} mutations)`);
+  lines.push(`  Routing:   fast=${g.routing.fast.model} (${g.routing.fast.maxTokens})`);
+  lines.push(`             deep=${g.routing.deep.model} (${g.routing.deep.maxTokens})`);
+  lines.push(`             resolve=${g.routing.resolve.model} (${g.routing.resolve.maxTokens})`);
+
+  const termWidth = process.stdout.columns ?? 120;
+  const promptWidth = Math.max(40, termWidth - 4);
+  lines.push(`\n  ${BOLD}System Prompt:${RST}`);
+  // Wrap system prompt at terminal width
+  const promptLines = g.systemPrompt.split("\n");
+  for (const pl of promptLines) {
+    if (pl.length <= promptWidth) {
+      lines.push(`  ${DIM}${pl}${RST}`);
+    } else {
+      for (let i = 0; i < pl.length; i += promptWidth) {
+        lines.push(`  ${DIM}${pl.slice(i, i + promptWidth)}${RST}`);
+      }
+    }
+  }
+
+  if (g.promptHistory.length > 0) {
+    lines.push(`\n  ${BOLD}Mutation History:${RST}`);
+    for (const mut of g.promptHistory) {
+      const age = formatAge(mut.timestamp);
+      lines.push(`  ${MAG}v${mut.version}→v${mut.version + 1}${RST} ${DIM}(${mut.phase}, ${age})${RST}`);
+      lines.push(`    ${RED}- ${truncate(mut.oldPrompt.replace(/\n/g, " "), promptWidth - 6)}${RST}`);
+      lines.push(`    ${GREEN}+ ${truncate(mut.newPrompt.replace(/\n/g, " "), promptWidth - 6)}${RST}`);
+    }
+  }
+
+  return lines;
+}
+
+function renderOrgDetail(org: OrganismState): void {
+  console.log();
+  console.log(`${BOLD}${CYAN} TERMITE Organism Detail${RST}`);
+
+  for (const line of renderDetailIdentity(org)) console.log(line);
+  for (const line of renderDetailEnergy(org)) console.log(line);
+  for (const line of renderDetailCycleHistory(org)) console.log(line);
+  for (const line of renderDetailDrives(org)) console.log(line);
+  for (const line of renderDetailMemories(org)) console.log(line);
+  for (const line of renderDetailGenome(org)) console.log(line);
+  console.log();
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 function main(): void {
   const runDir = findRunDir();
@@ -371,6 +604,26 @@ function main(): void {
   if (organisms.length === 0) {
     console.error(`${YELLOW}No organisms found in ${runDir}${RST}`);
     process.exit(1);
+  }
+
+  // Single organism detail mode
+  if (values.org) {
+    const match = organisms.find((o) =>
+      o.id === values.org || o.id.includes(values.org!)
+    );
+    if (!match) {
+      console.error(`${RED}Organism "${values.org}" not found.${RST} Available:`);
+      for (const o of organisms) {
+        console.error(`  ${o.id}${o.alive ? "" : ` ${DIM}(dead)${RST}`}`);
+      }
+      process.exit(1);
+    }
+    if (values.json) {
+      console.log(JSON.stringify(match, null, 2));
+    } else {
+      renderOrgDetail(match);
+    }
+    return;
   }
 
   // JSON output mode

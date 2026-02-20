@@ -121,7 +121,6 @@ export interface Task {
   id: string;
   tier: number;
   title: string;
-  description: string;
   verifyScript: string;
   reward: number;
   deadlineCycles: number;
