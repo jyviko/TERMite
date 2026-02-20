@@ -37,7 +37,7 @@ describe("AgenticLoop", () => {
       {
         content: [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
-        usage: { input: 50, output: 10 },
+        usage: { input: 50, output: 10, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 
@@ -71,12 +71,12 @@ describe("AgenticLoop", () => {
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 100, output: 30 },
+        usage: { input: 100, output: 30, cacheCreation: 0, cacheRead: 0 },
       },
       {
         content: [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
-        usage: { input: 150, output: 20 },
+        usage: { input: 150, output: 20, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 
@@ -125,12 +125,12 @@ describe("AgenticLoop", () => {
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 100, output: 30 },
+        usage: { input: 100, output: 30, cacheCreation: 0, cacheRead: 0 },
       },
       {
         content: [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
-        usage: { input: 200, output: 10 },
+        usage: { input: 200, output: 10, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 
@@ -176,12 +176,12 @@ describe("AgenticLoop", () => {
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 100, output: 30 },
+        usage: { input: 100, output: 30, cacheCreation: 0, cacheRead: 0 },
       },
       {
         content: [{ type: "text", text: "Saw the error.", citations: null }] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
-        usage: { input: 200, output: 10 },
+        usage: { input: 200, output: 10, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 
@@ -223,7 +223,7 @@ describe("AgenticLoop", () => {
         },
       ] as Anthropic.ContentBlock[],
       stopReason: "tool_use" as const,
-      usage: { input: 50, output: 20 },
+      usage: { input: 50, output: 20, cacheCreation: 0, cacheRead: 0 },
     }));
 
     const brain = new MockBrain(endlessResponses);
@@ -257,7 +257,7 @@ describe("AgenticLoop", () => {
       {
         content: [{ type: "text", text: "Start.", citations: null }] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
-        usage: { input: 50, output: 10 },
+        usage: { input: 50, output: 10, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 

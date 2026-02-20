@@ -47,7 +47,9 @@ describe("DriveSystem", () => {
     const ds = new DriveSystem();
     ds.drives.metabolize.level = 0.3;
     const energy = new EnergyLedger({ budget: 10000 });
-    energy.burn("test", 8000); // 20% remaining = 80% deficit
+    // Burn enough to leave ~20% reserves. Haiku output: 8000 tokens × 5 = 40000 energy
+    // But budget is only 10000, so let's use raw input tokens instead (1x multiplier)
+    energy.burn("claude-haiku-4-5-20251001", { input: 8000, output: 0, cacheCreation: 0, cacheRead: 0 }); // 8000 × 1 = 8000 energy → 20% remaining
     ds.update(energy, [], 0);
     expect(ds.drives.metabolize.level).toBeGreaterThan(0.3);
   });
@@ -56,13 +58,15 @@ describe("DriveSystem", () => {
     const ds = new DriveSystem();
     // Start with low reserves so feed actually adds more than burn costs
     const energy = new EnergyLedger({ budget: 10000, reserves: 1000, capacity: 10000 });
-    energy.burn("a", 100);
+    const h = "claude-haiku-4-5-20251001";
+    const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 }; // 100 × 1 = 100 energy
+    energy.burn(h, u);
     energy.feed(500);
     energy.endCycle(0, "success", 500, "");
-    energy.burn("b", 100);
+    energy.burn(h, u);
     energy.feed(500);
     energy.endCycle(1, "success", 500, "");
-    energy.burn("c", 100);
+    energy.burn(h, u);
     energy.feed(500);
     energy.endCycle(2, "success", 500, "");
 

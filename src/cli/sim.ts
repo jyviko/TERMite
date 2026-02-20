@@ -87,7 +87,7 @@ class MockBrain extends Brain {
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 100, output: 50 },
+        usage: { input: 100, output: 50, cacheCreation: 0, cacheRead: 0 },
       };
     }
 
@@ -103,7 +103,7 @@ class MockBrain extends Brain {
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 100, output: 50 },
+        usage: { input: 100, output: 50, cacheCreation: 0, cacheRead: 0 },
       };
     }
 
@@ -119,7 +119,7 @@ class MockBrain extends Brain {
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 100, output: 50 },
+        usage: { input: 100, output: 50, cacheCreation: 0, cacheRead: 0 },
       };
     }
 
@@ -129,7 +129,7 @@ class MockBrain extends Brain {
         { type: "text" as const, text: "I've completed my task for now." },
       ] as Anthropic.ContentBlock[],
       stopReason: "end_turn",
-      usage: { input: 50, output: 20 },
+      usage: { input: 50, output: 20, cacheCreation: 0, cacheRead: 0 },
     };
   }
 }

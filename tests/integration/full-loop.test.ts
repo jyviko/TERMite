@@ -65,7 +65,7 @@ describe("Full Loop Integration", () => {
           { type: "tool_use", id: "t1", name: "execute_shell", input: { command: "ls /workspace/" } },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 200, output: 50 },
+        usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
       },
       // See quest, read it
       {
@@ -73,7 +73,7 @@ describe("Full Loop Integration", () => {
           { type: "tool_use", id: "t2", name: "execute_shell", input: { command: "cat /workspace/quests/quest.json" } },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 300, output: 40 },
+        usage: { input: 300, output: 40, cacheCreation: 0, cacheRead: 0 },
       },
       // Write solution
       {
@@ -82,7 +82,7 @@ describe("Full Loop Integration", () => {
           { type: "tool_use", id: "t3", name: "write_file", input: { path: "output/greeting.txt", content: "Hello, World!" } },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 350, output: 60 },
+        usage: { input: 350, output: 60, cacheCreation: 0, cacheRead: 0 },
       },
       // Verify
       {
@@ -90,7 +90,7 @@ describe("Full Loop Integration", () => {
           { type: "tool_use", id: "t4", name: "check_quest", input: {} },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
-        usage: { input: 400, output: 30 },
+        usage: { input: 400, output: 30, cacheCreation: 0, cacheRead: 0 },
       },
       // Done foraging
       {
@@ -98,7 +98,7 @@ describe("Full Loop Integration", () => {
           { type: "text", text: "Quest complete!", citations: null },
         ] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
-        usage: { input: 450, output: 20 },
+        usage: { input: 450, output: 20, cacheCreation: 0, cacheRead: 0 },
       },
       // Resolve response
       {
@@ -106,7 +106,7 @@ describe("Full Loop Integration", () => {
           { type: "text", text: '{"outcome":"success","lesson":"Read quest first","goalRelevance":0.9,"goalComplete":true}', citations: null },
         ] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
-        usage: { input: 200, output: 50 },
+        usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
       },
       // Memorize response
       {
@@ -114,7 +114,7 @@ describe("Full Loop Integration", () => {
           { type: "text", text: '{"store":[{"content":"Always read quest.json first","type":"procedural","importance":0.8}]}', citations: null },
         ] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
-        usage: { input: 200, output: 40 },
+        usage: { input: 200, output: 40, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 

@@ -53,7 +53,13 @@ export class AgenticLoop {
       }
 
       // Report token usage
-      yield { type: "usage", input: response.usage.input, output: response.usage.output };
+      yield {
+        type: "usage",
+        input: response.usage.input,
+        output: response.usage.output,
+        cacheCreation: response.usage.cacheCreation,
+        cacheRead: response.usage.cacheRead,
+      };
 
       // Extract text blocks
       for (const block of response.content) {

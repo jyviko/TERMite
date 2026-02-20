@@ -1,9 +1,11 @@
 import type { Outcome, MemoryType } from "../types/index.js";
-import type { Brain } from "../brain/index.js";
+import type { Brain, TokenUsage } from "../brain/index.js";
 import { extractText } from "../brain/util.js";
 import type { Genome } from "../state/genome.js";
 import type { MemoryStore } from "../state/memory.js";
 import type { EnergyLedger } from "../state/energy.js";
+
+const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
 export class Memorizer {
   constructor(private brain: Brain) {}
@@ -16,7 +18,7 @@ export class Memorizer {
     goalRelevance: number;
     actions: string;
     energy: EnergyLedger;
-  }): Promise<number> {
+  }): Promise<TokenUsage> {
     const prompt = params.genome.memorizePrompt
       .replace("{actions}", params.actions)
       .replace("{lesson}", params.lesson)
@@ -38,19 +40,18 @@ export class Memorizer {
       });
 
       const text = extractText(response.content);
-      const usage = response.usage.input + response.usage.output;
 
       const ops = parseMemorizeResponse(text);
       this.applyOperations(ops, params.memories, params.genome);
 
       params.memories.decayEvict();
-      return usage;
+      return response.usage;
     } catch {
       // Memorize failure is non-fatal — organism just doesn't learn this cycle
     }
 
     params.memories.decayEvict();
-    return 0;
+    return ZERO_USAGE;
   }
 
   private applyOperations(

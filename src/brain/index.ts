@@ -1,10 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent } from "../types/index.js";
 
+export interface TokenUsage {
+  input: number;
+  output: number;
+  cacheCreation: number;
+  cacheRead: number;
+}
+
 export interface BrainResponse {
   content: Anthropic.ContentBlock[];
   stopReason: "end_turn" | "tool_use" | "max_tokens";
-  usage: { input: number; output: number };
+  usage: TokenUsage;
 }
 
 export interface BrainConfig {
@@ -69,12 +76,15 @@ export class Brain {
           temperature: params.temperature,
         });
 
+        const cacheUsage = response.usage as unknown as Record<string, unknown>;
         return {
           content: response.content,
           stopReason: response.stop_reason as BrainResponse["stopReason"],
           usage: {
             input: response.usage.input_tokens,
             output: response.usage.output_tokens,
+            cacheCreation: (cacheUsage.cache_creation_input_tokens as number) ?? 0,
+            cacheRead: (cacheUsage.cache_read_input_tokens as number) ?? 0,
           },
         };
       } catch (err: unknown) {

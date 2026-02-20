@@ -89,9 +89,9 @@ export class OrganismStateMachine {
     })) {
       yield event;
 
-      // Burn energy for API usage
+      // Burn energy for API usage (model-weighted)
       if (event.type === "usage") {
-        this.state.energy.burn("forage", event.input + event.output);
+        this.state.energy.burn(this.state.genome.routing.forage.model, event);
       }
 
       if (event.type === "error") break;
@@ -121,7 +121,7 @@ export class OrganismStateMachine {
         maxTokens: this.state.genome.routing.think.maxTokens,
       });
 
-      this.state.energy.burn("think", response.usage.input + response.usage.output);
+      this.state.energy.burn(this.state.genome.routing.think.model, response.usage);
 
       const plan = extractText(response.content);
 
@@ -151,7 +151,7 @@ export class OrganismStateMachine {
         maxTokens: 1024,
       });
 
-      this.state.energy.burn("rest", response.usage.input + response.usage.output);
+      this.state.energy.burn(this.state.genome.routing.forage.model, response.usage);
 
       const text = extractText(response.content);
 
@@ -190,9 +190,9 @@ export class OrganismStateMachine {
       energy: this.state.energy,
     });
 
-    // Burn resolve cost
-    if (result.usage > 0) {
-      this.state.energy.burn("resolve", result.usage);
+    // Burn resolve cost (model-weighted)
+    if (result.usage.output > 0) {
+      this.state.energy.burn(this.state.genome.routing.resolve.model, result.usage);
     }
 
     // Compute income
@@ -226,8 +226,8 @@ export class OrganismStateMachine {
       actions,
       energy: this.state.energy,
     });
-    if (memorizeUsage > 0) {
-      this.state.energy.burn("memorize", memorizeUsage);
+    if (memorizeUsage.output > 0) {
+      this.state.energy.burn(this.state.genome.routing.forage.model, memorizeUsage);
     }
 
     // Update BMR based on memory cost

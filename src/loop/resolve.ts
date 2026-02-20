@@ -1,15 +1,17 @@
 import type { Outcome } from "../types/index.js";
-import type { Brain } from "../brain/index.js";
+import type { Brain, TokenUsage } from "../brain/index.js";
 import { extractText } from "../brain/util.js";
 import type { Genome } from "../state/genome.js";
 import type { EnergyLedger } from "../state/energy.js";
+
+const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
 export interface ResolveResult {
   outcome: Outcome;
   lesson: string;
   goalRelevance: number;
   goalComplete: boolean;
-  usage: number;
+  usage: TokenUsage;
 }
 
 const FALLBACK_RESULT: ResolveResult = {
@@ -17,7 +19,7 @@ const FALLBACK_RESULT: ResolveResult = {
   lesson: "",
   goalRelevance: 0,
   goalComplete: false,
-  usage: 0,
+  usage: ZERO_USAGE,
 };
 
 export class Resolver {
@@ -44,16 +46,15 @@ export class Resolver {
       });
 
       const text = extractText(response.content);
-      const usage = response.usage.input + response.usage.output;
 
-      return { ...parseResolveResponse(text), usage };
+      return { ...parseResolveResponse(text), usage: response.usage };
     } catch {
       return FALLBACK_RESULT;
     }
   }
 }
 
-function parseResolveResponse(text: string): ResolveResult {
+function parseResolveResponse(text: string): Omit<ResolveResult, "usage"> {
   try {
     // Extract JSON from response (may be wrapped in markdown)
     const jsonMatch = text.match(/\{[\s\S]*\}/);

@@ -10,7 +10,8 @@
     "sim": "tsx src/cli/sim.ts",
     "live": "tsx src/cli/live.ts",
     "arena": "tsx src/cli/arena.ts",
-    "dash": "tsx src/cli/dashboard.ts"
+    "dash": "tsx src/cli/dashboard.ts",
+    "report": "tsx src/cli/report.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2"
