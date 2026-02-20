@@ -51,6 +51,7 @@ export interface CycleRecord {
   outcome: Outcome | null;
   incomeSources: string;
   goalRelevance: number;
+  model?: string;
   inputTokens?: number;
   outputTokens?: number;
   cacheCreationTokens?: number;

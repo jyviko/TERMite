@@ -4,6 +4,7 @@ import { extractText } from "../brain/util.js";
 import type { Genome } from "../state/genome.js";
 import type { EnergyLedger } from "../state/energy.js";
 import type { TEQPool } from "../arena/teq-pool.js";
+import { TIER_EXPECTED_COST } from "../arena/quest-generator.js";
 
 const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
@@ -87,6 +88,8 @@ export async function computeIncome(
   outcome: Outcome,
   questReward: number | null,
   pool: TEQPool,
+  cycleCost?: number,
+  questTier?: number,
 ): Promise<{ amount: number; requested: number; sources: string[] }> {
   const sources: string[] = [];
   let requested = 0;
@@ -99,12 +102,23 @@ export async function computeIncome(
   if (outcome === "success") {
     requested += 5000;
     sources.push("success:5000");
+  } else if (outcome === "partial") {
+    requested += 2000;
+    sources.push("partial:2000");
   }
 
   const relevanceIncome = Math.floor(2500 * goalRelevance);
   if (relevanceIncome > 0) {
     requested += relevanceIncome;
     sources.push(`relevance:${relevanceIncome}`);
+  }
+
+  // Efficiency multiplier: reward organisms that write code (low cost) over in-context reasoning (high cost)
+  if (questReward && questTier && cycleCost && cycleCost > 0) {
+    const expectedCost = TIER_EXPECTED_COST[questTier] ?? cycleCost;
+    const efficiencyRatio = Math.min(3.0, expectedCost / cycleCost);
+    requested = Math.floor(requested * efficiencyRatio);
+    sources.push(`efficiency:${efficiencyRatio.toFixed(2)}x`);
   }
 
   // Withdraw the total from the pool in one atomic operation

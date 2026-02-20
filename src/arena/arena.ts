@@ -6,11 +6,13 @@ import { Brain } from "../brain/index.js";
 import { Executor } from "../executor/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
 import { OrganismStateMachine } from "../loop/state-machine.js";
-import { QuestGenerator } from "./quest-generator.js";
+import { QuestGenerator, TIER_REWARDS } from "./quest-generator.js";
 import { QuestVerifier } from "./quest-verifier.js";
 import { GenomeEvolver } from "./evolution.js";
 import { SharedBudget } from "./shared-budget.js";
 import { TEQPool } from "./teq-pool.js";
+import { OpenDataGenerator } from "./open-data-generator.js";
+import { WorkRater } from "./work-rater.js";
 
 interface OrganismEntry {
   stateMachine: OrganismStateMachine;
@@ -21,6 +23,8 @@ interface OrganismEntry {
   alive: boolean;
   consecutivePasses: number;
   consecutiveFails: number;
+  graduated: boolean;
+  graduationData?: { datasetName: string; files: string[] };
 }
 
 export interface ArenaConfig {
@@ -42,6 +46,8 @@ export class Arena {
   private questGenerator: QuestGenerator;
   private questVerifier: QuestVerifier;
   private evolver: GenomeEvolver;
+  private workRater: WorkRater;
+  private openDataGenerator: OpenDataGenerator;
   private config: ArenaConfig;
   private runDir = "";
 
@@ -57,6 +63,8 @@ export class Arena {
     this.questGenerator = new QuestGenerator();
     this.questVerifier = new QuestVerifier();
     this.evolver = new GenomeEvolver(this.brain);
+    this.workRater = new WorkRater(this.brain);
+    this.openDataGenerator = new OpenDataGenerator();
   }
 
   async start(): Promise<void> {
@@ -164,6 +172,7 @@ export class Arena {
       alive: true,
       consecutivePasses: 0,
       consecutiveFails: 0,
+      graduated: false,
     };
 
     this.organisms.set(id, entry);
@@ -183,7 +192,10 @@ export class Arena {
 
         // Check quest completion periodically
         if (event.type === "tool_result" && event.name === "check_quest") {
-          if (event.result.includes("PASS")) {
+          if (entry.graduated) {
+            // Post-graduation: rate open work instead of verifying quests
+            await this.rateGraduateWork(id, entry);
+          } else if (event.result.includes("PASS")) {
             await this.onQuestComplete(id, entry);
           }
         }
@@ -224,7 +236,7 @@ export class Arena {
     if (!result.passed) return;
 
     // Credit energy
-    entry.stateMachine.setQuestReward(quest.reward);
+    entry.stateMachine.setQuestReward(quest.reward, quest.tier);
 
     // Record
     entry.questHistory.push({
@@ -236,9 +248,15 @@ export class Arena {
     entry.consecutivePasses++;
     entry.consecutiveFails = 0;
 
-    // Tier escalation: 3 consecutive passes → tier up
+    // Tier escalation: 3 consecutive passes → tier up (or graduate at tier 5)
     if (entry.consecutivePasses >= 3) {
-      entry.questTier = Math.min(10, entry.questTier + 1);
+      if (entry.questTier >= 5) {
+        entry.graduated = true;
+        entry.consecutivePasses = 0;
+        await this.onGraduation(id, entry);
+        return; // No more structured quests
+      }
+      entry.questTier = Math.min(5, entry.questTier + 1);
       entry.consecutivePasses = 0;
     }
 
@@ -257,6 +275,44 @@ export class Arena {
       entry.state.cycleCount > 20
     ) {
       await this.reproduce(id, entry);
+    }
+  }
+
+  private async onGraduation(id: string, entry: OrganismEntry): Promise<void> {
+    const workspacePath = join(this.runDir, id, "workspace");
+    console.log(`[ARENA] ${id} GRADUATED from tier 5 — transitioning to open data`);
+
+    // Place raw data — organism must figure out what to do
+    const result = this.openDataGenerator.placeData(workspacePath);
+    entry.graduationData = { datasetName: result.datasetName, files: result.files };
+  }
+
+  private async rateGraduateWork(id: string, entry: OrganismEntry): Promise<void> {
+    const workspacePath = join(this.runDir, id, "workspace");
+    const dataDir = join(workspacePath, "data");
+    const outputDir = join(workspacePath, "output");
+
+    try {
+      const rating = await this.workRater.rate(dataDir, outputDir);
+      const baseReward = TIER_REWARDS[5] ?? 300_000;
+      const reward = Math.floor(rating.score * baseReward);
+
+      if (reward > 0) {
+        entry.stateMachine.setQuestReward(reward, 5);
+      }
+
+      console.log(
+        `[ARENA] ${id} work rated: score=${rating.score.toFixed(2)} reward=${reward} — ${rating.rationale}`,
+      );
+
+      // Good work gets fresh data
+      if (rating.score > 0.3) {
+        const result = this.openDataGenerator.placeData(workspacePath);
+        entry.graduationData = { datasetName: result.datasetName, files: result.files };
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[ARENA] ${id} work rating failed: ${msg}`);
     }
   }
 

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent, MemoryType, SkillEntry } from "../types/index.js";
 import type { Brain } from "../brain/index.js";
@@ -11,17 +9,6 @@ import { Resolver, computeIncome } from "./resolve.js";
 import { Memorizer } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
-type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-const IMAGE_MEDIA_TYPES: Record<string, ImageMediaType> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-};
-
-const IMAGE_GEN_COST = 10_000; // flat TEQ overhead per image generation
-
 const MEMORY_TOKEN_BUDGET = 2000;
 const STALE_SKILL_MAX_AGE = 50;
 
@@ -32,7 +19,9 @@ export class OrganismStateMachine {
   private forageMessages: Anthropic.MessageParam[] = [];
   private savePath: string;
   private questReward: number | null = null;
+  private questTier: number | null = null;
   private consecutiveIdleCycles = 0;
+  private forageModel = "";
   private static readonly STALENESS_THRESHOLD = 5;
 
   constructor(
@@ -77,6 +66,7 @@ export class OrganismStateMachine {
     const model = useSonnet
       ? this.state.genome.routing.deep.model
       : this.state.genome.routing.fast.model;
+    this.forageModel = model;
     const maxTokens = useSonnet
       ? this.state.genome.routing.deep.maxTokens
       : this.state.genome.routing.fast.maxTokens;
@@ -138,11 +128,19 @@ export class OrganismStateMachine {
     }
 
     // Compute income (withdraws from shared pool)
-    const income = await computeIncome(result.goalRelevance, result.outcome, this.questReward, this.teqPool);
+    const income = await computeIncome(
+      result.goalRelevance,
+      result.outcome,
+      this.questReward,
+      this.teqPool,
+      this.state.energy.currentCycleCost,
+      this.questTier ?? undefined,
+    );
     if (income.amount > 0) {
       this.state.energy.feedFromPool(income.amount);
     }
     this.questReward = null;
+    this.questTier = null;
 
     // End cycle
     this.state.energy.endCycle(
@@ -151,6 +149,7 @@ export class OrganismStateMachine {
       income.amount,
       income.sources.join(", "),
       result.goalRelevance,
+      this.forageModel,
     );
 
     yield {
@@ -214,11 +213,17 @@ export class OrganismStateMachine {
     const drives = formatDrives(this.state.drives);
     const activeGoal = this.deriveGoal();
 
+    const lastCycle = this.state.energy.cycleHistory.at(-1);
+    const costHint = lastCycle
+      ? `Last cycle: cost ${lastCycle.cost} TEQ, earned ${lastCycle.income} TEQ, net ${lastCycle.net > 0 ? "+" : ""}${lastCycle.net} TEQ`
+      : null;
+
     const parts = [
       `Your memories:\n${memories}`,
       `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`,
       `Drives: ${drives}`,
       activeGoal ? `Active drive goal: ${activeGoal}` : null,
+      costHint,
       `Cycle: ${this.state.cycleCount} | Generation: ${this.state.generation}`,
     ].filter(Boolean);
 
@@ -310,59 +315,6 @@ export class OrganismStateMachine {
             return `Quest verification failed: ${msg}`;
           }
         }
-        case "generate_image": {
-          const prompt = String(input.prompt ?? "");
-          const path = String(input.path ?? "output/image.svg");
-          this.state.energy.burnFlat(IMAGE_GEN_COST);
-          try {
-            const response = await this.brain.chat({
-              model: this.state.genome.routing.fast.model,
-              system: "Generate clean, valid SVG code. Output ONLY the raw SVG markup starting with <svg and ending with </svg>. No explanation, no markdown fences.",
-              messages: [{ role: "user", content: `Create an SVG image: ${prompt}` }],
-              maxTokens: 2048,
-            });
-            this.state.energy.burn(this.state.genome.routing.fast.model, response.usage);
-            const svgText = extractText(response.content);
-            const svgMatch = svgText.match(/<svg[\s\S]*<\/svg>/);
-            const svg = svgMatch ? svgMatch[0] : svgText;
-            await this.executor.writeFile(path, svg);
-            return `Image generated and saved to /workspace/${path} (${svg.length} bytes)`;
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return `Image generation failed: ${msg}`;
-          }
-        }
-        case "see": {
-          const imagePath = String(input.path ?? "");
-          const question = String(input.question ?? "Describe this image in detail. Note any text, shapes, colors, and patterns.");
-          try {
-            const fullPath = join(this.executor.workingDir, imagePath);
-            const imageData = readFileSync(fullPath);
-            const base64 = imageData.toString("base64");
-            const ext = imagePath.split(".").pop()?.toLowerCase() ?? "";
-            const mediaType = IMAGE_MEDIA_TYPES[ext];
-            if (!mediaType) {
-              return `Vision does not support .${ext} files. Convert to PNG, JPEG, GIF, or WEBP first.`;
-            }
-            const response = await this.brain.chat({
-              model: this.state.genome.routing.fast.model,
-              system: "You are analyzing an image. Be precise and thorough.",
-              messages: [{
-                role: "user",
-                content: [
-                  { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-                  { type: "text", text: question },
-                ],
-              }],
-              maxTokens: 1024,
-            });
-            this.state.energy.burn(this.state.genome.routing.fast.model, response.usage);
-            return extractText(response.content);
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return `Vision failed: ${msg}`;
-          }
-        }
         default:
           return `Unknown tool: ${name}`;
       }
@@ -443,9 +395,10 @@ export class OrganismStateMachine {
     });
   }
 
-  // Allow arena to set quest reward
-  setQuestReward(reward: number): void {
+  // Allow arena to set quest reward and tier
+  setQuestReward(reward: number, tier: number): void {
     this.questReward = reward;
+    this.questTier = tier;
   }
 }
 

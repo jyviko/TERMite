@@ -154,7 +154,7 @@ export class EnergyLedger {
     if (this.reserves < 0) this.reserves = 0;
   }
 
-  endCycle(cycle: number, outcome: Outcome | null, income: number, sources: string, goalRelevance = 0): void {
+  endCycle(cycle: number, outcome: Outcome | null, income: number, sources: string, goalRelevance = 0, model?: string): void {
     this.cycleHistory.push({
       cycle,
       cost: this.cycleCost,
@@ -163,6 +163,7 @@ export class EnergyLedger {
       outcome,
       incomeSources: sources,
       goalRelevance,
+      model,
       inputTokens: this.cycleInputTokens,
       outputTokens: this.cycleOutputTokens,
       cacheCreationTokens: this.cycleCacheCreation,
@@ -192,6 +193,10 @@ export class EnergyLedger {
 
   get alive(): boolean {
     return this.reserves > 0 && this.spent < this.budget;
+  }
+
+  get currentCycleCost(): number {
+    return this.cycleCost;
   }
 
   get ratio(): number {

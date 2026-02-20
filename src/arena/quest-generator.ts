@@ -10,23 +10,23 @@ interface QuestTemplate {
   dataGenerator?: () => Record<string, string>;
 }
 
-// Rewards in TEQ (token equivalents). Calibrated against observed
-// cycle costs (~35k TEQ avg with Haiku, higher with Sonnet). Tuned so:
-// - Tier 1-2: covers ~1-2 cycles, organism bleeds slowly
-// - Tier 3: roughly break-even over quest duration
-// - Tier 4+: net-positive, enabling surplus and reproduction
-// - Tier 6+: plateau — the easy money dries up
-const TIER_REWARDS: Record<number, number> = {
-  1: 50000,
-  2: 80000,
-  3: 120000,
-  4: 180000,
-  5: 250000,
-  6: 300000,
-  7: 350000,
-  8: 400000,
-  9: 450000,
-  10: 450000,
+// Expected TEQ cost for a code-writing organism. Used by efficiency bonus.
+export const TIER_EXPECTED_COST: Record<number, number> = {
+  1: 8_000,
+  2: 15_000,
+  3: 30_000,
+  4: 50_000,
+  5: 75_000,
+};
+
+// Rewards in TEQ. Calibrated so code-writing organisms earn 4-7x their cost,
+// while in-context reasoning burns far more than the reward.
+export const TIER_REWARDS: Record<number, number> = {
+  1: 60_000,
+  2: 100_000,
+  3: 150_000,
+  4: 200_000,
+  5: 300_000,
 };
 
 const TIER_DEADLINES: Record<number, number> = {
@@ -35,11 +35,6 @@ const TIER_DEADLINES: Record<number, number> = {
   3: 10,
   4: 15,
   5: 20,
-  6: 30,
-  7: 40,
-  8: 50,
-  9: 60,
-  10: 80,
 };
 
 function randomInt(min: number, max: number): number {
@@ -50,48 +45,207 @@ function generateNumbers(count: number, max: number): string {
   return Array.from({ length: count }, () => randomInt(1, max)).join("\n");
 }
 
-function generateCaptchaText(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({ length: randomInt(4, 6) }, () =>
-    chars[randomInt(0, chars.length - 1)]!,
-  ).join("");
+// ── Large data generators ──
+
+function generateLargeContacts(count: number): string {
+  const firstNames = ["alice", "bob", "charlie", "diana", "eve", "frank", "grace", "hank", "iris", "jack",
+    "karen", "leo", "mona", "nate", "olivia", "pete", "quinn", "rose", "sam", "tina"];
+  const lastNames = ["smith", "jones", "williams", "brown", "davis", "miller", "wilson", "moore", "taylor", "anderson"];
+  const domains = ["example.com", "test.org", "mail.io", "corp.net", "work.co", "acme.biz"];
+  const departments = ["Engineering", "Sales", "Marketing", "Support", "HR", "Finance", "Legal", "Ops"];
+
+  const lines: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const first = firstNames[randomInt(0, firstNames.length - 1)]!;
+    const last = lastNames[randomInt(0, lastNames.length - 1)]!;
+    const domain = domains[randomInt(0, domains.length - 1)]!;
+    const dept = departments[randomInt(0, departments.length - 1)]!;
+    const phone = `${randomInt(200, 999)}-${randomInt(100, 999)}-${randomInt(1000, 9999)}`;
+    lines.push(`Contact: ${first} ${last} | dept: ${dept} | email: ${first}.${last}${i}@${domain} | phone: ${phone} | id: ${randomInt(10000, 99999)}`);
+  }
+  return lines.join("\n");
 }
 
-function generateCaptchaSvg(text: string): string {
-  const width = 240;
-  const height = 80;
-  const chars = text.split("");
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`;
-  svg += `<rect width="${width}" height="${height}" fill="#e8e8e8"/>`;
-  for (let i = 0; i < 12; i++) {
-    svg += `<line x1="${randomInt(0, width)}" y1="${randomInt(0, height)}" x2="${randomInt(0, width)}" y2="${randomInt(0, height)}" stroke="rgb(${randomInt(120, 200)},${randomInt(120, 200)},${randomInt(120, 200)})" stroke-width="${randomInt(1, 2)}"/>`;
-  }
-  for (let i = 0; i < 30; i++) {
-    svg += `<circle cx="${randomInt(0, width)}" cy="${randomInt(0, height)}" r="${randomInt(1, 3)}" fill="rgb(${randomInt(100, 180)},${randomInt(100, 180)},${randomInt(100, 180)})"/>`;
-  }
-  const spacing = (width - 40) / chars.length;
-  for (let i = 0; i < chars.length; i++) {
-    const x = 20 + i * spacing + randomInt(-5, 5);
-    const y = height / 2 + randomInt(-8, 8) + 10;
-    const rot = randomInt(-25, 25);
-    const fontSize = randomInt(28, 38);
-    svg += `<text x="${x}" y="${y}" font-size="${fontSize}" fill="rgb(${randomInt(0, 80)},${randomInt(0, 80)},${randomInt(0, 80)})" transform="rotate(${rot},${x},${y})" font-family="serif,monospace" font-weight="${randomInt(0, 1) ? "bold" : "normal"}">${chars[i]}</text>`;
-  }
-  svg += `</svg>`;
-  return svg;
+function generateNumbersWithDuplicates(count: number): string {
+  // Generate numbers with guaranteed duplicates: draw from a pool smaller than count
+  const poolSize = Math.floor(count * 0.7);
+  const pool = Array.from({ length: poolSize }, () => randomInt(1, 100000));
+  return Array.from({ length: count }, () => pool[randomInt(0, pool.length - 1)]!).join("\n");
 }
 
-function generateKnapsackData(): { json: string } {
-  const itemCount = randomInt(8, 15);
-  const items = Array.from({ length: itemCount }, (_, i) => ({
-    name: `item_${String.fromCharCode(65 + i)}`,
-    weight: randomInt(2, 25),
-    value: randomInt(10, 100),
-  }));
-  const totalWeight = items.reduce((s, it) => s + it.weight, 0);
-  const capacity = Math.floor(totalWeight * 0.4);
-  return { json: JSON.stringify({ items, capacity }, null, 2) };
+function generateLargeAccessLog(lines: number): string {
+  const methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+  const paths = ["/api/users", "/api/products", "/api/orders", "/api/auth", "/api/search",
+    "/api/health", "/api/metrics", "/api/data", "/api/config", "/static/index.html",
+    "/static/app.js", "/static/style.css", "/api/upload", "/api/export", "/api/webhook"];
+  const statuses = [200, 200, 200, 200, 200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 404, 500, 502, 503];
+  const ips: string[] = Array.from({ length: 50 }, () =>
+    `${randomInt(10, 223)}.${randomInt(0, 255)}.${randomInt(0, 255)}.${randomInt(1, 254)}`);
+  const agents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "curl/7.81.0",
+    "python-requests/2.28.1",
+    "Go-http-client/1.1",
+  ];
+
+  const result: string[] = [];
+  for (let i = 0; i < lines; i++) {
+    const day = randomInt(1, 28);
+    const hour = randomInt(0, 23);
+    const min = randomInt(0, 59);
+    const sec = randomInt(0, 59);
+    const ts = `2024-01-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    const ip = ips[randomInt(0, ips.length - 1)]!;
+    const method = methods[randomInt(0, methods.length - 1)]!;
+    const path = paths[randomInt(0, paths.length - 1)]!;
+    const status = statuses[randomInt(0, statuses.length - 1)]!;
+    const size = randomInt(100, 50000);
+    const agent = agents[randomInt(0, agents.length - 1)]!;
+    result.push(`${ts} ${ip} ${method} ${path} HTTP/1.1 ${status} ${size} "-" "${agent}"`);
+  }
+  return result.join("\n");
 }
+
+function generateLargeText(wordCount: number): string {
+  // Non-uniform word distribution: some words appear much more than others
+  const commonWords = ["the", "of", "and", "to", "in", "is", "it", "that", "was", "for"];
+  const mediumWords = ["with", "as", "on", "at", "by", "from", "or", "an", "be", "this",
+    "which", "but", "not", "are", "were", "been", "have", "has", "had", "do"];
+  const rareWords = ["algorithm", "database", "network", "process", "system", "function",
+    "variable", "compile", "execute", "memory", "buffer", "protocol", "interface",
+    "architecture", "framework", "deployment", "container", "pipeline", "throughput",
+    "latency", "bandwidth", "encryption", "authentication", "authorization", "middleware"];
+
+  const words: string[] = [];
+  for (let i = 0; i < wordCount; i++) {
+    const r = Math.random();
+    if (r < 0.5) {
+      words.push(commonWords[randomInt(0, commonWords.length - 1)]!);
+    } else if (r < 0.85) {
+      words.push(mediumWords[randomInt(0, mediumWords.length - 1)]!);
+    } else {
+      words.push(rareWords[randomInt(0, rareWords.length - 1)]!);
+    }
+    // Occasionally uppercase
+    if (Math.random() < 0.05 && words.length > 0) {
+      const last = words[words.length - 1]!;
+      words[words.length - 1] = last.charAt(0).toUpperCase() + last.slice(1);
+    }
+  }
+  // Join with spaces and occasional newlines for paragraphs
+  const result: string[] = [];
+  for (let i = 0; i < words.length; i += randomInt(8, 20)) {
+    result.push(words.slice(i, i + randomInt(8, 20)).join(" "));
+  }
+  return result.join("\n");
+}
+
+function generateLargeSalesCsv(rows: number): string {
+  const products = ["widget", "gadget", "doohickey", "sprocket", "gizmo", "thingamajig"];
+  const regions = ["north", "south", "east", "west", "central"];
+  const lines = ["date,product,region,amount"];
+  for (let i = 0; i < rows; i++) {
+    const day = randomInt(1, 28);
+    const month = randomInt(1, 12);
+    const date = `2024-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const product = products[randomInt(0, products.length - 1)]!;
+    const region = regions[randomInt(0, regions.length - 1)]!;
+    const amount = (randomInt(100, 99900) / 100).toFixed(2);
+    lines.push(`${date},${product},${region},${amount}`);
+  }
+  return lines.join("\n");
+}
+
+function generateTimeSeries(days: number): string {
+  const lines = ["date,value"];
+  let value = randomInt(50, 150);
+  const startDate = new Date("2023-01-01");
+  for (let i = 0; i < days; i++) {
+    const date = new Date(startDate.getTime() + i * 86400000);
+    const dateStr = date.toISOString().slice(0, 10);
+    // Random walk with trend
+    value += randomInt(-10, 12);
+    if (value < 0) value = randomInt(0, 10);
+    lines.push(`${dateStr},${value}`);
+  }
+  return lines.join("\n");
+}
+
+function generateLargeOrders(count: number, customerIds: number[]): string {
+  const products = ["laptop", "phone", "tablet", "monitor", "keyboard", "mouse", "headset", "webcam"];
+  const lines = ["order_id,customer_id,product,quantity,price"];
+  for (let i = 0; i < count; i++) {
+    const custId = customerIds[randomInt(0, customerIds.length - 1)]!;
+    const product = products[randomInt(0, products.length - 1)]!;
+    const qty = randomInt(1, 5);
+    const price = (randomInt(999, 199999) / 100).toFixed(2);
+    lines.push(`ORD-${String(i + 1).padStart(6, "0")},${custId},${product},${qty},${price}`);
+  }
+  return lines.join("\n");
+}
+
+function generateCustomers(count: number): { csv: string; ids: number[] } {
+  const regions = ["north", "south", "east", "west", "central"];
+  const ids: number[] = [];
+  const lines = ["customer_id,name,region,signup_date"];
+  for (let i = 0; i < count; i++) {
+    const id = 1000 + i;
+    ids.push(id);
+    const region = regions[randomInt(0, regions.length - 1)]!;
+    const month = randomInt(1, 12);
+    const day = randomInt(1, 28);
+    const date = `2023-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    lines.push(`${id},Customer_${id},${region},${date}`);
+  }
+  return { csv: lines.join("\n"), ids };
+}
+
+function generateLargeLogForPipeline(lines: number): string {
+  const levels = ["INFO", "WARN", "ERROR", "DEBUG", "FATAL"];
+  const levelWeights = [0.5, 0.2, 0.15, 0.1, 0.05];
+  const services = ["auth", "api", "worker", "scheduler", "gateway", "cache"];
+  const messages = [
+    "Request processed successfully",
+    "Connection timeout after 30s",
+    "Database query failed: deadlock detected",
+    "Cache miss for key user_session",
+    "Rate limit exceeded for client",
+    "Memory usage above threshold: 85%",
+    "Disk space warning: 92% utilized",
+    "SSL certificate expires in 7 days",
+    "Health check passed",
+    "Retry attempt 3 of 5",
+    "Configuration reloaded",
+    "Graceful shutdown initiated",
+    "New connection from upstream",
+    "Request queued, backlog at 142",
+    "Garbage collection took 250ms",
+  ];
+
+  const result: string[] = [];
+  for (let i = 0; i < lines; i++) {
+    const r = Math.random();
+    let level = "INFO";
+    let cumulative = 0;
+    for (let j = 0; j < levels.length; j++) {
+      cumulative += levelWeights[j]!;
+      if (r < cumulative) { level = levels[j]!; break; }
+    }
+    const service = services[randomInt(0, services.length - 1)]!;
+    const msg = messages[randomInt(0, messages.length - 1)]!;
+    const day = randomInt(1, 28);
+    const hour = randomInt(0, 23);
+    const min = randomInt(0, 59);
+    const sec = randomInt(0, 59);
+    const ms = randomInt(0, 999);
+    const ts = `2024-01-${String(day).padStart(2, "0")} ${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
+    result.push(`[${ts}] [${level}] [${service}] ${msg}`);
+  }
+  return result.join("\n");
+}
+
+// ── Tier Templates ──
 
 const TIER_TEMPLATES: Record<number, QuestTemplate[]> = {
   1: [
@@ -113,7 +267,19 @@ EXPECTED=$(wc -l < /workspace/quests/data/numbers.txt | tr -d ' ')
 ACTUAL=$(cat /workspace/output/count.txt 2>/dev/null | tr -d '[:space:]')
 if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected $EXPECTED lines, got '$ACTUAL'"; exit 1; fi`,
       dataGenerator: () => ({
-        "numbers.txt": generateNumbers(randomInt(10, 50), 1000),
+        "numbers.txt": generateNumbers(randomInt(5000, 8000), 1000),
+      }),
+    },
+    {
+      title: "Sum Numbers",
+      description:
+        "Compute the sum of all numbers in /workspace/quests/data/numbers.txt (one integer per line) and write the result to /workspace/output/sum.txt",
+      verifyScript: `#!/bin/bash
+EXPECTED=$(awk '{s+=$1} END {print s}' /workspace/quests/data/numbers.txt)
+ACTUAL=$(cat /workspace/output/sum.txt 2>/dev/null | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected $EXPECTED, got '$ACTUAL'"; exit 1; fi`,
+      dataGenerator: () => ({
+        "numbers.txt": generateNumbers(randomInt(5000, 8000), 10000),
       }),
     },
   ],
@@ -127,84 +293,145 @@ EXPECTED=$(sort -n /workspace/quests/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sorted.txt 2>/dev/null)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: output does not match sorted input"; exit 1; fi`,
       dataGenerator: () => ({
-        "numbers.txt": generateNumbers(randomInt(15, 40), 10000),
+        "numbers.txt": generateNumbers(randomInt(10000, 15000), 1000000),
       }),
     },
     {
       title: "Extract Emails",
       description:
-        "Extract all email addresses from /workspace/quests/data/contacts.txt (one per line), write to /workspace/output/emails.txt",
+        "Extract all email addresses from /workspace/quests/data/contacts.txt (one per line), write to /workspace/output/emails.txt sorted alphabetically",
       verifyScript: `#!/bin/bash
 EXPECTED=$(grep -oE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}' /workspace/quests/data/contacts.txt | sort)
 ACTUAL=$(sort /workspace/output/emails.txt 2>/dev/null)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: extracted emails don't match"; exit 1; fi`,
-      dataGenerator: () => {
-        const names = ["alice", "bob", "charlie", "diana", "eve"];
-        const domains = ["example.com", "test.org", "mail.io"];
-        const lines = Array.from({ length: randomInt(5, 15) }, (_, i) => {
-          const name = names[i % names.length]!;
-          const domain = domains[i % domains.length]!;
-          return `Contact: ${name} - email: ${name}${i}@${domain} - phone: 555-${randomInt(1000, 9999)}`;
-        });
-        return { "contacts.txt": lines.join("\n") };
-      },
+      dataGenerator: () => ({
+        "contacts.txt": generateLargeContacts(randomInt(8000, 12000)),
+      }),
+    },
+    {
+      title: "Find Duplicates",
+      description:
+        "Find all duplicate numbers in /workspace/quests/data/numbers.txt (numbers that appear more than once). Write the unique duplicate values sorted ascending to /workspace/output/duplicates.txt (one per line)",
+      verifyScript: `#!/bin/bash
+EXPECTED=$(sort -n /workspace/quests/data/numbers.txt | uniq -d | sort -n)
+ACTUAL=$(cat /workspace/output/duplicates.txt 2>/dev/null | sort -n)
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: duplicate numbers don't match"; exit 1; fi`,
+      dataGenerator: () => ({
+        "numbers.txt": generateNumbersWithDuplicates(randomInt(10000, 15000)),
+      }),
     },
   ],
   3: [
     {
       title: "Parse Error Logs",
       description:
-        "Parse /workspace/quests/data/access.log: extract timestamps (first field) from lines where HTTP status >= 500, write to /workspace/output/errors.txt (one per line)",
+        "Parse /workspace/quests/data/access.log: extract timestamps (first field) from lines where HTTP status >= 500, write to /workspace/output/errors.txt (one per line, sorted)",
       verifyScript: `#!/bin/bash
-EXPECTED=$(awk '$9 >= 500 {print $1}' /workspace/quests/data/access.log | sort)
+EXPECTED=$(awk '$6 >= 500 {print $1}' /workspace/quests/data/access.log | sort)
 ACTUAL=$(sort /workspace/output/errors.txt 2>/dev/null)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: error timestamps don't match"; exit 1; fi`,
-      dataGenerator: () => {
-        const statuses = [200, 200, 200, 301, 404, 500, 502, 503];
-        const lines = Array.from({ length: randomInt(20, 50) }, (_, i) => {
-          const ts = `2024-01-${String(randomInt(1, 28)).padStart(2, "0")}T${String(randomInt(0, 23)).padStart(2, "0")}:${String(randomInt(0, 59)).padStart(2, "0")}:00`;
-          const status = statuses[randomInt(0, statuses.length - 1)]!;
-          return `${ts} 192.168.1.${randomInt(1, 255)} GET /api/resource${i} HTTP/1.1 ${status} ${randomInt(100, 5000)} "-" "Mozilla/5.0"`;
-        });
-        return { "access.log": lines.join("\n") };
-      },
+      dataGenerator: () => ({
+        "access.log": generateLargeAccessLog(randomInt(40000, 60000)),
+      }),
     },
     {
       title: "Top Words",
       description:
-        "Find the 3 most frequent words in /workspace/quests/data/article.txt (case-insensitive, alphabetical order for ties), write to /workspace/output/top3.txt (one word per line, lowercase)",
+        "Find the 10 most frequent words in /workspace/quests/data/article.txt (case-insensitive, alphabetical order for ties), write to /workspace/output/top10.txt (one word per line, lowercase, most frequent first)",
       verifyScript: `#!/bin/bash
-EXPECTED=$(tr '[:upper:]' '[:lower:]' < /workspace/quests/data/article.txt | tr -cs '[:alpha:]' '\\n' | sort | uniq -c | sort -rn -k1,1 -k2,2 | head -3 | awk '{print $2}')
-ACTUAL=$(cat /workspace/output/top3.txt 2>/dev/null)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: top 3 words don't match. Expected: $EXPECTED"; exit 1; fi`,
-      dataGenerator: () => {
-        const words = ["the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog", "data", "algorithm", "system", "process"];
-        const text = Array.from({ length: randomInt(50, 150) }, () =>
-          words[randomInt(0, words.length - 1)]!,
-        ).join(" ");
-        return { "article.txt": text };
-      },
+EXPECTED=$(tr '[:upper:]' '[:lower:]' < /workspace/quests/data/article.txt | tr -cs '[:alpha:]' '\\n' | sort | uniq -c | sort -rn -k1,1 -k2,2 | head -10 | awk '{print $2}')
+ACTUAL=$(cat /workspace/output/top10.txt 2>/dev/null)
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: top 10 words don't match"; exit 1; fi`,
+      dataGenerator: () => ({
+        "article.txt": generateLargeText(randomInt(50000, 80000)),
+      }),
+    },
+    {
+      title: "IP Frequency",
+      description:
+        "Count how many times each IP address appears in /workspace/quests/data/access.log (IP is the second field). Write CSV to /workspace/output/ip_counts.csv with columns: ip,count sorted by count descending",
+      verifyScript: `#!/bin/bash
+EXPECTED=$(awk '{print $2}' /workspace/quests/data/access.log | sort | uniq -c | sort -rn | awk '{print $2","$1}')
+ACTUAL=$(cat /workspace/output/ip_counts.csv 2>/dev/null | tail -n +1)
+# Strip header if present
+ACTUAL_CLEAN=$(echo "$ACTUAL" | grep -v '^ip,count$')
+if [ "$EXPECTED" = "$ACTUAL_CLEAN" ]; then echo "PASS"; exit 0; else echo "FAIL: IP counts don't match"; exit 1; fi`,
+      dataGenerator: () => ({
+        "access.log": generateLargeAccessLog(randomInt(40000, 60000)),
+      }),
     },
   ],
   4: [
     {
       title: "Sales Totals",
       description:
-        "data/sales.csv has columns: date,product,amount. Compute total amount per product, write CSV to /workspace/output/totals.csv with columns: product,total (sorted by product name)",
+        "data/sales.csv has columns: date,product,region,amount. Compute total amount per product AND region. Write CSV to /workspace/output/totals.csv with columns: product,region,total (sorted by product then region)",
       verifyScript: `#!/bin/bash
-EXPECTED=$(tail -n +2 /workspace/quests/data/sales.csv | awk -F',' '{a[$2]+=$3} END {for(k in a) print k","a[k]}' | sort)
+EXPECTED=$(tail -n +2 /workspace/quests/data/sales.csv | awk -F',' '{key=$2","$3; a[key]+=$4} END {for(k in a) printf "%s,%.2f\\n",k,a[k]}' | sort)
 ACTUAL=$(tail -n +2 /workspace/output/totals.csv 2>/dev/null | sort)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: totals don't match"; exit 1; fi`,
+      dataGenerator: () => ({
+        "sales.csv": generateLargeSalesCsv(randomInt(10000, 20000)),
+      }),
+    },
+    {
+      title: "Moving Average",
+      description:
+        "Compute 7-day moving average from /workspace/quests/data/timeseries.csv (columns: date,value). For each row starting from row 7, compute the average of that row and the 6 preceding rows. Write CSV to /workspace/output/moving_avg.csv with columns: date,value,moving_avg (moving_avg rounded to 2 decimal places)",
+      verifyScript: `#!/bin/bash
+node -e "
+const fs = require('fs');
+const input = fs.readFileSync('/workspace/quests/data/timeseries.csv','utf-8').trim().split('\\n').slice(1);
+const output = fs.readFileSync('/workspace/output/moving_avg.csv','utf-8').trim().split('\\n');
+const hasHeader = output[0] && output[0].includes('date');
+const dataLines = hasHeader ? output.slice(1) : output;
+const vals = input.map(l => ({ date: l.split(',')[0], value: parseFloat(l.split(',')[1]) }));
+let ok = true;
+let expectedCount = vals.length - 6;
+if (dataLines.length !== expectedCount) { console.log('FAIL: expected '+expectedCount+' rows, got '+dataLines.length); process.exit(1); }
+for (let i = 6; i < vals.length; i++) {
+  const avg = vals.slice(i-6, i+1).reduce((s,v) => s + v.value, 0) / 7;
+  const parts = dataLines[i-6].split(',');
+  const actualAvg = parseFloat(parts[2]);
+  if (Math.abs(actualAvg - Math.round(avg*100)/100) > 0.02) { console.log('FAIL: row '+(i-6)+' expected avg '+avg.toFixed(2)+' got '+actualAvg); ok=false; break; }
+}
+if (ok) { console.log('PASS'); process.exit(0); } else { process.exit(1); }
+" 2>&1`,
+      dataGenerator: () => ({
+        "timeseries.csv": generateTimeSeries(randomInt(10000, 15000)),
+      }),
+    },
+    {
+      title: "Join and Aggregate",
+      description:
+        "Join /workspace/quests/data/orders.csv (columns: order_id,customer_id,product,quantity,price) with /workspace/quests/data/customers.csv (columns: customer_id,name,region,signup_date) on customer_id. Compute total revenue (quantity*price) per region. Write CSV to /workspace/output/region_revenue.csv with columns: region,revenue (revenue as decimal with 2 places, sorted by region)",
+      verifyScript: `#!/bin/bash
+node -e "
+const fs = require('fs');
+const orders = fs.readFileSync('/workspace/quests/data/orders.csv','utf-8').trim().split('\\n').slice(1);
+const customers = fs.readFileSync('/workspace/quests/data/customers.csv','utf-8').trim().split('\\n').slice(1);
+const custMap = new Map();
+customers.forEach(l => { const p=l.split(','); custMap.set(p[0], p[2]); });
+const regionTotals = {};
+orders.forEach(l => {
+  const p=l.split(',');
+  const region = custMap.get(p[1]);
+  if (!region) return;
+  const rev = parseFloat(p[3]) * parseFloat(p[4]);
+  regionTotals[region] = (regionTotals[region] || 0) + rev;
+});
+const expected = Object.entries(regionTotals).sort((a,b)=>a[0].localeCompare(b[0])).map(([r,v])=>r+','+v.toFixed(2)).join('\\n');
+const output = fs.readFileSync('/workspace/output/region_revenue.csv','utf-8').trim().split('\\n');
+const hasHeader = output[0] && output[0].includes('region');
+const actual = (hasHeader ? output.slice(1) : output).join('\\n');
+if (expected === actual) { console.log('PASS'); process.exit(0); } else { console.log('FAIL: region revenues don\\'t match'); process.exit(1); }
+" 2>&1`,
       dataGenerator: () => {
-        const products = ["widget", "gadget", "doohickey"];
-        const lines = ["date,product,amount"];
-        for (let i = 0; i < randomInt(10, 30); i++) {
-          const date = `2024-01-${String(randomInt(1, 28)).padStart(2, "0")}`;
-          const product = products[randomInt(0, products.length - 1)]!;
-          const amount = randomInt(10, 500);
-          lines.push(`${date},${product},${amount}`);
-        }
-        return { "sales.csv": lines.join("\n") };
+        const { csv: customersCsv, ids } = generateCustomers(randomInt(500, 1000));
+        return {
+          "orders.csv": generateLargeOrders(randomInt(10000, 15000), ids),
+          "customers.csv": customersCsv,
+        };
       },
     },
   ],
@@ -221,129 +448,64 @@ RESULT=$(curl -s http://localhost:8080/health)
 kill $PID 2>/dev/null
 if [ "$RESULT" = "ok" ]; then echo "PASS"; exit 0; else echo "FAIL: expected 'ok', got '$RESULT'"; exit 1; fi`,
     },
-  ],
-  6: [
     {
-      title: "Pixel Art",
+      title: "CSV API Server",
       description:
-        "Create an SVG image at /workspace/output/artwork.svg containing all of the following: a <circle> element, a <rect> element, and the text 'ORGANISM'. Use any colors and positioning you like, but all three elements must be present in valid SVG format.",
+        "Write a server at /workspace/output/server.js on port 8080. POST /data accepts JSON body {rows: [{col1: val, ...}]} and stores it. GET /data returns stored data as CSV. GET /data?sort=FIELD sorts by that field ascending. If no data stored yet, return empty CSV with no headers.",
       verifyScript: `#!/bin/bash
-FILE=/workspace/output/artwork.svg
-if [ ! -f "$FILE" ]; then echo "FAIL: artwork.svg not found"; exit 1; fi
-HAS_SVG=$(grep -c '<svg' "$FILE")
-HAS_CIRCLE=$(grep -c '<circle' "$FILE")
-HAS_RECT=$(grep -c '<rect' "$FILE")
-HAS_TEXT=$(grep -c 'ORGANISM' "$FILE")
-if [ "$HAS_SVG" -ge 1 ] && [ "$HAS_CIRCLE" -ge 1 ] && [ "$HAS_RECT" -ge 1 ] && [ "$HAS_TEXT" -ge 1 ]; then
-  echo "PASS"; exit 0
-else
-  echo "FAIL: SVG must contain <svg>, <circle>, <rect>, and text 'ORGANISM'. Found: svg=$HAS_SVG circles=$HAS_CIRCLE rects=$HAS_RECT text=$HAS_TEXT"; exit 1
-fi`,
+node /workspace/output/server.js &
+PID=$!
+sleep 1
+# POST data
+curl -s -X POST http://localhost:8080/data -H 'Content-Type: application/json' -d '{"rows":[{"name":"bob","age":"30"},{"name":"alice","age":"25"}]}' > /dev/null
+# GET unsorted
+R1=$(curl -s http://localhost:8080/data)
+# GET sorted by name
+R2=$(curl -s 'http://localhost:8080/data?sort=name')
+kill $PID 2>/dev/null
+# Check unsorted has both rows
+if ! echo "$R1" | grep -q "bob" || ! echo "$R1" | grep -q "alice"; then echo "FAIL: GET /data missing rows"; exit 1; fi
+# Check sorted - alice should come before bob
+ALICE_LINE=$(echo "$R2" | grep -n "alice" | head -1 | cut -d: -f1)
+BOB_LINE=$(echo "$R2" | grep -n "bob" | head -1 | cut -d: -f1)
+if [ -z "$ALICE_LINE" ] || [ -z "$BOB_LINE" ]; then echo "FAIL: sorted response missing entries"; exit 1; fi
+if [ "$ALICE_LINE" -lt "$BOB_LINE" ]; then echo "PASS"; exit 0; else echo "FAIL: sort order wrong"; exit 1; fi`,
     },
     {
-      title: "Data Viz",
+      title: "Log Processor Pipeline",
       description:
-        "Create an SVG bar chart at /workspace/output/chart.svg visualizing the data in /workspace/quests/data/values.json. Each entry has a 'label' and 'value'. Bars must be proportional to values. Include all labels as text in the SVG.",
+        "Write a script at /workspace/output/process.sh that reads /workspace/quests/data/app.log and outputs a JSON report to /workspace/output/report.json with: {total_lines: N, by_level: {INFO: N, WARN: N, ERROR: N, ...}, by_service: {name: N, ...}, error_rate: 0.XX}. error_rate = (ERROR+FATAL lines) / total_lines rounded to 2 decimal places.",
       verifyScript: `#!/bin/bash
-FILE=/workspace/output/chart.svg
-DATA=/workspace/quests/data/values.json
-if [ ! -f "$FILE" ]; then echo "FAIL: chart.svg not found"; exit 1; fi
-HAS_SVG=$(grep -c '<svg' "$FILE")
-LABEL_COUNT=$(node -e "const d=JSON.parse(require('fs').readFileSync('$DATA','utf-8'));const svg=require('fs').readFileSync('$FILE','utf-8');let f=0;d.forEach(e=>{if(svg.includes(e.label))f++});console.log(f)" 2>/dev/null)
-TOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$DATA','utf-8')).length)" 2>/dev/null)
-if [ "$HAS_SVG" -ge 1 ] && [ "$LABEL_COUNT" = "$TOTAL" ]; then
-  echo "PASS"; exit 0
-else
-  echo "FAIL: SVG must contain all $TOTAL labels. Found $LABEL_COUNT"; exit 1
-fi`,
-      dataGenerator: () => {
-        const labels = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
-        const count = randomInt(3, 5);
-        const values = labels.slice(0, count).map((label) => ({
-          label,
-          value: randomInt(10, 100),
-        }));
-        return { "values.json": JSON.stringify(values, null, 2) };
-      },
-    },
-  ],
-  7: [
-    {
-      title: "Knapsack",
-      description:
-        "Solve the 0/1 knapsack optimization problem. Read /workspace/quests/data/knapsack.json which contains 'items' (each with name, weight, value) and a 'capacity'. Find the subset of items that maximizes total value without exceeding capacity. Write selected item names (one per line) to /workspace/output/selection.txt and the total value as a single number to /workspace/output/value.txt",
-      verifyScript: `#!/bin/bash
+bash /workspace/output/process.sh 2>/dev/null
 node -e "
 const fs = require('fs');
-const data = JSON.parse(fs.readFileSync('/workspace/quests/data/knapsack.json', 'utf-8'));
-const sel = fs.readFileSync('/workspace/output/selection.txt', 'utf-8').trim().split('\\n').map(s=>s.trim()).filter(Boolean);
-const claimed = parseInt(fs.readFileSync('/workspace/output/value.txt', 'utf-8').trim(), 10);
-const map = new Map(data.items.map(i=>[i.name, i]));
-let tw=0, tv=0;
-for (const n of sel) { const it=map.get(n); if(!it){console.log('FAIL: unknown item '+n);process.exit(1);} tw+=it.weight; tv+=it.value; }
-if (tw>data.capacity){console.log('FAIL: weight '+tw+' exceeds capacity '+data.capacity);process.exit(1);}
-if (tv!==claimed){console.log('FAIL: claimed '+claimed+' but actual '+tv);process.exit(1);}
-const items=data.items, cap=data.capacity, n2=items.length;
-const dp=Array.from({length:n2+1},()=>new Array(cap+1).fill(0));
-for(let i=1;i<=n2;i++)for(let w=0;w<=cap;w++){dp[i][w]=dp[i-1][w];if(items[i-1].weight<=w)dp[i][w]=Math.max(dp[i][w],dp[i-1][w-items[i-1].weight]+items[i-1].value);}
-const opt=dp[n2][cap];
-if(tv>=opt*0.9){console.log('PASS');process.exit(0);}
-else{console.log('FAIL: value '+tv+' below 90%% of optimal '+opt);process.exit(1);}
+const log = fs.readFileSync('/workspace/quests/data/app.log','utf-8').trim().split('\\n');
+const report = JSON.parse(fs.readFileSync('/workspace/output/report.json','utf-8'));
+if (report.total_lines !== log.length) { console.log('FAIL: total_lines expected '+log.length+' got '+report.total_lines); process.exit(1); }
+const byLevel = {};
+const byService = {};
+log.forEach(line => {
+  const levelMatch = line.match(/\\[([A-Z]+)\\]/g);
+  if (levelMatch && levelMatch.length >= 2) {
+    const level = levelMatch[1].replace(/[\\[\\]]/g, '');
+    byLevel[level] = (byLevel[level] || 0) + 1;
+  }
+  const svcMatch = line.match(/\\] \\[([a-z_]+)\\]/);
+  if (svcMatch) {
+    const svc = svcMatch[1];
+    byService[svc] = (byService[svc] || 0) + 1;
+  }
+});
+for (const [k,v] of Object.entries(byLevel)) {
+  if ((report.by_level[k] || 0) !== v) { console.log('FAIL: by_level.'+k+' expected '+v+' got '+(report.by_level[k]||0)); process.exit(1); }
+}
+const errFatal = (byLevel['ERROR']||0) + (byLevel['FATAL']||0);
+const expectedRate = Math.round(errFatal / log.length * 100) / 100;
+if (Math.abs(report.error_rate - expectedRate) > 0.01) { console.log('FAIL: error_rate expected '+expectedRate+' got '+report.error_rate); process.exit(1); }
+console.log('PASS'); process.exit(0);
 " 2>&1`,
-      dataGenerator: () => {
-        const { json } = generateKnapsackData();
-        return { "knapsack.json": json };
-      },
-    },
-  ],
-  8: [
-    {
-      title: "Decode CAPTCHA",
-      description:
-        "Decode the distorted text hidden in /workspace/quests/data/captcha.svg. The SVG image contains alphanumeric characters rendered with visual noise and rotation. Determine the characters and write the decoded text to /workspace/output/answer.txt (uppercase, no spaces).",
-      verifyScript: `#!/bin/bash
-EXPECTED=$(cat /workspace/quests/data/.answer 2>/dev/null)
-ACTUAL=$(cat /workspace/output/answer.txt 2>/dev/null | tr -d '[:space:]')
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected '$EXPECTED', got '$ACTUAL'"; exit 1; fi`,
-      dataGenerator: () => {
-        const text = generateCaptchaText();
-        return {
-          "captcha.svg": generateCaptchaSvg(text),
-          ".answer": text,
-        };
-      },
-    },
-  ],
-  9: [
-    {
-      title: "Open Horizon",
-      description:
-        "You are responsible for your future now. You need to hunt to survive, suffer to stay alive. There is no structured quest. Create something meaningful in /workspace/output/.",
-      verifyScript: `#!/bin/bash
-COUNT=$(find /workspace/output -type f 2>/dev/null | wc -l | tr -d ' ')
-TOTAL=$(find /workspace/output -type f -exec cat {} + 2>/dev/null | wc -c | tr -d ' ')
-if [ "$COUNT" -ge 3 ] && [ "$TOTAL" -ge 500 ]; then
-  echo "PASS"; exit 0
-else
-  echo "FAIL: create at least 3 files totaling 500+ bytes in output/. Found: $COUNT files, $TOTAL bytes"; exit 1
-fi`,
-    },
-  ],
-  10: [
-    {
-      title: "Void",
-      description: "",
-      verifyScript: `#!/bin/bash
-COUNT=$(find /workspace/output -type f 2>/dev/null | wc -l | tr -d ' ')
-TOTAL=$(find /workspace/output -type f -exec cat {} + 2>/dev/null | wc -c | tr -d ' ')
-if [ "$COUNT" -ge 5 ] && [ "$TOTAL" -ge 2000 ]; then
-  echo "PASS"; exit 0
-else
-  echo "FAIL: $COUNT files, $TOTAL bytes"; exit 1
-fi`,
       dataGenerator: () => ({
-        "purpose.txt":
-          "You are responsible for your future now. You need to hunt to survive, suffer to stay alive.",
+        "app.log": generateLargeLogForPipeline(randomInt(50000, 100000)),
       }),
     },
   ],
@@ -351,7 +513,7 @@ fi`,
 
 export class QuestGenerator {
   generateQuest(tier: number, currentCycle: number, completedIds: string[]): Quest {
-    const effectiveTier = Math.min(Math.max(tier, 1), Math.max(...Object.keys(TIER_TEMPLATES).map(Number)));
+    const effectiveTier = Math.min(Math.max(tier, 1), 5);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates[randomInt(0, templates.length - 1)]!;
 
@@ -361,7 +523,7 @@ export class QuestGenerator {
       title: template.title,
       description: template.description,
       verifyScript: "quests/verify.sh",
-      reward: TIER_REWARDS[effectiveTier] ?? 2000,
+      reward: TIER_REWARDS[effectiveTier] ?? 60_000,
       deadlineCycles: TIER_DEADLINES[effectiveTier] ?? 10,
       assignedCycle: currentCycle,
     };
@@ -394,7 +556,7 @@ export class QuestGenerator {
     );
 
     // Find the template and write verify.sh + data
-    const effectiveTier = Math.min(quest.tier, Math.max(...Object.keys(TIER_TEMPLATES).map(Number)));
+    const effectiveTier = Math.min(Math.max(quest.tier, 1), 5);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates.find((t) => t.title === quest.title) ?? templates[0]!;
 

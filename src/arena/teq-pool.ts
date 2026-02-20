@@ -36,10 +36,9 @@ export class TEQPool {
   private mutex: Promise<void> = Promise.resolve();
 
   private constructor(config: Partial<TEQPoolConfig> = {}) {
-    const cfg = { ...DEFAULT_CONFIG, ...config };
-    this.balance = cfg.initialBalance;
-    this.maxBalance = cfg.maxBalance;
-    this.regenPerCycle = cfg.regenPerCycle;
+    this.balance = config.initialBalance ?? DEFAULT_CONFIG.initialBalance;
+    this.maxBalance = config.maxBalance ?? DEFAULT_CONFIG.maxBalance;
+    this.regenPerCycle = config.regenPerCycle ?? DEFAULT_CONFIG.regenPerCycle;
   }
 
   /** Initialize the singleton with config. Must be called before instance(). */
