@@ -95,11 +95,11 @@ export function computeIncome(
   }
 
   if (outcome === "success") {
-    total += 1000;
-    sources.push("success:1000");
+    total += 5000;
+    sources.push("success:5000");
   }
 
-  const relevanceIncome = Math.floor(500 * goalRelevance);
+  const relevanceIncome = Math.floor(2500 * goalRelevance);
   if (relevanceIncome > 0) {
     total += relevanceIncome;
     sources.push(`relevance:${relevanceIncome}`);

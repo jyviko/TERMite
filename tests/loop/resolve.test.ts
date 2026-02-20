@@ -3,20 +3,20 @@ import { computeIncome } from "../../src/loop/resolve.js";
 
 describe("computeIncome", () => {
   it("computes quest reward", () => {
-    const { amount, sources } = computeIncome(0.5, "partial", 5000);
-    expect(amount).toBe(5000 + 250); // quest + relevance
-    expect(sources).toContain("quest:5000");
+    const { amount, sources } = computeIncome(0.5, "partial", 25000);
+    expect(amount).toBe(25000 + 1250); // quest + relevance (floor(2500 * 0.5))
+    expect(sources).toContain("quest:25000");
   });
 
   it("adds success bonus", () => {
     const { amount, sources } = computeIncome(0.8, "success", null);
-    expect(amount).toBe(1000 + 400); // success + relevance
-    expect(sources).toContain("success:1000");
+    expect(amount).toBe(5000 + 2000); // success + relevance (floor(2500 * 0.8))
+    expect(sources).toContain("success:5000");
   });
 
   it("relevance-scaled income", () => {
     const { amount } = computeIncome(0.6, "partial", null);
-    expect(amount).toBe(300); // floor(500 * 0.6)
+    expect(amount).toBe(1500); // floor(2500 * 0.6)
   });
 
   it("zero relevance gives zero income", () => {
@@ -25,8 +25,8 @@ describe("computeIncome", () => {
   });
 
   it("full relevance with quest and success", () => {
-    const { amount, sources } = computeIncome(1.0, "success", 10000);
-    expect(amount).toBe(10000 + 1000 + 500);
+    const { amount, sources } = computeIncome(1.0, "success", 60000);
+    expect(amount).toBe(60000 + 5000 + 2500);
     expect(sources).toHaveLength(3);
   });
 });

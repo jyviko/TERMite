@@ -10,17 +10,21 @@ interface QuestTemplate {
   dataGenerator?: () => Record<string, string>;
 }
 
+// Rewards in TEQ (token equivalents). Calibrated so:
+// - Tier 1-2: organism bleeds slowly (covers 50-75% of cycle cost)
+// - Tier 3: break-even threshold
+// - Tier 4+: net-positive, enabling surplus and reproduction
 const TIER_REWARDS: Record<number, number> = {
-  1: 2000,
-  2: 3000,
-  3: 5000,
-  4: 8000,
-  5: 12000,
-  6: 18000,
-  7: 25000,
-  8: 35000,
-  9: 50000,
-  10: 75000,
+  1: 10000,
+  2: 15000,
+  3: 25000,
+  4: 40000,
+  5: 60000,
+  6: 90000,
+  7: 125000,
+  8: 175000,
+  9: 250000,
+  10: 375000,
 };
 
 const TIER_DEADLINES: Record<number, number> = {

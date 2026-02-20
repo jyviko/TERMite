@@ -42,7 +42,7 @@ class MockExecutor {
         tier: 1,
         title: "Hello World",
         description: "Write Hello, World! to /workspace/output/greeting.txt",
-        reward: 2000,
+        reward: 10000,
       });
     }
     if (command.includes("cat") && command.includes("manifest.json")) {
