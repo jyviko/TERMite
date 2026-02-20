@@ -59,6 +59,8 @@ export class OrganismStateMachine {
     }
   }
 
+  private lastToolHint = "";
+
   private async *forage(): AsyncGenerator<AgentEvent> {
     const routing = this.state.genome.routing[this.state.forageRouting];
     const model = routing.model;
@@ -66,10 +68,10 @@ export class OrganismStateMachine {
     const maxTokens = routing.maxTokens;
 
     const tools = await this.buildForageTools();
-    let toolsUsed = false;
+    const toolCallCounts = new Map<string, number>();
     const executor = this.buildToolExecutor();
     const trackingExecutor: ToolExecutor = async (name, input) => {
-      toolsUsed = true;
+      toolCallCounts.set(name, (toolCallCounts.get(name) ?? 0) + 1);
       return executor(name, input);
     };
 
@@ -93,8 +95,12 @@ export class OrganismStateMachine {
       if (event.type === "error") break;
     }
 
+    // Compute tool usage hint for resolution and next-cycle awareness
+    const availableNames = tools.map((t) => t.name);
+    this.lastToolHint = buildToolHint(availableNames, toolCallCounts);
+
     // Track staleness — organism that does nothing dies
-    if (toolsUsed) {
+    if (toolCallCounts.size > 0) {
       this.consecutiveIdleCycles = 0;
     } else {
       this.consecutiveIdleCycles++;
@@ -148,7 +154,7 @@ export class OrganismStateMachine {
 
     yield {
       type: "text",
-      text: `RESOLVE: outcome=${result.outcome} relevance=${result.goalRelevance} lesson="${result.lesson}"`,
+      text: `RESOLVE: outcome=${result.outcome} relevance=${result.goalRelevance} lesson="${result.lesson}"${this.lastToolHint ? ` | ${this.lastToolHint}` : ""}`,
     };
 
     // Memorize
@@ -217,6 +223,7 @@ export class OrganismStateMachine {
       `Drives: ${drives}`,
       activeGoal ? `Active drive goal: ${activeGoal}` : null,
       costHint,
+      this.lastToolHint || null,
       `Cycle: ${this.state.cycleCount} | Generation: ${this.state.generation}`,
     ].filter(Boolean);
 
@@ -326,6 +333,29 @@ function formatDrives(drives: import("../state/drives.js").DriveSystem): string 
   return Object.values(drives.drives)
     .map((d) => `${d.name}: ${d.level.toFixed(2)} (threshold: ${d.threshold})`)
     .join(", ");
+}
+
+function buildToolHint(available: string[], used: Map<string, number>): string {
+  if (available.length === 0) return "";
+
+  const parts: string[] = [];
+
+  if (used.size === 0) {
+    parts.push("Tools: none used this cycle");
+    parts.push(`Available: ${available.join(", ")}`);
+  } else {
+    const usedSummary = Array.from(used.entries())
+      .map(([name, count]) => `${name}(${count})`)
+      .join(", ");
+    parts.push(`Tools used: ${usedSummary}`);
+
+    const unused = available.filter((t) => !used.has(t));
+    if (unused.length > 0) {
+      parts.push(`Unused tools: ${unused.join(", ")}`);
+    }
+  }
+
+  return parts.join(" | ");
 }
 
 function parseRestMemories(
