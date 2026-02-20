@@ -157,11 +157,13 @@ describe("AgenticLoop", () => {
     const lastMsg = secondCallMessages[secondCallMessages.length - 1]!;
     expect(lastMsg.role).toBe("user");
     expect(Array.isArray(lastMsg.content)).toBe(true);
-    const blocks = lastMsg.content as Anthropic.ToolResultBlockParam[];
-    expect(blocks).toHaveLength(2);
+    const blocks = lastMsg.content as Anthropic.ContentBlockParam[];
+    // 2 tool results + 1 usage note text block
+    expect(blocks).toHaveLength(3);
     expect(blocks[0]!.type).toBe("tool_result");
-    expect(blocks[0]!.tool_use_id).toBe("toolu_abc");
-    expect(blocks[1]!.tool_use_id).toBe("toolu_def");
+    expect((blocks[0] as Anthropic.ToolResultBlockParam).tool_use_id).toBe("toolu_abc");
+    expect((blocks[1] as Anthropic.ToolResultBlockParam).tool_use_id).toBe("toolu_def");
+    expect(blocks[2]!.type).toBe("text"); // usage note
   });
 
   it("catches tool errors and returns them as results", async () => {

@@ -73,11 +73,12 @@ describe("EnergyLedger", () => {
     expect(e.spent).toBe(500);
   });
 
-  it("feed caps at capacity", () => {
+  it("feed grows capacity when reserves exceed it", () => {
     const e = new EnergyLedger({ budget: 1000 });
     const added = e.feed(500);
-    expect(added).toBe(0); // already at capacity
-    expect(e.reserves).toBe(1000);
+    expect(added).toBe(500); // no cap — organisms accumulate wealth
+    expect(e.reserves).toBe(1500);
+    expect(e.capacity).toBe(1500); // capacity grew
   });
 
   it("feed adds up to remaining capacity", () => {
