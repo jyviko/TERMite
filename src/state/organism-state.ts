@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { OrganismMode, OrganismState, RoutingTier } from "../types/index.js";
+import type { OrganismMode, OrganismState } from "../types/index.js";
 import { EnergyLedger } from "./energy.js";
 import { DriveSystem } from "./drives.js";
 import { MemoryStore } from "./memory.js";
@@ -13,7 +13,8 @@ export interface OrganismStateInit {
   parentId?: string | null;
   budget: number;
   reserves?: number;
-  routing?: RoutingTier;
+  /** Full model ID for thinking (forage) cycles. */
+  thinkingModel?: string;
 }
 
 export class OrganismStateManager {
@@ -26,7 +27,6 @@ export class OrganismStateManager {
   cycleCount: number;
   mode: OrganismMode;
   goal: string | null;
-  routing: RoutingTier;
 
   energy: EnergyLedger;
   drives: DriveSystem;
@@ -43,7 +43,6 @@ export class OrganismStateManager {
     this.cycleCount = 0;
     this.mode = "alive";
     this.goal = null;
-    this.routing = init.routing ?? (Math.random() < 0.5 ? "deep" : "fast");
     this.energy = new EnergyLedger({
       budget: init.budget,
       reserves: init.reserves ?? init.budget,
@@ -51,6 +50,9 @@ export class OrganismStateManager {
     this.drives = new DriveSystem();
     this.memories = new MemoryStore();
     this.genome = new Genome();
+    if (init.thinkingModel) {
+      this.genome.routing.thinking.model = init.thinkingModel;
+    }
   }
 
   checkVitalSigns(): boolean {
@@ -98,7 +100,6 @@ export class OrganismStateManager {
       cycleCount: this.cycleCount,
       mode: this.mode,
       goal: this.goal,
-      routing: this.routing,
       energy: this.energy.toJSON(),
       drives: this.drives.toJSON(),
       memories: this.memories.toJSON(),
@@ -107,7 +108,7 @@ export class OrganismStateManager {
   }
 
   static fromJSON(data: OrganismState): OrganismStateManager {
-    const mgr = new OrganismStateManager({ id: data.id, budget: data.energy.budget, routing: data.routing });
+    const mgr = new OrganismStateManager({ id: data.id, budget: data.energy.budget });
     mgr.generation = data.generation;
     mgr.parentId = data.parentId;
     mgr.bornAt = data.bornAt;

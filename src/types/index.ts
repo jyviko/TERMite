@@ -75,8 +75,7 @@ export interface RouteEntry {
 }
 
 export interface RoutingConfig {
-  fast: RouteEntry;
-  deep: RouteEntry;
+  thinking: RouteEntry;
   resolve: RouteEntry;
 }
 
@@ -88,8 +87,6 @@ export interface PromptMutation {
   version: number;
 }
 
-export type RoutingTier = "fast" | "deep";
-
 export interface OrganismState {
   id: string;
   generation: number;
@@ -100,7 +97,6 @@ export interface OrganismState {
   cycleCount: number;
   mode: OrganismMode;
   goal: string | null;
-  routing: RoutingTier;
   energy: EnergyLedgerData;
   drives: Record<DriveName, Drive>;
   memories: Memory[];

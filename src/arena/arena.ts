@@ -1,7 +1,7 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentEvent, RoutingTier, TaskResult } from "../types/index.js";
+import type { AgentEvent, TaskResult } from "../types/index.js";
 import { Brain } from "../brain/index.js";
 import { Executor } from "../executor/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
@@ -34,6 +34,8 @@ export interface ArenaConfig {
   workspaceRoot: string;
   apiKey?: string;
   baseUrl?: string;
+  /** Override forage model for all organisms (fast + deep routes). */
+  model?: string;
   poolInitialBalance?: number;
   poolRegenPerCycle?: number;
   poolMaxBalance?: number;
@@ -68,7 +70,6 @@ export class Arena {
   private evolver: GenomeEvolver;
   private workRater: WorkRater;
   private openDataGenerator: OpenDataGenerator;
-  private spawnIndex = 0;
   private config: ArenaConfig;
   private runDir = "";
 
@@ -153,8 +154,6 @@ export class Arena {
     // For now, events are logged by runOrganism directly
   }
 
-  private static readonly ROUTING_TIERS: RoutingTier[] = ["fast", "deep"];
-
   private async spawnOrganism(
     parentId?: string,
     genome?: import("../state/genome.js").Genome,
@@ -168,15 +167,11 @@ export class Arena {
       this.sharedBudget.available / Math.max(1, this.config.organismCount),
     );
 
-    // Round-robin routing tier for balanced model distribution
-    const routing = Arena.ROUTING_TIERS[this.spawnIndex % Arena.ROUTING_TIERS.length]!;
-    this.spawnIndex++;
-
     const state = new OrganismStateManager({
       id,
       budget: perOrganismBudget,
       reserves: startingReserves,
-      routing,
+      thinkingModel: this.config.model,
       generation: parentId
         ? (this.organisms.get(parentId)?.state.generation ?? 0) + 1
         : 0,
@@ -226,7 +221,7 @@ export class Arena {
     };
 
     this.organisms.set(id, entry);
-    this.organismColors.set(id, ORG_COLORS[(this.spawnIndex - 1) % ORG_COLORS.length]!);
+    this.organismColors.set(id, ORG_COLORS[(this.organisms.size - 1) % ORG_COLORS.length]!);
     return id;
   }
 
@@ -419,7 +414,7 @@ export class Arena {
       energyPct: Math.floor(entry.state.energy.ratio * 100),
       reserves: entry.state.energy.reserves,
       genomeVersion: entry.state.genome.version,
-      routing: entry.state.routing,
+      model: entry.state.genome.routing.thinking.model,
       consecutivePasses: entry.consecutivePasses,
       graduated: entry.graduated,
     }));

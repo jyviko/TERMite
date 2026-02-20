@@ -380,7 +380,7 @@ function renderDetailIdentity(org: OrganismState): string[] {
   lines.push(`  Born:           ${born}`);
   lines.push(`  Cycles:         ${org.cycleCount}`);
   lines.push(`  Mode:           ${org.mode}`);
-  lines.push(`  Routing:        ${org.routing}`);
+  lines.push(`  Model:          ${org.genome.routing.thinking.model}`);
   if (org.goal) lines.push(`  Goal:           ${org.goal}`);
 
   return lines;
@@ -545,8 +545,7 @@ function renderDetailGenome(org: OrganismState): string[] {
   lines.push(renderDetailSection("Genome"));
 
   lines.push(`  Version:   ${MAG}v${g.version}${RST}  (${g.promptHistory.length} mutations)`);
-  lines.push(`  Routing:   fast=${g.routing.fast.model} (${g.routing.fast.maxTokens})`);
-  lines.push(`             deep=${g.routing.deep.model} (${g.routing.deep.maxTokens})`);
+  lines.push(`  Routing:   thinking=${g.routing.thinking.model} (${g.routing.thinking.maxTokens})`);
   lines.push(`             resolve=${g.routing.resolve.model} (${g.routing.resolve.maxTokens})`);
 
   const termWidth = process.stdout.columns ?? 120;

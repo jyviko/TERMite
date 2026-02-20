@@ -17,6 +17,7 @@ export interface LoopConfig {
   executor: ToolExecutor;
   signal?: AbortSignal;
   shouldStop?: () => boolean;
+  statusNote?: () => string;
 }
 
 const DEFAULT_MAX_ITERATIONS = 99;
@@ -138,10 +139,11 @@ export class AgenticLoop {
         });
       }
 
-      // Push ONE user message with all tool results + token usage awareness
+      // Push ONE user message with all tool results + status awareness
+      const status = config.statusNote?.() ?? "";
       const usageNote: Anthropic.TextBlockParam = {
         type: "text",
-        text: `[Burst usage: ${cumulative.output.toLocaleString()} output tokens, ${cumulative.input.toLocaleString()} input tokens, ${cumulative.iterations} iterations]`,
+        text: `[Burst: ${cumulative.output.toLocaleString()} out, ${cumulative.input.toLocaleString()} in, ${cumulative.iterations} iter${status ? ` | ${status}` : ""}]`,
       };
       messages.push({ role: "user", content: [...toolResults, usageNote] });
 

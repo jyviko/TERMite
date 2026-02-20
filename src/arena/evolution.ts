@@ -44,7 +44,7 @@ Return JSON: { "systemPrompt": "..." }`;
 
     try {
       const response = await this.brain.chat({
-        model: params.parentGenome.routing.deep.model, // Sonnet
+        model: params.parentGenome.routing.thinking.model,
         system: prompt,
         messages: [{ role: "user", content: "Evolve the genome." }],
         maxTokens: 2048,

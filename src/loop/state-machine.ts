@@ -46,7 +46,6 @@ const INTERNAL_TOOLS: Anthropic.Tool[] = [
 ];
 const INTERNAL_TOOL_NAMES = new Set(INTERNAL_TOOLS.map((t) => t.name));
 
-// Outcome priority for multi-resolve cycles: keep the best
 const OUTCOME_RANK: Record<Outcome, number> = {
   success: 3,
   partial: 2,
@@ -54,27 +53,41 @@ const OUTCOME_RANK: Record<Outcome, number> = {
   failure: 0,
 };
 
+// ── Per-cycle mutable state ─────────────────────────────────────────
+
+interface CycleContext {
+  income: number;
+  sources: string[];
+  outcome: Outcome | null;
+  relevance: number;
+  actions: string[];
+  resolved: boolean;
+  model: string;
+}
+
+function freshCycle(): CycleContext {
+  return { income: 0, sources: [], outcome: null, relevance: 0, actions: [], resolved: false, model: "" };
+}
+
+// ── State machine ───────────────────────────────────────────────────
+
 export class OrganismStateMachine {
   private loop: AgenticLoop;
   private resolver: Resolver;
   private savePath: string;
+
+  // Task reward (set by arena, cleared after first resolve)
   private taskReward: number | null = null;
   private taskTier: number | null = null;
+
+  // Cross-cycle state
   private consecutiveIdleCycles = 0;
-  private cycleModel = "";
+  private lastToolHint = "";
+  private knownTools = new Set<string>(INTERNAL_TOOL_NAMES);
   private static readonly STALENESS_THRESHOLD = 5;
 
-  // Per-cycle income tracking (accumulated across resolve calls)
-  private cycleIncome = 0;
-  private cycleSources: string[] = [];
-  private cycleOutcome: Outcome | null = null;
-  private cycleRelevance = 0;
-
-  // Action log built from yielded events during cycle
-  private cycleActions: string[] = [];
-
-  // Set by resolve handler; checked by agentic loop's shouldStop callback
-  private cycleResolved = false;
+  // Current cycle
+  private cur = freshCycle();
 
   constructor(
     private brain: Brain,
@@ -88,40 +101,16 @@ export class OrganismStateMachine {
     this.savePath = savePath ?? `saves/${state.id}.json`;
   }
 
+  // ── Lifecycle loop ──────────────────────────────────────────────────
+
   async *run(): AsyncGenerator<AgentEvent> {
     while (this.state.alive) {
       this.state.energy.burnBmr();
-      if (!this.state.checkVitalSigns()) {
-        break;
-      }
+      if (!this.state.checkVitalSigns()) break;
 
-      // Reset per-cycle tracking
-      this.cycleIncome = 0;
-      this.cycleSources = [];
-      this.cycleOutcome = null;
-      this.cycleRelevance = 0;
-      this.cycleActions = [];
-
+      this.cur = freshCycle();
       yield* this.cycle();
-
-      // Cycle-end housekeeping
-      this.state.energy.endCycle(
-        this.state.cycleCount,
-        this.cycleOutcome,
-        this.cycleIncome,
-        this.cycleSources.join(", "),
-        this.cycleRelevance,
-        this.cycleModel,
-      );
-
-      this.state.memories.decayEvict();
-      this.state.energy.computeBmr(this.state.memories.totalTokenCost);
-      this.state.drives.update(
-        this.state.energy,
-        this.state.memories.memories,
-        this.state.cycleCount,
-      );
-      this.state.cycleCount++;
+      this.finalizeCycle();
       await this.state.save(this.savePath);
     }
 
@@ -131,71 +120,88 @@ export class OrganismStateMachine {
     }
   }
 
-  private lastToolHint = "";
-  private knownTools = new Set<string>(INTERNAL_TOOL_NAMES);
+  private finalizeCycle(): void {
+    this.state.energy.endCycle(
+      this.state.cycleCount,
+      this.cur.outcome,
+      this.cur.income,
+      this.cur.sources.join(", "),
+      this.cur.relevance,
+      this.cur.model,
+    );
+    this.state.memories.decayEvict();
+    this.state.energy.computeBmr(this.state.memories.totalTokenCost);
+    this.state.drives.update(
+      this.state.energy,
+      this.state.memories.memories,
+      this.state.cycleCount,
+    );
+    this.state.cycleCount++;
+  }
+
+  // ── Single cycle ──────────────────────────────────────────────────
 
   private async *cycle(): AsyncGenerator<AgentEvent> {
-    this.cycleResolved = false;
-
-    const routing = this.state.genome.routing[this.state.routing];
-    const model = routing.model;
-    this.cycleModel = model;
-    const maxTokens = routing.maxTokens;
-    const maxCycleCost = routing.maxCycleCost;
+    const route = this.state.genome.routing.thinking;
+    this.cur.model = route.model;
 
     const tools = await this.buildTools();
-    const toolCallCounts = new Map<string, number>();
-    const executor = this.buildToolExecutor();
-    const trackingExecutor: ToolExecutor = async (name, input) => {
-      toolCallCounts.set(name, (toolCallCounts.get(name) ?? 0) + 1);
-      return executor(name, input);
+    const toolCounts = new Map<string, number>();
+    const executor: ToolExecutor = async (name, input) => {
+      toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
+      return this.executeTool(name, input);
     };
-
-    // Build awareness message — organism wakes up knowing who it is
-    const messages: Anthropic.MessageParam[] = [this.buildAwarenessMessage()];
 
     for await (const event of this.loop.run({
       systemPrompt: this.state.genome.systemPrompt,
-      messages,
+      messages: [this.buildAwarenessMessage()],
       tools,
-      model,
-      maxTokens,
+      model: route.model,
+      maxTokens: route.maxTokens,
       maxIterations: 25,
-      executor: trackingExecutor,
+      executor,
       shouldStop: () =>
-        this.cycleResolved ||
-        (maxCycleCost != null && this.state.energy.currentCycleCost >= maxCycleCost),
+        this.cur.resolved ||
+        (route.maxCycleCost != null && this.state.energy.currentCycleCost >= route.maxCycleCost),
+      statusNote: () =>
+        `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity} TEQ, cycle cost: ${this.state.energy.currentCycleCost} TEQ`,
     })) {
       yield event;
-
-      // Track actions from events for summarizeRecentActions
-      if (event.type === "tool_start") {
-        this.cycleActions.push(`→ ${event.name}`);
-      } else if (event.type === "tool_result") {
-        this.cycleActions.push(`← ${event.name}: ${event.result.slice(0, 100)}`);
-      } else if (event.type === "text") {
-        this.cycleActions.push(event.text.slice(0, 150));
-      }
-
-      if (event.type === "usage") {
-        this.state.energy.burn(model, event);
-      }
-
+      this.trackEvent(event);
       if (event.type === "error") break;
     }
 
-    // Compute tool usage hint for next-cycle awareness
-    const availableNames = tools.map((t) => t.name);
-    const newTools = availableNames.filter((n) => !this.knownTools.has(n));
-    for (const n of availableNames) this.knownTools.add(n);
-    this.lastToolHint = buildToolHint(availableNames, toolCallCounts, newTools);
+    this.updateToolHints(tools, toolCounts);
+    this.trackStaleness(toolCounts);
+  }
 
-    // Track staleness — organism that does nothing useful dies.
-    // Internal-only tool calls (think/memorize) don't count as real work.
-    const externalCalls = Array.from(toolCallCounts.keys()).filter(
-      (name) => !INTERNAL_TOOL_NAMES.has(name),
-    );
-    if (externalCalls.length > 0) {
+  private trackEvent(event: AgentEvent): void {
+    switch (event.type) {
+      case "tool_start":
+        this.cur.actions.push(`→ ${event.name}`);
+        break;
+      case "tool_result":
+        this.cur.actions.push(`← ${event.name}: ${event.result.slice(0, 100)}`);
+        break;
+      case "text":
+        this.cur.actions.push(event.text.slice(0, 150));
+        break;
+      case "usage":
+        this.state.energy.burn(this.cur.model, event);
+        break;
+    }
+  }
+
+  private updateToolHints(tools: Anthropic.Tool[], counts: Map<string, number>): void {
+    const names = tools.map((t) => t.name);
+    const newTools = names.filter((n) => !this.knownTools.has(n));
+    for (const n of names) this.knownTools.add(n);
+    this.lastToolHint = formatToolHint(names, counts, newTools);
+  }
+
+  private trackStaleness(counts: Map<string, number>): void {
+    const hasExternalWork = Array.from(counts.keys()).some((n) => !INTERNAL_TOOL_NAMES.has(n));
+    if (hasExternalWork) {
       this.consecutiveIdleCycles = 0;
     } else {
       this.consecutiveIdleCycles++;
@@ -205,7 +211,23 @@ export class OrganismStateMachine {
     }
   }
 
-  // ── Internal tool handlers ──────────────────────────────────────────
+  // ── Tool execution ────────────────────────────────────────────────
+
+  private executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+    const toolInput = String(input.input ?? "");
+    switch (name) {
+      case "think":
+        return Promise.resolve(toolInput);
+      case "resolve":
+        return this.handleResolve(toolInput);
+      case "memorize":
+        return Promise.resolve(this.handleMemorize(toolInput));
+      default: {
+        const escaped = toolInput.replace(/'/g, "'\\''");
+        return this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
+      }
+    }
+  }
 
   private async handleResolve(input: string): Promise<string> {
     const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and survive";
@@ -218,15 +240,15 @@ export class OrganismStateMachine {
       energy: this.state.energy,
     });
 
-    // Burn resolver LLM cost and track it for transparency
+    // Burn resolver cost
     let resolveCost = 0;
     if (result.usage.output > 0) {
-      const reservesBefore = this.state.energy.remaining;
+      const before = this.state.energy.remaining;
       this.state.energy.burn(this.state.genome.routing.resolve.model, result.usage);
-      resolveCost = reservesBefore - this.state.energy.remaining;
+      resolveCost = before - this.state.energy.remaining;
     }
 
-    // Compute income
+    // Compute and credit income
     const income = await computeIncome(
       result.goalRelevance,
       result.outcome,
@@ -235,40 +257,28 @@ export class OrganismStateMachine {
       this.state.energy.currentCycleCost,
       this.taskTier ?? undefined,
     );
-
-    // Credit energy
-    if (income.base > 0) {
-      this.state.energy.feed(income.base);
-    }
-    if (income.bounty > 0) {
-      this.state.energy.feedFromPool(income.bounty);
-    }
+    if (income.base > 0) this.state.energy.feed(income.base);
+    if (income.bounty > 0) this.state.energy.feedFromPool(income.bounty);
 
     // Track for cycle-end accounting
-    const totalIncome = income.base + income.bounty;
-    this.cycleIncome += totalIncome;
-    this.cycleSources.push(...income.sources);
-
-    // Keep best outcome and max relevance across multiple resolve calls
-    if (
-      this.cycleOutcome === null ||
-      OUTCOME_RANK[result.outcome] > OUTCOME_RANK[this.cycleOutcome]
-    ) {
-      this.cycleOutcome = result.outcome;
+    const total = income.base + income.bounty;
+    this.cur.income += total;
+    this.cur.sources.push(...income.sources);
+    if (this.cur.outcome === null || OUTCOME_RANK[result.outcome] > OUTCOME_RANK[this.cur.outcome]) {
+      this.cur.outcome = result.outcome;
     }
-    this.cycleRelevance = Math.max(this.cycleRelevance, result.goalRelevance);
+    this.cur.relevance = Math.max(this.cur.relevance, result.goalRelevance);
 
-    // Clear task reward after first resolve collects it
+    // Clear one-time task reward
     this.taskReward = null;
     this.taskTier = null;
 
-    // Signal the agentic loop to end after this tool turn completes
-    this.cycleResolved = true;
+    // Signal cycle end
+    this.cur.resolved = true;
 
-    // Return result the organism can see — show cost so it knows resolve isn't free
-    const net = totalIncome - resolveCost;
+    const net = total - resolveCost;
     const parts = [
-      `earned ${totalIncome} TEQ`,
+      `earned ${total} TEQ`,
       `resolve cost ${resolveCost} TEQ`,
       `net ${net > 0 ? "+" : ""}${net} TEQ`,
       `outcome: ${result.outcome}`,
@@ -279,31 +289,28 @@ export class OrganismStateMachine {
 
   private handleMemorize(input: string): string {
     if (!input.trim()) return "nothing to memorize";
-
     const ops = parseMemorizeInput(input);
     const results = applyMemorizeOperations(ops, this.state.memories, this.state.genome);
-
-    if (results.length === 0) return "no valid operations";
-    return results.join(", ");
+    return results.length === 0 ? "no valid operations" : results.join(", ");
   }
 
-  // ── Tool construction ───────────────────────────────────────────────
+  // ── Awareness & tools ─────────────────────────────────────────────
 
   private buildAwarenessMessage(): Anthropic.MessageParam {
     const memories = this.state.memories.format(MEMORY_TOKEN_BUDGET);
     const drives = formatDrives(this.state.drives);
-    const activeGoal = this.deriveGoal();
+    const goal = this.deriveGoal();
 
-    const lastCycle = this.state.energy.cycleHistory.at(-1);
-    const costHint = lastCycle
-      ? `Last cycle: cost ${lastCycle.cost} TEQ, earned ${lastCycle.income} TEQ, net ${lastCycle.net > 0 ? "+" : ""}${lastCycle.net} TEQ`
+    const last = this.state.energy.cycleHistory.at(-1);
+    const costHint = last
+      ? `Last cycle: cost ${last.cost} TEQ, earned ${last.income} TEQ, net ${last.net > 0 ? "+" : ""}${last.net} TEQ`
       : null;
 
     const parts = [
       `Your memories:\n${memories}`,
       `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`,
       `Drives: ${drives}`,
-      activeGoal ? `Active drive goal: ${activeGoal}` : null,
+      goal ? `Active drive goal: ${goal}` : null,
       costHint,
       this.lastToolHint || null,
       `Cycle: ${this.state.cycleCount} | Generation: ${this.state.generation}`,
@@ -320,7 +327,6 @@ export class OrganismStateMachine {
   private async buildTools(): Promise<Anthropic.Tool[]> {
     const tools: Anthropic.Tool[] = [];
 
-    // Discover workspace tools from container
     try {
       const listing = await this.executor.executeShell(
         "find /workspace/tools -maxdepth 1 -type f -executable 2>/dev/null || true",
@@ -329,16 +335,13 @@ export class OrganismStateMachine {
         if (!line) continue;
         const filename = line.split("/").pop()!;
         const name = filename.replace(/\.[^.]+$/, "");
-        // Don't shadow internal tools
         if (INTERNAL_TOOL_NAMES.has(name)) continue;
         tools.push({
           name,
           description: filename,
           input_schema: {
             type: "object" as const,
-            properties: {
-              input: { type: "string" },
-            },
+            properties: { input: { type: "string" } },
           },
         });
       }
@@ -346,44 +349,22 @@ export class OrganismStateMachine {
       // Container not ready or no tools yet
     }
 
-    // Append internal tools
     tools.push(...INTERNAL_TOOLS);
-
     return tools;
   }
 
-  private buildToolExecutor(): ToolExecutor {
-    return async (name: string, input: Record<string, unknown>): Promise<string> => {
-      const toolInput = String(input.input ?? "");
-
-      switch (name) {
-        case "think":
-          return toolInput;
-        case "resolve":
-          return this.handleResolve(toolInput);
-        case "memorize":
-          return this.handleMemorize(toolInput);
-        default: {
-          // Workspace tool — execute in container
-          const escaped = toolInput.replace(/'/g, "'\\''");
-          return this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
-        }
-      }
-    };
-  }
-
   private summarizeRecentActions(): string {
-    if (this.cycleActions.length === 0) return "(no actions)";
-    // Take the last 20 entries for a concise summary
-    return this.cycleActions.slice(-20).join("\n");
+    if (this.cur.actions.length === 0) return "(no actions)";
+    return this.cur.actions.slice(-20).join("\n");
   }
 
-  // Allow arena to set task reward and tier
   setTaskReward(reward: number, tier: number): void {
     this.taskReward = reward;
     this.taskTier = tier;
   }
 }
+
+// ── Helpers ─────────────────────────────────────────────────────────
 
 function formatDrives(drives: DriveSystem): string {
   return Object.values(drives.drives)
@@ -391,12 +372,12 @@ function formatDrives(drives: DriveSystem): string {
     .join(", ");
 }
 
-function buildToolHint(available: string[], used: Map<string, number>, newTools: string[] = []): string {
+function formatToolHint(available: string[], used: Map<string, number>, newTools: string[] = []): string {
   if (available.length === 0) return "";
 
-  const existingTools = available.filter((t) => !newTools.includes(t));
+  const existing = available.filter((t) => !newTools.includes(t));
   const parts: string[] = [
-    `Tools: New: ${newTools.length}, Existing: ${existingTools.length}`,
+    `Tools: New: ${newTools.length}, Existing: ${existing.length}`,
   ];
 
   if (newTools.length > 0) {
@@ -406,10 +387,10 @@ function buildToolHint(available: string[], used: Map<string, number>, newTools:
   if (used.size === 0) {
     parts.push("None used this cycle");
   } else {
-    const usedSummary = Array.from(used.entries())
-      .map(([name, count]) => `${name}(${count})`)
+    const summary = Array.from(used.entries())
+      .map(([n, c]) => `${n}(${c})`)
       .join(", ");
-    parts.push(`Used: ${usedSummary}`);
+    parts.push(`Used: ${summary}`);
 
     const unused = available.filter((t) => !used.has(t));
     if (unused.length > 0) {

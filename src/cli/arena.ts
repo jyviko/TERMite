@@ -11,6 +11,7 @@ const { values } = parseArgs({
     workspace: { type: "string", default: "./arena-workspace" },
     "api-key": { type: "string" },
     "base-url": { type: "string" },
+    model: { type: "string" },
     "pool-balance": { type: "string" },
     "pool-regen": { type: "string" },
     "pool-max": { type: "string" },
@@ -21,8 +22,16 @@ async function main() {
   const organismCount = parseInt(values.organisms ?? "3", 10);
   const totalBudget = parseInt(values.budget ?? "500000", 10);
 
+  const MODEL_IDS: Record<string, string> = {
+    haiku: "claude-haiku-4-5-20251001",
+    sonnet: "claude-sonnet-4-6",
+    opus: "claude-opus-4-6",
+  };
+  const modelArg = values.model;
+  const model = modelArg ? MODEL_IDS[modelArg] ?? modelArg : undefined;
+
   console.log(`=== TERM-ITE ARENA ===`);
-  console.log(`Organisms: ${organismCount} | Budget: ${totalBudget}`);
+  console.log(`Organisms: ${organismCount} | Budget: ${totalBudget}${model ? ` | Model: ${modelArg}` : ""}`);
 
   const arena = new Arena({
     organismCount,
@@ -30,6 +39,7 @@ async function main() {
     workspaceRoot: values.workspace ?? "./arena-workspace",
     apiKey: values["api-key"] ?? process.env.ANTHROPIC_API_KEY,
     baseUrl: values["base-url"] ?? process.env.ANTHROPIC_BASE_URL,
+    model,
     poolInitialBalance: values["pool-balance"] ? parseInt(values["pool-balance"], 10) : undefined,
     poolRegenPerCycle: values["pool-regen"] ? parseInt(values["pool-regen"], 10) : undefined,
     poolMaxBalance: values["pool-max"] ? parseInt(values["pool-max"], 10) : undefined,

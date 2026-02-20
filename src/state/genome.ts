@@ -15,7 +15,9 @@ export class Genome {
     this.resolvePrompt = data?.resolvePrompt ?? DEFAULT_RESOLVE_PROMPT;
     this.restPrompt = data?.restPrompt ?? DEFAULT_REST_PROMPT;
     this.memorizePrompt = data?.memorizePrompt ?? DEFAULT_MEMORIZE_PROMPT;
-    this.routing = data?.routing ?? { ...DEFAULT_ROUTING };
+    this.routing = data?.routing
+      ? { thinking: { ...data.routing.thinking }, resolve: { ...data.routing.resolve } }
+      : { thinking: { ...DEFAULT_ROUTING.thinking }, resolve: { ...DEFAULT_ROUTING.resolve } };
     this.version = data?.version ?? 0;
     this.promptHistory = data?.promptHistory ?? [];
   }
