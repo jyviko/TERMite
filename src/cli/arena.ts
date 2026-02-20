@@ -36,8 +36,8 @@ async function main() {
   });
 
   const shutdown = async () => {
-    console.log("\nShutting down arena...");
-    await arena.stop();
+    console.log("\nShutting down arena — saving state...");
+    await arena.shutdown();
     process.exit(0);
   };
 
@@ -50,7 +50,7 @@ async function main() {
   await arena.run();
 
   console.log("\n=== ARENA COMPLETE ===");
-  await arena.stop();
+  await arena.shutdown();
 }
 
 main().catch((err) => {

@@ -32,7 +32,12 @@ const INTERNAL_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "memorize",
-    description: "Store for future recall.",
+    description:
+      'Store knowledge for future recall. Plain text is stored as-is. ' +
+      'For advanced ops, pass JSON: {"store":[{"content":"...","type":"episodic|semantic|procedural","importance":0.0-1.0}], ' +
+      '"forget":["memory_id"], "compress":[{"id":"...","newContent":"..."}], ' +
+      '"consolidate":{"sourceIds":[...],"newContent":"...","importance":0.8}, ' +
+      '"mutate":[{"target":"systemPrompt","newPrompt":"..."}]}',
     input_schema: {
       type: "object" as const,
       properties: { input: { type: "string" } },
@@ -67,6 +72,9 @@ export class OrganismStateMachine {
 
   // Action log built from yielded events during cycle
   private cycleActions: string[] = [];
+
+  // Set by resolve handler; checked by agentic loop's shouldStop callback
+  private cycleResolved = false;
 
   constructor(
     private brain: Brain,
@@ -118,17 +126,22 @@ export class OrganismStateMachine {
     }
 
     if (!this.state.alive) {
+      await this.state.save(this.savePath);
       yield { type: "state_change", from: this.state.mode, to: "dead" };
     }
   }
 
   private lastToolHint = "";
+  private knownTools = new Set<string>(INTERNAL_TOOL_NAMES);
 
   private async *cycle(): AsyncGenerator<AgentEvent> {
+    this.cycleResolved = false;
+
     const routing = this.state.genome.routing[this.state.routing];
     const model = routing.model;
     this.cycleModel = model;
     const maxTokens = routing.maxTokens;
+    const maxCycleCost = routing.maxCycleCost;
 
     const tools = await this.buildTools();
     const toolCallCounts = new Map<string, number>();
@@ -147,7 +160,11 @@ export class OrganismStateMachine {
       tools,
       model,
       maxTokens,
+      maxIterations: 25,
       executor: trackingExecutor,
+      shouldStop: () =>
+        this.cycleResolved ||
+        (maxCycleCost != null && this.state.energy.currentCycleCost >= maxCycleCost),
     })) {
       yield event;
 
@@ -169,7 +186,9 @@ export class OrganismStateMachine {
 
     // Compute tool usage hint for next-cycle awareness
     const availableNames = tools.map((t) => t.name);
-    this.lastToolHint = buildToolHint(availableNames, toolCallCounts);
+    const newTools = availableNames.filter((n) => !this.knownTools.has(n));
+    for (const n of availableNames) this.knownTools.add(n);
+    this.lastToolHint = buildToolHint(availableNames, toolCallCounts, newTools);
 
     // Track staleness — organism that does nothing useful dies.
     // Internal-only tool calls (think/memorize) don't count as real work.
@@ -199,9 +218,12 @@ export class OrganismStateMachine {
       energy: this.state.energy,
     });
 
-    // Burn resolver LLM cost
+    // Burn resolver LLM cost and track it for transparency
+    let resolveCost = 0;
     if (result.usage.output > 0) {
+      const reservesBefore = this.state.energy.remaining;
       this.state.energy.burn(this.state.genome.routing.resolve.model, result.usage);
+      resolveCost = reservesBefore - this.state.energy.remaining;
     }
 
     // Compute income
@@ -240,8 +262,17 @@ export class OrganismStateMachine {
     this.taskReward = null;
     this.taskTier = null;
 
-    // Return result the organism can see
-    const parts = [`earned ${totalIncome} TEQ`, `outcome: ${result.outcome}`];
+    // Signal the agentic loop to end after this tool turn completes
+    this.cycleResolved = true;
+
+    // Return result the organism can see — show cost so it knows resolve isn't free
+    const net = totalIncome - resolveCost;
+    const parts = [
+      `earned ${totalIncome} TEQ`,
+      `resolve cost ${resolveCost} TEQ`,
+      `net ${net > 0 ? "+" : ""}${net} TEQ`,
+      `outcome: ${result.outcome}`,
+    ];
     if (result.lesson) parts.push(result.lesson);
     return parts.join(". ");
   }
@@ -360,23 +391,29 @@ function formatDrives(drives: DriveSystem): string {
     .join(", ");
 }
 
-function buildToolHint(available: string[], used: Map<string, number>): string {
+function buildToolHint(available: string[], used: Map<string, number>, newTools: string[] = []): string {
   if (available.length === 0) return "";
 
-  const parts: string[] = [];
+  const existingTools = available.filter((t) => !newTools.includes(t));
+  const parts: string[] = [
+    `Tools: New: ${newTools.length}, Existing: ${existingTools.length}`,
+  ];
+
+  if (newTools.length > 0) {
+    parts.push(`New: ${newTools.join(", ")}`);
+  }
 
   if (used.size === 0) {
-    parts.push("Tools: none used this cycle");
-    parts.push(`Available: ${available.join(", ")}`);
+    parts.push("None used this cycle");
   } else {
     const usedSummary = Array.from(used.entries())
       .map(([name, count]) => `${name}(${count})`)
       .join(", ");
-    parts.push(`Tools used: ${usedSummary}`);
+    parts.push(`Used: ${usedSummary}`);
 
     const unused = available.filter((t) => !used.has(t));
     if (unused.length > 0) {
-      parts.push(`Unused tools: ${unused.join(", ")}`);
+      parts.push(`Unused: ${unused.join(", ")}`);
     }
   }
 

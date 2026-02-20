@@ -136,6 +136,18 @@ export class Arena {
     await Promise.allSettled(stops);
   }
 
+  /** Graceful shutdown: save all organism state, then stop containers. */
+  async shutdown(): Promise<void> {
+    const saves = Array.from(this.organisms.entries()).map(([id, entry]) =>
+      entry.state.save(join(this.runDir, id, "state.json")).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[ARENA] Failed to save ${id}: ${msg}`);
+      }),
+    );
+    await Promise.allSettled(saves);
+    await this.stop();
+  }
+
   async *events(): AsyncGenerator<{ organismId: string; event: AgentEvent }> {
     // This is a simplified version — in practice you'd use a shared channel
     // For now, events are logged by runOrganism directly

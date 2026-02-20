@@ -68,10 +68,16 @@ export interface Genome {
   promptHistory: PromptMutation[];
 }
 
+export interface RouteEntry {
+  model: string;
+  maxTokens: number;
+  maxCycleCost?: number;
+}
+
 export interface RoutingConfig {
-  fast: { model: string; maxTokens: number };
-  deep: { model: string; maxTokens: number };
-  resolve: { model: string; maxTokens: number };
+  fast: RouteEntry;
+  deep: RouteEntry;
+  resolve: RouteEntry;
 }
 
 export interface PromptMutation {
@@ -141,6 +147,6 @@ export type AgentEvent =
   | { type: "tool_use"; name: string; input: Record<string, unknown> }
   | { type: "tool_start"; name: string }
   | { type: "tool_result"; name: string; result: string }
-  | { type: "usage"; input: number; output: number; cacheCreation: number; cacheRead: number }
+  | { type: "usage"; input: number; output: number; cacheCreation: number; cacheRead: number; cumulative: { input: number; output: number; cacheCreation: number; cacheRead: number; iterations: number } }
   | { type: "error"; message: string }
   | { type: "state_change"; from: OrganismMode; to: OrganismMode };

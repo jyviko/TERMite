@@ -16,6 +16,7 @@ export interface LoopConfig {
   maxIterations?: number;
   executor: ToolExecutor;
   signal?: AbortSignal;
+  shouldStop?: () => boolean;
 }
 
 const DEFAULT_MAX_ITERATIONS = 99;
@@ -27,6 +28,9 @@ export class AgenticLoop {
   async *run(config: LoopConfig): AsyncGenerator<AgentEvent> {
     const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     const messages: Anthropic.MessageParam[] = [...config.messages];
+
+    // Cumulative token tracking across all iterations in this burst
+    const cumulative = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, iterations: 0 };
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (config.signal?.aborted) {
@@ -52,13 +56,20 @@ export class AgenticLoop {
         break;
       }
 
-      // Report token usage
+      // Accumulate and report token usage
+      cumulative.input += response.usage.input;
+      cumulative.output += response.usage.output;
+      cumulative.cacheCreation += response.usage.cacheCreation;
+      cumulative.cacheRead += response.usage.cacheRead;
+      cumulative.iterations++;
+
       yield {
         type: "usage",
         input: response.usage.input,
         output: response.usage.output,
         cacheCreation: response.usage.cacheCreation,
         cacheRead: response.usage.cacheRead,
+        cumulative: { ...cumulative },
       };
 
       // Extract text blocks
@@ -127,8 +138,15 @@ export class AgenticLoop {
         });
       }
 
-      // Push ONE user message with all tool results
-      messages.push({ role: "user", content: toolResults });
+      // Push ONE user message with all tool results + token usage awareness
+      const usageNote: Anthropic.TextBlockParam = {
+        type: "text",
+        text: `[Burst usage: ${cumulative.output.toLocaleString()} output tokens, ${cumulative.input.toLocaleString()} input tokens, ${cumulative.iterations} iterations]`,
+      };
+      messages.push({ role: "user", content: [...toolResults, usageNote] });
+
+      // Check if a tool signaled the loop should stop (e.g. resolve)
+      if (config.shouldStop?.()) break;
     }
   }
 }

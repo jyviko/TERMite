@@ -198,8 +198,10 @@ describe("OrganismStateMachine", () => {
       (e) => e.type === "tool_result" && (e as any).name === "resolve",
     );
     expect(resolveResult).toBeDefined();
-    // Result should contain "earned" and "outcome"
+    // Result should contain earnings, cost transparency, and outcome
     expect((resolveResult as any).result).toContain("earned");
+    expect((resolveResult as any).result).toContain("resolve cost");
+    expect((resolveResult as any).result).toContain("net");
     expect((resolveResult as any).result).toContain("outcome: success");
   });
 
@@ -252,6 +254,54 @@ describe("OrganismStateMachine", () => {
     expect(state.memories.memories[0]!.importance).toBe(0.9);
   });
 
+  it("memorize tool accepts plain text as semantic memory", async () => {
+    const brain = new MockBrain();
+    // Call memorize with plain text (no JSON)
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_pt",
+          name: "memorize",
+          input: { input: "Check data directory has numbers.txt before processing" },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    brain.addResponse(
+      [{ type: "text", text: "Memorized.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    brain.addResponse(
+      [{ type: "text", text: '{"outcome":"uncertain","lesson":"","goalRelevance":0,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new OrganismStateManager({ budget: 100000 });
+
+    const machine = new OrganismStateMachine(
+      brain,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-plaintext-memorize.json",
+    );
+
+    const events = await collectEvents(machine.run(), 20);
+    const memResult = events.find(
+      (e) => e.type === "tool_result" && (e as any).name === "memorize",
+    );
+    expect(memResult).toBeDefined();
+    expect((memResult as any).result).toContain("stored");
+    expect((memResult as any).result).toContain("semantic");
+    // Verify the memory was stored
+    expect(state.memories.memories.length).toBeGreaterThan(0);
+    expect(state.memories.memories[0]!.content).toBe("Check data directory has numbers.txt before processing");
+    expect(state.memories.memories[0]!.type).toBe("semantic");
+    expect(state.memories.memories[0]!.importance).toBe(0.5);
+  });
+
   it("memorize tool supports self-mutation", async () => {
     const brain = new MockBrain();
     // Call memorize with mutate operation
@@ -300,7 +350,7 @@ describe("OrganismStateMachine", () => {
 
   it("multi-resolve keeps best outcome and max relevance", async () => {
     const brain = new MockBrain();
-    // First resolve call
+    // Both resolve calls in the same tool turn (batched)
     brain.addResponse(
       [
         {
@@ -309,17 +359,6 @@ describe("OrganismStateMachine", () => {
           name: "resolve",
           input: { input: "first check" },
         },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-    // Resolver returns failure with low relevance
-    brain.addResponse(
-      [{ type: "text", text: '{"outcome":"failure","lesson":"bad","goalRelevance":0.2,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
-      "end_turn",
-    );
-    // Second resolve call
-    brain.addResponse(
-      [
         {
           type: "tool_use",
           id: "toolu_r2",
@@ -329,14 +368,14 @@ describe("OrganismStateMachine", () => {
       ] as Anthropic.ContentBlock[],
       "tool_use",
     );
-    // Resolver returns success with high relevance
+    // Resolver returns failure with low relevance (for first resolve)
     brain.addResponse(
-      [{ type: "text", text: '{"outcome":"success","lesson":"good","goalRelevance":0.9,"goalComplete":true}', citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: '{"outcome":"failure","lesson":"bad","goalRelevance":0.2,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
-    // End turn
+    // Resolver returns success with high relevance (for second resolve)
     brain.addResponse(
-      [{ type: "text", text: "All done.", citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: '{"outcome":"success","lesson":"good","goalRelevance":0.9,"goalComplete":true}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
 
@@ -393,6 +432,78 @@ describe("OrganismStateMachine", () => {
     const events = await collectEvents(machine.run(), 200);
     expect(state.alive).toBe(false);
     expect(state.causeOfDeath).toBe("staleness");
+  });
+
+  it("resolve ends the agentic loop — no further API calls after resolve", async () => {
+    const brain = new MockBrain();
+    // Turn 1: call resolve (+ memorize in same turn to verify co-execution)
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_r1",
+          name: "resolve",
+          input: { input: "finished the task" },
+        },
+        {
+          type: "tool_use",
+          id: "toolu_m1",
+          name: "memorize",
+          input: { input: "task complete" },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    // Resolver LLM response
+    brain.addResponse(
+      [{ type: "text", text: '{"outcome":"success","lesson":"good","goalRelevance":0.8,"goalComplete":true}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // This response should NEVER be reached in cycle 1 — if it is, the loop didn't stop
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_extra",
+          name: "resolve",
+          input: { input: "this should not happen" },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+
+    const executor = new MockExecutor();
+    // Low budget: exactly enough for 1 cycle (BMR=50 + chat=350 + resolver=350 = 750).
+    // Organism dies at start of cycle 2 (spent >= budget), so no further brain calls.
+    const state = new OrganismStateManager({ budget: 800, reserves: 800 });
+
+    const machine = new OrganismStateMachine(
+      brain,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-resolve-stops.json",
+    );
+
+    const events = await collectEvents(machine.run(), 30);
+
+    // Resolve tool should have been called exactly once (single cycle)
+    const resolveResults = events.filter(
+      (e) => e.type === "tool_result" && (e as any).name === "resolve",
+    );
+    expect(resolveResults).toHaveLength(1);
+
+    // Memorize in the same turn should still execute
+    const memorizeResults = events.filter(
+      (e) => e.type === "tool_result" && (e as any).name === "memorize",
+    );
+    expect(memorizeResults).toHaveLength(1);
+
+    // Brain should have been called exactly 2 times:
+    // 1) the main cycle chat call that returned resolve+memorize
+    // 2) the resolver's internal LLM call
+    // If the loop continued within cycle 1, callIndex would be 3+
+    expect(brain.callIndex).toBe(2);
   });
 
   it("staleness kills organism after idle cycles", async () => {

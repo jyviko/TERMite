@@ -119,12 +119,14 @@ export class EnergyLedger {
   }
 
   feed(tokens: number): number {
-    const space = this.capacity - this.reserves;
-    const added = Math.min(tokens, space);
-    this.reserves += added;
-    this.earned += added;
-    this.cycleIncome += added;
-    return added;
+    this.reserves += tokens;
+    this.earned += tokens;
+    this.cycleIncome += tokens;
+    // Capacity grows with reserves — organisms can accumulate wealth
+    if (this.reserves > this.capacity) {
+      this.capacity = this.reserves;
+    }
+    return tokens;
   }
 
   /** Feed TEQs sourced from the shared pool. Tracks pool-sourced income separately. */
@@ -154,12 +156,14 @@ export class EnergyLedger {
     if (this.reserves < 0) this.reserves = 0;
   }
 
-  endCycle(cycle: number, outcome: Outcome | null, income: number, sources: string, goalRelevance = 0, model?: string): void {
+  endCycle(cycle: number, outcome: Outcome | null, _income: number, sources: string, goalRelevance = 0, model?: string): void {
+    // Use actual credited income (from feed/feedFromPool), not requested amount
+    const actualIncome = this.cycleIncome;
     this.cycleHistory.push({
       cycle,
       cost: this.cycleCost,
-      income,
-      net: income - this.cycleCost,
+      income: actualIncome,
+      net: actualIncome - this.cycleCost,
       outcome,
       incomeSources: sources,
       goalRelevance,

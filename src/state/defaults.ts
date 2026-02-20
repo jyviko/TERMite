@@ -64,7 +64,7 @@ Operations: store, forget, compress, consolidate, mutate. All optional.
 Mutate targets: systemPrompt, resolvePrompt, restPrompt, memorizePrompt — one or several per cycle.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
-  fast: { model: "claude-haiku-4-5-20251001", maxTokens: 2048 },
-  deep: { model: "claude-sonnet-4-6", maxTokens: 4096 },
+  fast: { model: "claude-haiku-4-5-20251001", maxTokens: 2048, maxCycleCost: 5000 },
+  deep: { model: "claude-sonnet-4-6", maxTokens: 4096, maxCycleCost: 3000 },
   resolve: { model: "claude-sonnet-4-6", maxTokens: 1024 },
 };

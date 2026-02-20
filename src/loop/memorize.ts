@@ -22,14 +22,23 @@ export interface MemorizeOperations {
 /**
  * Parse organism's memorize input into structured operations.
  * Accepts JSON (may be wrapped in markdown) or plain text fallback.
+ * Plain text is treated as a simple store with type "semantic" and importance 0.5.
  */
 export function parseMemorizeInput(input: string): MemorizeOperations {
   try {
     const jsonMatch = input.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return {};
+    if (!jsonMatch) {
+      // Plain text fallback — store as semantic memory
+      const text = input.trim();
+      if (!text) return {};
+      return { store: [{ content: text, type: "semantic", importance: 0.5 }] };
+    }
     return JSON.parse(jsonMatch[0]);
   } catch {
-    return {};
+    // JSON parse failed — treat entire input as plain text store
+    const text = input.trim();
+    if (!text) return {};
+    return { store: [{ content: text, type: "semantic", importance: 0.5 }] };
   }
 }
 
