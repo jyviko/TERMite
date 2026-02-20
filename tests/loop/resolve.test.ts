@@ -67,14 +67,12 @@ describe("computeIncome", () => {
     expect(sources).toContain("efficiency:3.00x");
   });
 
-  it("reduces reward when over expected cost", async () => {
-    // Tier 1 expected cost: 8000, actual cost: 200000 → ratio = 0.04
+  it("floors at 1.0x when over expected cost (no penalty)", async () => {
+    // Tier 1 expected cost: 8000, actual cost: 200000 → raw ratio = 0.04, floored to 1.0
     const { requested, sources } = await computeIncome(0, "success", 60000, pool, 200000, 1);
-    // Base: 65000
-    // Efficiency: 8000/200000 = 0.04
-    // Final: floor(65000 * 0.04) = 2600
-    expect(requested).toBe(2600);
-    expect(sources).toContain("efficiency:0.04x");
+    // Base: 65000 * 1.0 = 65000 (no reduction)
+    expect(requested).toBe(65000);
+    expect(sources).toContain("efficiency:1.00x");
   });
 
   it("no efficiency multiplier without cycleCost", async () => {
