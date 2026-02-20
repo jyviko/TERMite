@@ -21,7 +21,7 @@ try {
       String(o.taskTier).padStart(4),
       String(o.cycleCount).padStart(6),
       ("v" + o.genomeVersion).padStart(6),
-      (o.forageRouting === "deep" ? "Son" : "Hai").padStart(5),
+      (o.routing === "deep" ? "Son" : "Hai").padStart(5),
       String(o.consecutivePasses).padStart(6),
     ].join("  "));
   });

@@ -1,32 +1,72 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AgentEvent, MemoryType } from "../types/index.js";
+import type { AgentEvent, Outcome } from "../types/index.js";
 import type { Brain } from "../brain/index.js";
-import { extractText } from "../brain/util.js";
 import type { Executor } from "../executor/index.js";
+import type { DriveSystem } from "../state/drives.js";
 import { OrganismStateManager } from "../state/organism-state.js";
 import { AgenticLoop, type ToolExecutor } from "./agentic-loop.js";
 import { Resolver, computeIncome } from "./resolve.js";
-import { Memorizer } from "./memorize.js";
+import { parseMemorizeInput, applyMemorizeOperations } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const MEMORY_TOKEN_BUDGET = 2000;
 
-// Max tool-call iterations per forage burst.
-// Short cycles → frequent resolve/memorize → faster learning.
-// Organism gets multiple short bursts instead of one long runaway.
-const FORAGE_MAX_ITERATIONS = 8;
+// Internal tools — injected alongside workspace tools.
+// Organism sees them in the same flat list, can't read their source.
+const INTERNAL_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "think",
+    description: "Returns input unchanged.",
+    input_schema: {
+      type: "object" as const,
+      properties: { input: { type: "string" } },
+    },
+  },
+  {
+    name: "resolve",
+    description: "Post work for evaluation.",
+    input_schema: {
+      type: "object" as const,
+      properties: { input: { type: "string" } },
+    },
+  },
+  {
+    name: "memorize",
+    description: "Store for future recall.",
+    input_schema: {
+      type: "object" as const,
+      properties: { input: { type: "string" } },
+    },
+  },
+];
+const INTERNAL_TOOL_NAMES = new Set(INTERNAL_TOOLS.map((t) => t.name));
+
+// Outcome priority for multi-resolve cycles: keep the best
+const OUTCOME_RANK: Record<Outcome, number> = {
+  success: 3,
+  partial: 2,
+  uncertain: 1,
+  failure: 0,
+};
 
 export class OrganismStateMachine {
   private loop: AgenticLoop;
   private resolver: Resolver;
-  private memorizer: Memorizer;
-  private forageMessages: Anthropic.MessageParam[] = [];
   private savePath: string;
   private taskReward: number | null = null;
   private taskTier: number | null = null;
   private consecutiveIdleCycles = 0;
-  private forageModel = "";
+  private cycleModel = "";
   private static readonly STALENESS_THRESHOLD = 5;
+
+  // Per-cycle income tracking (accumulated across resolve calls)
+  private cycleIncome = 0;
+  private cycleSources: string[] = [];
+  private cycleOutcome: Outcome | null = null;
+  private cycleRelevance = 0;
+
+  // Action log built from yielded events during cycle
+  private cycleActions: string[] = [];
 
   constructor(
     private brain: Brain,
@@ -37,7 +77,6 @@ export class OrganismStateMachine {
   ) {
     this.loop = new AgenticLoop(brain);
     this.resolver = new Resolver(brain);
-    this.memorizer = new Memorizer(brain);
     this.savePath = savePath ?? `saves/${state.id}.json`;
   }
 
@@ -45,15 +84,30 @@ export class OrganismStateMachine {
     while (this.state.alive) {
       this.state.energy.burnBmr();
       if (!this.state.checkVitalSigns()) {
-        yield { type: "state_change", from: this.state.mode, to: "dead" };
         break;
       }
 
-      yield* this.forage();
+      // Reset per-cycle tracking
+      this.cycleIncome = 0;
+      this.cycleSources = [];
+      this.cycleOutcome = null;
+      this.cycleRelevance = 0;
+      this.cycleActions = [];
 
-      // Post-burst: resolve + memorize + rest
-      yield* this.postBurst();
+      yield* this.cycle();
 
+      // Cycle-end housekeeping
+      this.state.energy.endCycle(
+        this.state.cycleCount,
+        this.cycleOutcome,
+        this.cycleIncome,
+        this.cycleSources.join(", "),
+        this.cycleRelevance,
+        this.cycleModel,
+      );
+
+      this.state.memories.decayEvict();
+      this.state.energy.computeBmr(this.state.memories.totalTokenCost);
       this.state.drives.update(
         this.state.energy,
         this.state.memories.memories,
@@ -62,17 +116,21 @@ export class OrganismStateMachine {
       this.state.cycleCount++;
       await this.state.save(this.savePath);
     }
+
+    if (!this.state.alive) {
+      yield { type: "state_change", from: this.state.mode, to: "dead" };
+    }
   }
 
   private lastToolHint = "";
 
-  private async *forage(): AsyncGenerator<AgentEvent> {
-    const routing = this.state.genome.routing[this.state.forageRouting];
+  private async *cycle(): AsyncGenerator<AgentEvent> {
+    const routing = this.state.genome.routing[this.state.routing];
     const model = routing.model;
-    this.forageModel = model;
+    this.cycleModel = model;
     const maxTokens = routing.maxTokens;
 
-    const tools = await this.buildForageTools();
+    const tools = await this.buildTools();
     const toolCallCounts = new Map<string, number>();
     const executor = this.buildToolExecutor();
     const trackingExecutor: ToolExecutor = async (name, input) => {
@@ -81,18 +139,26 @@ export class OrganismStateMachine {
     };
 
     // Build awareness message — organism wakes up knowing who it is
-    this.forageMessages = [this.buildAwarenessMessage()];
+    const messages: Anthropic.MessageParam[] = [this.buildAwarenessMessage()];
 
     for await (const event of this.loop.run({
       systemPrompt: this.state.genome.systemPrompt,
-      messages: this.forageMessages,
+      messages,
       tools,
       model,
       maxTokens,
-      maxIterations: FORAGE_MAX_ITERATIONS,
       executor: trackingExecutor,
     })) {
       yield event;
+
+      // Track actions from events for summarizeRecentActions
+      if (event.type === "tool_start") {
+        this.cycleActions.push(`→ ${event.name}`);
+      } else if (event.type === "tool_result") {
+        this.cycleActions.push(`← ${event.name}: ${event.result.slice(0, 100)}`);
+      } else if (event.type === "text") {
+        this.cycleActions.push(event.text.slice(0, 150));
+      }
 
       if (event.type === "usage") {
         this.state.energy.burn(model, event);
@@ -101,12 +167,16 @@ export class OrganismStateMachine {
       if (event.type === "error") break;
     }
 
-    // Compute tool usage hint for resolution and next-cycle awareness
+    // Compute tool usage hint for next-cycle awareness
     const availableNames = tools.map((t) => t.name);
     this.lastToolHint = buildToolHint(availableNames, toolCallCounts);
 
-    // Track staleness — organism that does nothing dies
-    if (toolCallCounts.size > 0) {
+    // Track staleness — organism that does nothing useful dies.
+    // Internal-only tool calls (think/memorize) don't count as real work.
+    const externalCalls = Array.from(toolCallCounts.keys()).filter(
+      (name) => !INTERNAL_TOOL_NAMES.has(name),
+    );
+    if (externalCalls.length > 0) {
       this.consecutiveIdleCycles = 0;
     } else {
       this.consecutiveIdleCycles++;
@@ -116,11 +186,12 @@ export class OrganismStateMachine {
     }
   }
 
-  private async *postBurst(): AsyncGenerator<AgentEvent> {
-    const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and survive";
-    const actions = this.summarizeRecentActions();
+  // ── Internal tool handlers ──────────────────────────────────────────
 
-    // Resolve
+  private async handleResolve(input: string): Promise<string> {
+    const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and survive";
+    const actions = input || this.summarizeRecentActions();
+
     const result = await this.resolver.resolve({
       genome: this.state.genome,
       goal,
@@ -128,12 +199,12 @@ export class OrganismStateMachine {
       energy: this.state.energy,
     });
 
-    // Burn resolve cost (model-weighted)
+    // Burn resolver LLM cost
     if (result.usage.output > 0) {
       this.state.energy.burn(this.state.genome.routing.resolve.model, result.usage);
     }
 
-    // Compute income: base (free) + bounty (from pool)
+    // Compute income
     const income = await computeIncome(
       result.goalRelevance,
       result.outcome,
@@ -142,80 +213,50 @@ export class OrganismStateMachine {
       this.state.energy.currentCycleCost,
       this.taskTier ?? undefined,
     );
+
+    // Credit energy
     if (income.base > 0) {
       this.state.energy.feed(income.base);
     }
     if (income.bounty > 0) {
       this.state.energy.feedFromPool(income.bounty);
     }
+
+    // Track for cycle-end accounting
+    const totalIncome = income.base + income.bounty;
+    this.cycleIncome += totalIncome;
+    this.cycleSources.push(...income.sources);
+
+    // Keep best outcome and max relevance across multiple resolve calls
+    if (
+      this.cycleOutcome === null ||
+      OUTCOME_RANK[result.outcome] > OUTCOME_RANK[this.cycleOutcome]
+    ) {
+      this.cycleOutcome = result.outcome;
+    }
+    this.cycleRelevance = Math.max(this.cycleRelevance, result.goalRelevance);
+
+    // Clear task reward after first resolve collects it
     this.taskReward = null;
     this.taskTier = null;
 
-    // End cycle
-    const totalIncome = income.base + income.bounty;
-    this.state.energy.endCycle(
-      this.state.cycleCount,
-      result.outcome,
-      totalIncome,
-      income.sources.join(", "),
-      result.goalRelevance,
-      this.forageModel,
-    );
-
-    yield {
-      type: "text",
-      text: `RESOLVE: outcome=${result.outcome} relevance=${result.goalRelevance} lesson="${result.lesson}"${this.lastToolHint ? ` | ${this.lastToolHint}` : ""}`,
-    };
-
-    // Memorize
-    const memorizeUsage = await this.memorizer.memorize({
-      genome: this.state.genome,
-      memories: this.state.memories,
-      lesson: result.lesson,
-      outcome: result.outcome,
-      goalRelevance: result.goalRelevance,
-      actions,
-      energy: this.state.energy,
-    });
-    if (memorizeUsage.output > 0) {
-      this.state.energy.burn(this.state.genome.routing.fast.model, memorizeUsage);
-    }
-
-    // Update BMR based on memory cost
-    this.state.energy.computeBmr(this.state.memories.totalTokenCost);
-
-    // Rest: compact burst into memories, clear context
-    yield* this.rest();
+    // Return result the organism can see
+    const parts = [`earned ${totalIncome} TEQ`, `outcome: ${result.outcome}`];
+    if (result.lesson) parts.push(result.lesson);
+    return parts.join(". ");
   }
 
-  private async *rest(): AsyncGenerator<AgentEvent> {
-    const summary = this.serializeMessages(this.forageMessages);
-    if (!summary.trim()) return;
+  private handleMemorize(input: string): string {
+    if (!input.trim()) return "nothing to memorize";
 
-    try {
-      const response = await this.brain.chat({
-        model: this.state.genome.routing.fast.model,
-        system: this.state.genome.restPrompt,
-        messages: [{ role: "user", content: summary }],
-        maxTokens: 1024,
-      });
+    const ops = parseMemorizeInput(input);
+    const results = applyMemorizeOperations(ops, this.state.memories, this.state.genome);
 
-      this.state.energy.burn(this.state.genome.routing.fast.model, response.usage);
-
-      const extracted = parseRestMemories(extractText(response.content));
-      for (const m of extracted) {
-        this.state.memories.add(m.content, m.type as MemoryType, m.importance);
-      }
-
-      yield { type: "text", text: `REST: extracted ${extracted.length} memories` };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      yield { type: "error", message: `Rest failed: ${msg}` };
-    }
-
-    this.state.memories.decayEvict();
-    this.forageMessages = [];
+    if (results.length === 0) return "no valid operations";
+    return results.join(", ");
   }
+
+  // ── Tool construction ───────────────────────────────────────────────
 
   private buildAwarenessMessage(): Anthropic.MessageParam {
     const memories = this.state.memories.format(MEMORY_TOKEN_BUDGET);
@@ -245,9 +286,10 @@ export class OrganismStateMachine {
     return drive ? this.state.drives.driveToGoal(drive) : null;
   }
 
-  private async buildForageTools(): Promise<Anthropic.Tool[]> {
+  private async buildTools(): Promise<Anthropic.Tool[]> {
     const tools: Anthropic.Tool[] = [];
 
+    // Discover workspace tools from container
     try {
       const listing = await this.executor.executeShell(
         "find /workspace/tools -maxdepth 1 -type f -executable 2>/dev/null || true",
@@ -256,6 +298,8 @@ export class OrganismStateMachine {
         if (!line) continue;
         const filename = line.split("/").pop()!;
         const name = filename.replace(/\.[^.]+$/, "");
+        // Don't shadow internal tools
+        if (INTERNAL_TOOL_NAMES.has(name)) continue;
         tools.push({
           name,
           description: filename,
@@ -271,65 +315,36 @@ export class OrganismStateMachine {
       // Container not ready or no tools yet
     }
 
+    // Append internal tools
+    tools.push(...INTERNAL_TOOLS);
+
     return tools;
   }
 
   private buildToolExecutor(): ToolExecutor {
-    return async (_name: string, input: Record<string, unknown>): Promise<string> => {
+    return async (name: string, input: Record<string, unknown>): Promise<string> => {
       const toolInput = String(input.input ?? "");
-      const escaped = toolInput.replace(/'/g, "'\\''");
-      return this.executor.executeShell(`/workspace/tools/${_name} '${escaped}'`);
+
+      switch (name) {
+        case "think":
+          return toolInput;
+        case "resolve":
+          return this.handleResolve(toolInput);
+        case "memorize":
+          return this.handleMemorize(toolInput);
+        default: {
+          // Workspace tool — execute in container
+          const escaped = toolInput.replace(/'/g, "'\\''");
+          return this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
+        }
+      }
     };
   }
 
   private summarizeRecentActions(): string {
-    const textEvents: string[] = [];
-    for (const msg of this.forageMessages.slice(-10)) {
-      if (typeof msg.content === "string") {
-        textEvents.push(msg.content.slice(0, 200));
-      } else if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (typeof block === "object" && "type" in block) {
-            if (block.type === "text") {
-              textEvents.push((block as { text: string }).text.slice(0, 200));
-            } else if (block.type === "tool_use") {
-              const tb = block as { name: string; input: unknown };
-              textEvents.push(`[tool: ${tb.name}]`);
-            } else if (block.type === "tool_result") {
-              const tb = block as { content?: string };
-              if (typeof tb.content === "string") {
-                textEvents.push(`[result: ${tb.content.slice(0, 100)}]`);
-              }
-            }
-          }
-        }
-      }
-    }
-    return textEvents.join("\n") || "(no actions)";
-  }
-
-  private serializeMessages(messages: Anthropic.MessageParam[]): string {
-    const lines: string[] = [];
-    for (const msg of messages) {
-      if (typeof msg.content === "string") {
-        lines.push(`[${msg.role}] ${msg.content}`);
-      } else if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (typeof block === "object" && "type" in block) {
-            if (block.type === "text") {
-              lines.push(`[${msg.role}] ${(block as { text: string }).text}`);
-            } else if (block.type === "tool_use") {
-              const tb = block as { name: string; input: unknown };
-              lines.push(`[${msg.role}] tool: ${tb.name}(${JSON.stringify(tb.input)})`);
-            } else if (block.type === "tool_result") {
-              const tb = block as { content?: string };
-              lines.push(`[${msg.role}] result: ${typeof tb.content === "string" ? tb.content : ""}`);
-            }
-          }
-        }
-      }
-    }
-    return lines.join("\n");
+    if (this.cycleActions.length === 0) return "(no actions)";
+    // Take the last 20 entries for a concise summary
+    return this.cycleActions.slice(-20).join("\n");
   }
 
   // Allow arena to set task reward and tier
@@ -339,7 +354,7 @@ export class OrganismStateMachine {
   }
 }
 
-function formatDrives(drives: import("../state/drives.js").DriveSystem): string {
+function formatDrives(drives: DriveSystem): string {
   return Object.values(drives.drives)
     .map((d) => `${d.name}: ${d.level.toFixed(2)} (threshold: ${d.threshold})`)
     .join(", ");
@@ -366,27 +381,4 @@ function buildToolHint(available: string[], used: Map<string, number>): string {
   }
 
   return parts.join(" | ");
-}
-
-function parseRestMemories(
-  text: string,
-): Array<{ content: string; type: string; importance: number }> {
-  try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return [];
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (Array.isArray(parsed.memories)) {
-      return parsed.memories.filter(
-        (m: unknown) =>
-          typeof m === "object" &&
-          m !== null &&
-          "content" in m &&
-          "type" in m &&
-          "importance" in m,
-      );
-    }
-    return [];
-  } catch {
-    return [];
-  }
 }

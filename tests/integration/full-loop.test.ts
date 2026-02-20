@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
 import { Brain, type BrainResponse, type ChatParams } from "../../src/brain/index.js";
 import { Executor } from "../../src/executor/index.js";
 import { OrganismStateManager } from "../../src/state/organism-state.js";
 import { OrganismStateMachine } from "../../src/loop/state-machine.js";
+import { TEQPool } from "../../src/arena/teq-pool.js";
 import type { AgentEvent } from "../../src/types/index.js";
 
 class ScriptedBrain extends Brain {
@@ -51,9 +52,20 @@ class MockExecutor {
 }
 
 describe("Full Loop Integration", () => {
-  it("organism forage → explore → solve task → earn energy", async () => {
+  let pool: TEQPool;
+
+  beforeEach(() => {
+    TEQPool.reset();
+    pool = TEQPool.initialize({ initialBalance: 10_000_000 });
+  });
+
+  afterEach(() => {
+    TEQPool.reset();
+  });
+
+  it("organism explores → solves task → earns energy", async () => {
     const brain = new ScriptedBrain([
-      // Forage burst 1: explore workspace
+      // Explore workspace
       {
         content: [
           { type: "text", text: "Exploring workspace.", citations: null },
@@ -79,13 +91,37 @@ describe("Full Loop Integration", () => {
         stopReason: "tool_use",
         usage: { input: 350, output: 60, cacheCreation: 0, cacheRead: 0 },
       },
-      // Verify
+      // Verify via check tool
       {
         content: [
           { type: "tool_use", id: "t4", name: "check", input: {} },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
         usage: { input: 400, output: 30, cacheCreation: 0, cacheRead: 0 },
+      },
+      // Call resolve (internal tool) to evaluate work
+      {
+        content: [
+          { type: "tool_use", id: "t5", name: "resolve", input: { input: "Completed greeting task" } },
+        ] as Anthropic.ContentBlock[],
+        stopReason: "tool_use",
+        usage: { input: 450, output: 30, cacheCreation: 0, cacheRead: 0 },
+      },
+      // Resolver LLM response
+      {
+        content: [
+          { type: "text", text: '{"outcome":"success","lesson":"Check data first","goalRelevance":0.9,"goalComplete":true}', citations: null },
+        ] as Anthropic.ContentBlock[],
+        stopReason: "end_turn",
+        usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
+      },
+      // Call memorize (internal tool)
+      {
+        content: [
+          { type: "tool_use", id: "t6", name: "memorize", input: { input: '{"store":[{"content":"Check data directory first","type":"procedural","importance":0.8}]}' } },
+        ] as Anthropic.ContentBlock[],
+        stopReason: "tool_use",
+        usage: { input: 500, output: 30, cacheCreation: 0, cacheRead: 0 },
       },
       // Done foraging
       {
@@ -94,22 +130,6 @@ describe("Full Loop Integration", () => {
         ] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
         usage: { input: 450, output: 20, cacheCreation: 0, cacheRead: 0 },
-      },
-      // Resolve response
-      {
-        content: [
-          { type: "text", text: '{"outcome":"success","lesson":"Check data first","goalRelevance":0.9,"goalComplete":true}', citations: null },
-        ] as Anthropic.ContentBlock[],
-        stopReason: "end_turn",
-        usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
-      },
-      // Memorize response
-      {
-        content: [
-          { type: "text", text: '{"store":[{"content":"Check data directory first","type":"procedural","importance":0.8}]}', citations: null },
-        ] as Anthropic.ContentBlock[],
-        stopReason: "end_turn",
-        usage: { input: 200, output: 40, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 
@@ -120,6 +140,7 @@ describe("Full Loop Integration", () => {
       brain,
       executor as unknown as Executor,
       state,
+      pool,
       "/tmp/test-integration.json",
     );
 
@@ -128,7 +149,7 @@ describe("Full Loop Integration", () => {
     for await (const event of machine.run()) {
       events.push(event);
       count++;
-      if (count > 40) break; // Safety limit
+      if (count > 60) break; // Safety limit
     }
 
     // Verify energy was consumed
@@ -140,5 +161,14 @@ describe("Full Loop Integration", () => {
     // Verify events include tool interactions
     expect(events.some((e) => e.type === "tool_start")).toBe(true);
     expect(events.some((e) => e.type === "tool_result")).toBe(true);
+
+    // Verify internal tools were used
+    const resolveResults = events.filter(
+      (e) => e.type === "tool_result" && (e as any).name === "resolve",
+    );
+    expect(resolveResults.length).toBeGreaterThan(0);
+
+    // Verify memory was stored via memorize tool
+    expect(state.memories.memories.length).toBeGreaterThan(0);
   });
 });

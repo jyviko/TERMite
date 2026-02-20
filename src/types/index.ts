@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 // Organism modes
-export type OrganismMode = "forage" | "dead";
+export type OrganismMode = "alive" | "dead";
 
 // Outcome from resolve
 export type Outcome = "success" | "partial" | "failure" | "uncertain";
@@ -82,7 +82,7 @@ export interface PromptMutation {
   version: number;
 }
 
-export type ForageRouting = "fast" | "deep";
+export type RoutingTier = "fast" | "deep";
 
 export interface OrganismState {
   id: string;
@@ -94,7 +94,7 @@ export interface OrganismState {
   cycleCount: number;
   mode: OrganismMode;
   goal: string | null;
-  forageRouting: ForageRouting;
+  routing: RoutingTier;
   energy: EnergyLedgerData;
   drives: Record<DriveName, Drive>;
   memories: Memory[];

@@ -1,7 +1,7 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentEvent, ForageRouting, TaskResult } from "../types/index.js";
+import type { AgentEvent, RoutingTier, TaskResult } from "../types/index.js";
 import { Brain } from "../brain/index.js";
 import { Executor } from "../executor/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
@@ -141,7 +141,7 @@ export class Arena {
     // For now, events are logged by runOrganism directly
   }
 
-  private static readonly ROUTING_TIERS: ForageRouting[] = ["fast", "deep"];
+  private static readonly ROUTING_TIERS: RoutingTier[] = ["fast", "deep"];
 
   private async spawnOrganism(
     parentId?: string,
@@ -157,14 +157,14 @@ export class Arena {
     );
 
     // Round-robin routing tier for balanced model distribution
-    const forageRouting = Arena.ROUTING_TIERS[this.spawnIndex % Arena.ROUTING_TIERS.length]!;
+    const routing = Arena.ROUTING_TIERS[this.spawnIndex % Arena.ROUTING_TIERS.length]!;
     this.spawnIndex++;
 
     const state = new OrganismStateManager({
       id,
       budget: perOrganismBudget,
       reserves: startingReserves,
-      forageRouting,
+      routing,
       generation: parentId
         ? (this.organisms.get(parentId)?.state.generation ?? 0) + 1
         : 0,
@@ -407,7 +407,7 @@ export class Arena {
       energyPct: Math.floor(entry.state.energy.ratio * 100),
       reserves: entry.state.energy.reserves,
       genomeVersion: entry.state.genome.version,
-      forageRouting: entry.state.forageRouting,
+      routing: entry.state.routing,
       consecutivePasses: entry.consecutivePasses,
       graduated: entry.graduated,
     }));

@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
 import { Brain, type BrainResponse, type ChatParams } from "../../src/brain/index.js";
 import { Executor } from "../../src/executor/index.js";
 import { OrganismStateManager } from "../../src/state/organism-state.js";
 import { OrganismStateMachine } from "../../src/loop/state-machine.js";
+import { TEQPool } from "../../src/arena/teq-pool.js";
 import type { AgentEvent } from "../../src/types/index.js";
 
 // Mock Brain that returns scripted responses
@@ -70,15 +71,26 @@ async function collectEvents(gen: AsyncGenerator<AgentEvent>, maxEvents = 50): P
 }
 
 describe("OrganismStateMachine", () => {
-  it("starts in forage mode", () => {
+  let pool: TEQPool;
+
+  beforeEach(() => {
+    TEQPool.reset();
+    pool = TEQPool.initialize({ initialBalance: 10_000_000 });
+  });
+
+  afterEach(() => {
+    TEQPool.reset();
+  });
+
+  it("starts in alive mode", () => {
     const state = new OrganismStateManager({ budget: 50000 });
-    expect(state.mode).toBe("forage");
+    expect(state.mode).toBe("alive");
     expect(state.alive).toBe(true);
   });
 
   it("organism dies at energy 0", async () => {
     const brain = new MockBrain();
-    // Return end_turn immediately so the burst completes
+    // Return end_turn immediately so cycle completes
     brain.addResponse(
       [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
@@ -91,6 +103,7 @@ describe("OrganismStateMachine", () => {
       brain,
       executor as unknown as Executor,
       state,
+      pool,
       "/tmp/test-organism.json",
     );
 
@@ -99,38 +112,28 @@ describe("OrganismStateMachine", () => {
     expect(events.some((e) => e.type === "state_change" && (e as any).to === "dead")).toBe(true);
   });
 
-  it("transition tool switches mode", async () => {
+  it("internal think tool returns input unchanged", async () => {
     const brain = new MockBrain();
-    // First call: forage calls transition("think")
+    // Call think tool
     brain.addResponse(
       [
         {
           type: "tool_use",
           id: "toolu_t1",
-          name: "transition",
-          input: { mode: "think" },
+          name: "think",
+          input: { input: "I should explore the workspace" },
         },
       ] as Anthropic.ContentBlock[],
       "tool_use",
     );
-    // Think response (single call)
+    // After think, end turn
     brain.addResponse(
-      [{ type: "text", text: "Plan: do stuff", citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: "Done thinking.", citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
-    // Back to forage
+    // Resolve response (for resolver LLM call)
     brain.addResponse(
-      [{ type: "text", text: "Following plan.", citations: null }] as Anthropic.ContentBlock[],
-      "end_turn",
-    );
-    // Resolve calls (multiple)
-    brain.addResponse(
-      [{ type: "text", text: '{"outcome":"success","lesson":"test","goalRelevance":0.5,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
-      "end_turn",
-    );
-    // Memorize calls
-    brain.addResponse(
-      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: '{"outcome":"uncertain","lesson":"","goalRelevance":0,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
 
@@ -141,12 +144,283 @@ describe("OrganismStateMachine", () => {
       brain,
       executor as unknown as Executor,
       state,
-      "/tmp/test-organism.json",
+      pool,
+      "/tmp/test-think.json",
     );
 
-    const events = await collectEvents(machine.run(), 30);
-    const stateChanges = events.filter((e) => e.type === "state_change");
-    // Should have forage->forage, then forage->think, then back
-    expect(stateChanges.some((e) => (e as any).to === "think")).toBe(true);
+    const events = await collectEvents(machine.run(), 20);
+    // think tool should produce a tool_result with the same input
+    const thinkResult = events.find(
+      (e) => e.type === "tool_result" && (e as any).name === "think",
+    );
+    expect(thinkResult).toBeDefined();
+    expect((thinkResult as any).result).toBe("I should explore the workspace");
+  });
+
+  it("internal resolve tool triggers income computation", async () => {
+    const brain = new MockBrain();
+    // Call resolve tool
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_r1",
+          name: "resolve",
+          input: { input: "I explored the workspace" },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    // Resolve LLM response (from Resolver)
+    brain.addResponse(
+      [{ type: "text", text: '{"outcome":"success","lesson":"Good work","goalRelevance":0.8,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // After resolve, end turn
+    brain.addResponse(
+      [{ type: "text", text: "Resolved.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new OrganismStateManager({ budget: 100000 });
+
+    const machine = new OrganismStateMachine(
+      brain,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-resolve.json",
+    );
+
+    const events = await collectEvents(machine.run(), 20);
+    const resolveResult = events.find(
+      (e) => e.type === "tool_result" && (e as any).name === "resolve",
+    );
+    expect(resolveResult).toBeDefined();
+    // Result should contain "earned" and "outcome"
+    expect((resolveResult as any).result).toContain("earned");
+    expect((resolveResult as any).result).toContain("outcome: success");
+  });
+
+  it("internal memorize tool stores memory via JSON operations", async () => {
+    const brain = new MockBrain();
+    // Call memorize tool with full JSON operations
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_m1",
+          name: "memorize",
+          input: { input: '{"store":[{"content":"Always check data directory first","type":"procedural","importance":0.9}]}' },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    // After memorize, end turn
+    brain.addResponse(
+      [{ type: "text", text: "Memorized.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve response (for resolver LLM calls)
+    brain.addResponse(
+      [{ type: "text", text: '{"outcome":"uncertain","lesson":"","goalRelevance":0,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new OrganismStateManager({ budget: 100000 });
+
+    const machine = new OrganismStateMachine(
+      brain,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-memorize.json",
+    );
+
+    const events = await collectEvents(machine.run(), 20);
+    const memResult = events.find(
+      (e) => e.type === "tool_result" && (e as any).name === "memorize",
+    );
+    expect(memResult).toBeDefined();
+    expect((memResult as any).result).toContain("stored");
+    expect((memResult as any).result).toContain("procedural");
+    // Verify the memory was actually stored
+    expect(state.memories.memories.length).toBeGreaterThan(0);
+    expect(state.memories.memories[0]!.content).toBe("Always check data directory first");
+    expect(state.memories.memories[0]!.importance).toBe(0.9);
+  });
+
+  it("memorize tool supports self-mutation", async () => {
+    const brain = new MockBrain();
+    // Call memorize with mutate operation
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_mut",
+          name: "memorize",
+          input: { input: '{"mutate":[{"target":"systemPrompt","newPrompt":"I am an evolved organism."}]}' },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    brain.addResponse(
+      [{ type: "text", text: "Mutated.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    brain.addResponse(
+      [{ type: "text", text: '{"outcome":"uncertain","lesson":"","goalRelevance":0,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new OrganismStateManager({ budget: 100000 });
+    const originalPrompt = state.genome.systemPrompt;
+
+    const machine = new OrganismStateMachine(
+      brain,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-mutate.json",
+    );
+
+    const events = await collectEvents(machine.run(), 20);
+    const mutResult = events.find(
+      (e) => e.type === "tool_result" && (e as any).name === "memorize",
+    );
+    expect(mutResult).toBeDefined();
+    expect((mutResult as any).result).toContain("mutated systemPrompt");
+    expect(state.genome.systemPrompt).toBe("I am an evolved organism.");
+    expect(state.genome.systemPrompt).not.toBe(originalPrompt);
+    expect(state.genome.version).toBeGreaterThanOrEqual(1);
+  });
+
+  it("multi-resolve keeps best outcome and max relevance", async () => {
+    const brain = new MockBrain();
+    // First resolve call
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_r1",
+          name: "resolve",
+          input: { input: "first check" },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    // Resolver returns failure with low relevance
+    brain.addResponse(
+      [{ type: "text", text: '{"outcome":"failure","lesson":"bad","goalRelevance":0.2,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Second resolve call
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_r2",
+          name: "resolve",
+          input: { input: "second check after more work" },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    // Resolver returns success with high relevance
+    brain.addResponse(
+      [{ type: "text", text: '{"outcome":"success","lesson":"good","goalRelevance":0.9,"goalComplete":true}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // End turn
+    brain.addResponse(
+      [{ type: "text", text: "All done.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new OrganismStateManager({ budget: 500_000 });
+
+    const machine = new OrganismStateMachine(
+      brain,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-multi-resolve.json",
+    );
+
+    await collectEvents(machine.run(), 30);
+
+    // Cycle history should record the best outcome (success) and max relevance (0.9)
+    expect(state.energy.cycleHistory.length).toBeGreaterThan(0);
+    const lastCycle = state.energy.cycleHistory[0]!;
+    expect(lastCycle.outcome).toBe("success");
+    expect(lastCycle.goalRelevance).toBe(0.9);
+  });
+
+  it("think-only cycles count as idle for staleness", async () => {
+    const brain = new MockBrain();
+    // Every cycle: call think then end — no external tool use
+    brain.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_idle",
+          name: "think",
+          input: { input: "just thinking" },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    brain.addResponse(
+      [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new OrganismStateManager({ budget: 1_000_000, reserves: 1_000_000 });
+
+    const machine = new OrganismStateMachine(
+      brain,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-think-idle.json",
+    );
+
+    const events = await collectEvents(machine.run(), 200);
+    expect(state.alive).toBe(false);
+    expect(state.causeOfDeath).toBe("staleness");
+  });
+
+  it("staleness kills organism after idle cycles", async () => {
+    const brain = new MockBrain();
+    // Return end_turn immediately every cycle (no tool calls → idle)
+    brain.addResponse(
+      [{ type: "text", text: "Nothing to do.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve response (required for resolver calls)
+    brain.addResponse(
+      [{ type: "text", text: '{"outcome":"uncertain","lesson":"","goalRelevance":0,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new OrganismStateManager({ budget: 1_000_000, reserves: 1_000_000 });
+
+    const machine = new OrganismStateMachine(
+      brain,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-staleness.json",
+    );
+
+    const events = await collectEvents(machine.run(), 100);
+    expect(state.alive).toBe(false);
+    expect(events.some((e) => e.type === "state_change" && (e as any).to === "dead")).toBe(true);
   });
 });

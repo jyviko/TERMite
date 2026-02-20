@@ -380,7 +380,7 @@ function renderDetailIdentity(org: OrganismState): string[] {
   lines.push(`  Born:           ${born}`);
   lines.push(`  Cycles:         ${org.cycleCount}`);
   lines.push(`  Mode:           ${org.mode}`);
-  lines.push(`  Routing:        ${org.forageRouting}`);
+  lines.push(`  Routing:        ${org.routing}`);
   if (org.goal) lines.push(`  Goal:           ${org.goal}`);
 
   return lines;

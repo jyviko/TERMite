@@ -105,7 +105,7 @@ describe("DriveSystem", () => {
   it("driveToGoal returns a goal string", () => {
     const ds = new DriveSystem();
     const goal = ds.driveToGoal(ds.drives.orient);
-    expect(goal).toContain("Explore");
+    expect(goal).toContain("unknown");
   });
 
   it("serializes and deserializes", () => {

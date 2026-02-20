@@ -153,8 +153,8 @@ async function main() {
   let cycles = 0;
   for await (const event of machine.run()) {
     logEvent(state.id, state.mode, event);
-    if (event.type === "state_change" && event.to === "forage") {
-      cycles++;
+    if (state.cycleCount > cycles) {
+      cycles = state.cycleCount;
       if (cycles >= maxCycles) {
         console.log(`\nReached max cycles (${maxCycles})`);
         break;
