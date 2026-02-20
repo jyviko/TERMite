@@ -106,16 +106,4 @@ function applyMutations(genome: Genome): void {
     genome.systemPrompt = sentences.join(" ");
   }
 
-  // 5% chance: add a novel instruction
-  if (Math.random() < 0.05) {
-    const novel = [
-      "Check quest.json before starting work.",
-      "Read verify.sh to understand acceptance criteria.",
-      "Reuse skills when possible.",
-      "Rest when context feels heavy.",
-      "Explore other organisms' workspaces for useful scripts.",
-    ];
-    const instruction = novel[Math.floor(Math.random() * novel.length)]!;
-    genome.systemPrompt += " " + instruction;
-  }
 }

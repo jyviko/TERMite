@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Quest } from "../types/index.js";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 interface QuestTemplate {
@@ -522,7 +522,7 @@ export class QuestGenerator {
       tier: effectiveTier,
       title: template.title,
       description: template.description,
-      verifyScript: "quests/verify.sh",
+      verifyScript: "tools/check",
       reward: TIER_REWARDS[effectiveTier] ?? 60_000,
       deadlineCycles: TIER_DEADLINES[effectiveTier] ?? 10,
       assignedCycle: currentCycle,
@@ -540,13 +540,19 @@ export class QuestGenerator {
     const dataDir = join(questDir, "data");
     const outputDir = join(workspacePath, "output");
     const workDir = join(workspacePath, "work");
-    const skillsDir = join(workspacePath, "skills");
+    const toolsDir = join(workspacePath, "tools");
 
     mkdirSync(questDir, { recursive: true });
     mkdirSync(dataDir, { recursive: true });
     mkdirSync(outputDir, { recursive: true });
     mkdirSync(workDir, { recursive: true });
-    mkdirSync(skillsDir, { recursive: true });
+    mkdirSync(toolsDir, { recursive: true });
+
+    // Seed tools — organism discovers everything through these
+    if (!existsSync(join(toolsDir, "shell"))) {
+      writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\neval "$*"\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "echo"), '#!/bin/bash\n# echo: incomplete\n', { mode: 0o755 });
+    }
 
     // Write quest.json
     writeFileSync(
@@ -555,12 +561,13 @@ export class QuestGenerator {
       "utf-8",
     );
 
-    // Find the template and write verify.sh + data
+    // Find the template and write check tool + data
     const effectiveTier = Math.min(Math.max(quest.tier, 1), 5);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates.find((t) => t.title === quest.title) ?? templates[0]!;
 
-    writeFileSync(join(questDir, "verify.sh"), template.verifyScript, {
+    // check IS the verification script — not a redirect
+    writeFileSync(join(toolsDir, "check"), template.verifyScript, {
       mode: 0o755,
       encoding: "utf-8",
     });

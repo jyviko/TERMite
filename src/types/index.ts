@@ -82,6 +82,8 @@ export interface PromptMutation {
   version: number;
 }
 
+export type ForageRouting = "fast" | "deep";
+
 export interface OrganismState {
   id: string;
   generation: number;
@@ -92,6 +94,7 @@ export interface OrganismState {
   cycleCount: number;
   mode: OrganismMode;
   goal: string | null;
+  forageRouting: ForageRouting;
   energy: EnergyLedgerData;
   drives: Record<DriveName, Drive>;
   memories: Memory[];
@@ -131,14 +134,6 @@ export interface QuestResult {
   tier: number;
   passed: boolean;
   cyclesTaken: number;
-}
-
-// Skill manifest entry
-export interface SkillEntry {
-  description: string;
-  path: string;
-  usage: string;
-  lastUsed: number;
 }
 
 // Agent events

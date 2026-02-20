@@ -34,25 +34,21 @@ class MockExecutor {
   }
 
   async executeShell(command: string): Promise<string> {
-    if (command.includes("ls")) {
-      return "quests/\noutput/\nwork/\nskills/";
+    // Tool discovery
+    if (command.includes("find /workspace/tools")) {
+      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/echo";
     }
-    if (command.includes("cat") && command.includes("quest.json")) {
-      return JSON.stringify({
-        id: "quest-sim",
-        tier: 1,
-        title: "Hello World",
-        description: "Write Hello, World! to /workspace/output/greeting.txt",
-        reward: 10000,
-      });
+    // Tool execution
+    if (command.startsWith("/workspace/tools/shell")) {
+      return `(simulated) ${command}`;
     }
-    if (command.includes("cat") && command.includes("manifest.json")) {
-      return "{}";
-    }
-    if (command.includes("verify.sh")) {
+    if (command.startsWith("/workspace/tools/check")) {
       const greeting = this.files.get("/workspace/output/greeting.txt");
       if (greeting?.includes("Hello, World!")) return "PASS";
       return "FAIL: file not found or wrong content";
+    }
+    if (command.startsWith("/workspace/tools/echo")) {
+      return "";
     }
     return `(simulated) ${command}`;
   }

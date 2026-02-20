@@ -1,7 +1,7 @@
 import { mkdirSync, existsSync, readFileSync, copyFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentEvent, QuestResult } from "../types/index.js";
+import type { AgentEvent, ForageRouting, QuestResult } from "../types/index.js";
 import { Brain } from "../brain/index.js";
 import { Executor } from "../executor/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
@@ -48,6 +48,7 @@ export class Arena {
   private evolver: GenomeEvolver;
   private workRater: WorkRater;
   private openDataGenerator: OpenDataGenerator;
+  private spawnIndex = 0;
   private config: ArenaConfig;
   private runDir = "";
 
@@ -113,6 +114,8 @@ export class Arena {
     // For now, events are logged by runOrganism directly
   }
 
+  private static readonly ROUTING_TIERS: ForageRouting[] = ["fast", "deep"];
+
   private async spawnOrganism(
     parentId?: string,
     genome?: import("../state/genome.js").Genome,
@@ -126,10 +129,15 @@ export class Arena {
       this.sharedBudget.available / Math.max(1, this.config.organismCount),
     );
 
+    // Round-robin routing tier for balanced model distribution
+    const forageRouting = Arena.ROUTING_TIERS[this.spawnIndex % Arena.ROUTING_TIERS.length]!;
+    this.spawnIndex++;
+
     const state = new OrganismStateManager({
       id,
       budget: perOrganismBudget,
       reserves: startingReserves,
+      forageRouting,
       generation: parentId
         ? (this.organisms.get(parentId)?.state.generation ?? 0) + 1
         : 0,
@@ -154,12 +162,12 @@ export class Arena {
     const quest = this.questGenerator.generateQuest(1, 0, []);
     this.questGenerator.writeQuestToWorkspace(quest, workspacePath);
 
-    // If child, copy parent's skills
+    // If child, copy parent's tools
     if (parentId) {
-      const parentSkills = join(this.runDir, parentId, "workspace", "skills");
-      const childSkills = join(workspacePath, "skills");
-      if (existsSync(parentSkills)) {
-        copyDirectorySync(parentSkills, childSkills);
+      const parentTools = join(this.runDir, parentId, "workspace", "tools");
+      const childTools = join(workspacePath, "tools");
+      if (existsSync(parentTools)) {
+        copyDirectorySync(parentTools, childTools);
       }
     }
 

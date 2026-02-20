@@ -47,8 +47,11 @@ class MockExecutor {
   async stop(): Promise<void> {}
 
   async executeShell(command: string): Promise<string> {
-    if (command.includes("manifest.json")) return "{}";
-    if (command.includes("verify.sh")) return "PASS";
+    if (command.includes("find /workspace/tools")) {
+      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/echo";
+    }
+    if (command.startsWith("/workspace/tools/check")) return "PASS";
+    if (command.startsWith("/workspace/tools/echo")) return "";
     return `(mock) ${command}`;
   }
 

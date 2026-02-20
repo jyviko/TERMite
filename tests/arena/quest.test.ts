@@ -41,7 +41,7 @@ describe("QuestGenerator", () => {
     gen.writeQuestToWorkspace(quest, workspace);
 
     expect(existsSync(join(workspace, "quests", "quest.json"))).toBe(true);
-    expect(existsSync(join(workspace, "quests", "verify.sh"))).toBe(true);
+    expect(existsSync(join(workspace, "tools", "check"))).toBe(true);
 
     const questJson = JSON.parse(readFileSync(join(workspace, "quests", "quest.json"), "utf-8"));
     expect(questJson.id).toBe(quest.id);

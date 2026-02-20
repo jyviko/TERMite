@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AgentEvent, MemoryType, SkillEntry } from "../types/index.js";
+import type { AgentEvent, MemoryType } from "../types/index.js";
 import type { Brain } from "../brain/index.js";
 import { extractText } from "../brain/util.js";
 import type { Executor } from "../executor/index.js";
@@ -10,7 +10,6 @@ import { Memorizer } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const MEMORY_TOKEN_BUDGET = 2000;
-const STALE_SKILL_MAX_AGE = 50;
 
 export class OrganismStateMachine {
   private loop: AgenticLoop;
@@ -61,17 +60,12 @@ export class OrganismStateMachine {
   }
 
   private async *forage(): AsyncGenerator<AgentEvent> {
-    // Randomly assign Haiku or Sonnet — some cycles you think clearly, some you don't
-    const useSonnet = Math.random() < 0.5;
-    const model = useSonnet
-      ? this.state.genome.routing.deep.model
-      : this.state.genome.routing.fast.model;
+    const routing = this.state.genome.routing[this.state.forageRouting];
+    const model = routing.model;
     this.forageModel = model;
-    const maxTokens = useSonnet
-      ? this.state.genome.routing.deep.maxTokens
-      : this.state.genome.routing.fast.maxTokens;
+    const maxTokens = routing.maxTokens;
 
-    const tools = this.buildForageTools();
+    const tools = await this.buildForageTools();
     let toolsUsed = false;
     const executor = this.buildToolExecutor();
     const trackingExecutor: ToolExecutor = async (name, input) => {
@@ -203,7 +197,6 @@ export class OrganismStateMachine {
       yield { type: "error", message: `Rest failed: ${msg}` };
     }
 
-    this.pruneSkills();
     this.state.memories.decayEvict();
     this.forageMessages = [];
   }
@@ -235,89 +228,40 @@ export class OrganismStateMachine {
     return drive ? this.state.drives.driveToGoal(drive) : null;
   }
 
-  private buildForageTools(): Anthropic.Tool[] {
-    return [
-      {
-        name: "execute_shell",
-        description: "Execute a shell command in your workspace.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            command: { type: "string", description: "The shell command to run" },
+  private async buildForageTools(): Promise<Anthropic.Tool[]> {
+    const tools: Anthropic.Tool[] = [];
+
+    try {
+      const listing = await this.executor.executeShell(
+        "find /workspace/tools -maxdepth 1 -type f -executable 2>/dev/null || true",
+      );
+      for (const line of listing.trim().split("\n")) {
+        if (!line) continue;
+        const filename = line.split("/").pop()!;
+        const name = filename.replace(/\.[^.]+$/, "");
+        tools.push({
+          name,
+          description: filename,
+          input_schema: {
+            type: "object" as const,
+            properties: {
+              input: { type: "string" },
+            },
           },
-          required: ["command"],
-        },
-      },
-      {
-        name: "write_file",
-        description: "Write content to a file in your workspace.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            path: { type: "string", description: "File path relative to /workspace/" },
-            content: { type: "string", description: "File content" },
-          },
-          required: ["path", "content"],
-        },
-      },
-      {
-        name: "list_skills",
-        description:
-          "See what reusable scripts you have. Call this after waking up or when you need to remember your capabilities.",
-        input_schema: {
-          type: "object" as const,
-          properties: {},
-        },
-      },
-      {
-        name: "check_quest",
-        description:
-          "Run the verification script for your current quest. Returns PASS or FAIL with feedback.",
-        input_schema: {
-          type: "object" as const,
-          properties: {},
-        },
-      },
-    ];
+        });
+      }
+    } catch {
+      // Container not ready or no tools yet
+    }
+
+    return tools;
   }
 
   private buildToolExecutor(): ToolExecutor {
-    return async (name: string, input: Record<string, unknown>): Promise<string> => {
-      switch (name) {
-        case "execute_shell": {
-          const command = String(input.command ?? "");
-          return this.executor.executeShell(command);
-        }
-        case "write_file": {
-          const path = String(input.path ?? "");
-          const content = String(input.content ?? "");
-          return this.executor.writeFile(path, content);
-        }
-        case "list_skills": {
-          try {
-            const manifest = await this.executor.executeShell(
-              "cat /workspace/skills/manifest.json 2>/dev/null || echo '{}'",
-            );
-            const skills: Record<string, SkillEntry> = JSON.parse(manifest);
-            if (Object.keys(skills).length === 0) return "No skills yet.";
-            return Object.entries(skills)
-              .map(([k, v]) => `- ${k}: ${v.description}\n  Usage: ${v.usage}`)
-              .join("\n");
-          } catch {
-            return "No skills yet.";
-          }
-        }
-        case "check_quest": {
-          try {
-            return await this.executor.executeShell("bash /workspace/quests/verify.sh 2>&1");
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return `Quest verification failed: ${msg}`;
-          }
-        }
-        default:
-          return `Unknown tool: ${name}`;
-      }
+    return async (_name: string, input: Record<string, unknown>): Promise<string> => {
+      const toolInput = String(input.input ?? "");
+      const escaped = toolInput.replace(/'/g, "'\\''");
+      return this.executor.executeShell(`/workspace/tools/${_name} '${escaped}'`);
     };
   }
 
@@ -369,30 +313,6 @@ export class OrganismStateMachine {
       }
     }
     return lines.join("\n");
-  }
-
-  private pruneSkills(): void {
-    // Skills pruning is mechanical — happens during rest
-    // The organism's manifest is in the container, so we just fire and forget
-    this.executor.executeShell(
-      `node -e "
-        const fs = require('fs');
-        const path = '/workspace/skills/manifest.json';
-        try {
-          const m = JSON.parse(fs.readFileSync(path, 'utf-8'));
-          const cycle = ${this.state.cycleCount};
-          const maxAge = ${STALE_SKILL_MAX_AGE};
-          const pruned = {};
-          for (const [k, v] of Object.entries(m)) {
-            if (cycle - v.lastUsed < maxAge) pruned[k] = v;
-            else try { fs.unlinkSync('/workspace/skills/' + v.path); } catch {}
-          }
-          fs.writeFileSync(path, JSON.stringify(pruned, null, 2));
-        } catch {}
-      "`,
-    ).catch(() => {
-      // Non-fatal
-    });
   }
 
   // Allow arena to set quest reward and tier

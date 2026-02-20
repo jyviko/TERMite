@@ -31,20 +31,15 @@ class MockExecutor {
   async stop(): Promise<void> {}
 
   async executeShell(command: string): Promise<string> {
-    if (command.includes("ls")) return "quests/ output/ skills/";
-    if (command.includes("quest.json")) {
-      return JSON.stringify({
-        id: "q1", tier: 1, title: "Hello",
-        description: "Write Hello, World!",
-        reward: 2000,
-      });
+    if (command.includes("find /workspace/tools")) {
+      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/echo";
     }
-    if (command.includes("manifest.json")) return "{}";
-    if (command.includes("verify.sh")) {
+    if (command.startsWith("/workspace/tools/check")) {
       const greeting = this.files.get("/workspace/output/greeting.txt");
       if (greeting === "Hello, World!") return "PASS";
       return "FAIL";
     }
+    if (command.startsWith("/workspace/tools/echo")) return "";
     return "";
   }
 
