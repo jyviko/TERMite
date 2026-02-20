@@ -17,11 +17,28 @@ const { values } = parseArgs({
   options: {
     workspace: { type: "string", default: "./arena-workspace" },
     interval: { type: "string", default: "1500" },
+    run: { type: "string" },
   },
 });
 
-const SAVES_DIR = values.workspace ?? "./arena-workspace";
+const workspaceRoot = values.workspace ?? "./arena-workspace";
 const REFRESH_INTERVAL = parseInt(values.interval ?? "1500", 10);
+
+/** Find the latest run-* directory, or use --run if specified */
+function findRunDir(): string {
+  if (values.run) return join(workspaceRoot, values.run);
+  if (!existsSync(workspaceRoot)) return workspaceRoot;
+
+  const runs = readdirSync(workspaceRoot, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name.startsWith("run-"))
+    .map((e) => e.name)
+    .sort();
+
+  if (runs.length === 0) return workspaceRoot;
+  return join(workspaceRoot, runs[runs.length - 1]!);
+}
+
+let SAVES_DIR = findRunDir();
 
 const SPARK = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588";
 const MIN_COL_W = 28;
@@ -331,6 +348,7 @@ function render(): string {
 
 // ── Main loop ──────────────────────────────────────────────────────
 function tick(): void {
+  SAVES_DIR = findRunDir();
   process.stdout.write(render());
 }
 

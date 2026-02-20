@@ -38,6 +38,7 @@ export class Arena {
   private questVerifier: QuestVerifier;
   private evolver: GenomeEvolver;
   private config: ArenaConfig;
+  private runDir = "";
 
   constructor(config: ArenaConfig) {
     this.config = config;
@@ -49,8 +50,13 @@ export class Arena {
   }
 
   async start(): Promise<void> {
-    mkdirSync(this.config.workspaceRoot, { recursive: true });
-    mkdirSync(join(this.config.workspaceRoot, "shared"), { recursive: true });
+    // Each run gets its own timestamped directory under workspaceRoot
+    const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    this.runDir = join(this.config.workspaceRoot, `run-${runId}`);
+    mkdirSync(this.runDir, { recursive: true });
+    mkdirSync(join(this.runDir, "shared"), { recursive: true });
+
+    console.log(`Run directory: ${this.runDir}`);
 
     for (let i = 0; i < this.config.organismCount; i++) {
       await this.spawnOrganism();
@@ -81,7 +87,7 @@ export class Arena {
     genome?: import("../state/genome.js").Genome,
   ): Promise<string> {
     const id = `org-${randomUUID().slice(0, 8)}`;
-    const workspacePath = join(this.config.workspaceRoot, id, "workspace");
+    const workspacePath = join(this.runDir, id, "workspace");
     mkdirSync(workspacePath, { recursive: true });
 
     const perOrganismBudget = Math.floor(
@@ -108,7 +114,7 @@ export class Arena {
 
     await executor.start();
 
-    const savePath = join(this.config.workspaceRoot, id, "workspace", "state.json");
+    const savePath = join(this.runDir, id, "workspace", "state.json");
     const machine = new OrganismStateMachine(this.brain, executor, state, savePath);
 
     // Drop initial quest
@@ -117,12 +123,7 @@ export class Arena {
 
     // If child, copy parent's skills
     if (parentId) {
-      const parentSkills = join(
-        this.config.workspaceRoot,
-        parentId,
-        "workspace",
-        "skills",
-      );
+      const parentSkills = join(this.runDir, parentId, "workspace", "skills");
       const childSkills = join(workspacePath, "skills");
       if (existsSync(parentSkills)) {
         copyDirectorySync(parentSkills, childSkills);
@@ -169,14 +170,14 @@ export class Arena {
       entry.alive = false;
       // Preserve workspace (corpse)
       await entry.state.save(
-        join(this.config.workspaceRoot, id, "workspace", "state.json"),
+        join(this.runDir, id, "workspace", "state.json"),
       );
       await entry.executor.stop().catch(() => {});
     }
   }
 
   private async onQuestComplete(id: string, entry: OrganismEntry): Promise<void> {
-    const workspacePath = join(this.config.workspaceRoot, id, "workspace");
+    const workspacePath = join(this.runDir, id, "workspace");
     const questPath = join(workspacePath, "quests", "quest.json");
 
     let quest;
