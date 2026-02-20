@@ -10,23 +10,23 @@ interface QuestTemplate {
   dataGenerator?: () => Record<string, string>;
 }
 
-// Rewards in TEQ (token equivalents). Calibrated so:
-// - Tier 1-2: organism bleeds slowly (covers 50-75% of cycle cost)
-// - Tier 3: break-even threshold
+// Rewards in TEQ (token equivalents). Calibrated against observed
+// cycle costs (~35k TEQ avg with Haiku, higher with Sonnet). Tuned so:
+// - Tier 1-2: covers ~1-2 cycles, organism bleeds slowly
+// - Tier 3: roughly break-even over quest duration
 // - Tier 4+: net-positive, enabling surplus and reproduction
-// Rewards plateau after tier 5 and taper off.
-// The easy money dries up — organisms must become resourceful, not just skilled.
+// - Tier 6+: plateau — the easy money dries up
 const TIER_REWARDS: Record<number, number> = {
-  1: 10000,
-  2: 15000,
-  3: 25000,
-  4: 40000,
-  5: 60000,
-  6: 75000,
-  7: 100000,
-  8: 125000,
-  9: 150000,
-  10: 150000,
+  1: 50000,
+  2: 80000,
+  3: 120000,
+  4: 180000,
+  5: 250000,
+  6: 300000,
+  7: 350000,
+  8: 400000,
+  9: 450000,
+  10: 450000,
 };
 
 const TIER_DEADLINES: Record<number, number> = {

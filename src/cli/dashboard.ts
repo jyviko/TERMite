@@ -71,11 +71,12 @@ function pctBar(current: number, maximum: number, width = 10): string {
 }
 
 function fmt(n: number): string {
-  return n.toLocaleString();
+  return (n ?? 0).toLocaleString();
 }
 
 function fmtSigned(n: number): string {
-  return (n > 0 ? "+" : "") + n.toLocaleString();
+  const v = n ?? 0;
+  return (v > 0 ? "+" : "") + v.toLocaleString();
 }
 
 // ── Terminal primitives ────────────────────────────────────────────
