@@ -31,8 +31,9 @@ export class OrganismStateMachine {
   private memorizer: Memorizer;
   private forageMessages: Anthropic.MessageParam[] = [];
   private savePath: string;
-  private transitionTarget: string | null = null;
   private questReward: number | null = null;
+  private consecutiveIdleCycles = 0;
+  private static readonly STALENESS_THRESHOLD = 5;
 
   constructor(
     private brain: Brain,
@@ -55,19 +56,9 @@ export class OrganismStateMachine {
         break;
       }
 
-      switch (this.state.mode) {
-        case "forage":
-          yield* this.forage();
-          break;
-        case "think":
-          yield* this.think();
-          break;
-        case "rest":
-          yield* this.rest();
-          break;
-      }
+      yield* this.forage();
 
-      // Post-burst: resolve + memorize
+      // Post-burst: resolve + memorize + rest
       yield* this.postBurst();
 
       this.state.drives.update(
@@ -81,116 +72,52 @@ export class OrganismStateMachine {
   }
 
   private async *forage(): AsyncGenerator<AgentEvent> {
-    yield { type: "state_change", from: this.state.mode, to: "forage" };
-    this.state.mode = "forage";
-    this.transitionTarget = null;
+    // Randomly assign Haiku or Sonnet — some cycles you think clearly, some you don't
+    const useSonnet = Math.random() < 0.5;
+    const model = useSonnet
+      ? this.state.genome.routing.deep.model
+      : this.state.genome.routing.fast.model;
+    const maxTokens = useSonnet
+      ? this.state.genome.routing.deep.maxTokens
+      : this.state.genome.routing.fast.maxTokens;
 
     const tools = this.buildForageTools();
+    let toolsUsed = false;
     const executor = this.buildToolExecutor();
+    const trackingExecutor: ToolExecutor = async (name, input) => {
+      toolsUsed = true;
+      return executor(name, input);
+    };
 
-    // Build awareness message for this burst
-    const awareness = this.buildAwarenessMessage();
-    if (this.forageMessages.length === 0) {
-      this.forageMessages.push(awareness);
-    }
+    // Build awareness message — organism wakes up knowing who it is
+    this.forageMessages = [this.buildAwarenessMessage()];
 
     for await (const event of this.loop.run({
       systemPrompt: this.state.genome.systemPrompt,
       messages: this.forageMessages,
       tools,
-      model: this.state.genome.routing.forage.model,
-      maxTokens: this.state.genome.routing.forage.maxTokens,
-      executor,
+      model,
+      maxTokens,
+      executor: trackingExecutor,
     })) {
       yield event;
 
-      // Burn energy for API usage (model-weighted)
       if (event.type === "usage") {
-        this.state.energy.burn(this.state.genome.routing.forage.model, event);
+        this.state.energy.burn(model, event);
       }
 
       if (event.type === "error") break;
-
-      // Check if transition was requested
-      if (this.transitionTarget) break;
     }
 
-    // Handle transition
-    if (this.transitionTarget === "think") {
-      this.state.mode = "think";
-    } else if (this.transitionTarget === "rest") {
-      this.state.mode = "rest";
-    }
-  }
-
-  private async *think(): AsyncGenerator<AgentEvent> {
-    yield { type: "state_change", from: this.state.mode, to: "think" };
-    this.state.mode = "think";
-
-    const summary = this.buildThinkContext();
-    try {
-      const response = await this.brain.chat({
-        model: this.state.genome.routing.think.model,
-        system: "You are the strategic mind. Analyze the situation and form a plan.",
-        messages: [{ role: "user", content: summary }],
-        maxTokens: this.state.genome.routing.think.maxTokens,
-      });
-
-      this.state.energy.burn(this.state.genome.routing.think.model, response.usage);
-
-      const plan = extractText(response.content);
-
-      yield { type: "text", text: plan };
-
-      // Inject plan into forage messages
-      this.forageMessages.push({ role: "user", content: `Strategic plan: ${plan}` });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      yield { type: "error", message: `Think failed: ${msg}` };
-    }
-
-    this.state.mode = "forage";
-  }
-
-  private async *rest(): AsyncGenerator<AgentEvent> {
-    yield { type: "state_change", from: this.state.mode, to: "rest" };
-    this.state.mode = "rest";
-
-    const summary = this.serializeMessages(this.forageMessages);
-
-    try {
-      const response = await this.brain.chat({
-        model: this.state.genome.routing.forage.model, // Haiku
-        system: this.state.genome.restPrompt,
-        messages: [{ role: "user", content: summary }],
-        maxTokens: 1024,
-      });
-
-      this.state.energy.burn(this.state.genome.routing.forage.model, response.usage);
-
-      const text = extractText(response.content);
-
-      // Parse and store extracted memories
-      const extracted = parseRestMemories(text);
-      for (const m of extracted) {
-        this.state.memories.add(m.content, m.type as MemoryType, m.importance);
+    // Track staleness — organism that does nothing dies
+    if (toolsUsed) {
+      this.consecutiveIdleCycles = 0;
+    } else {
+      this.consecutiveIdleCycles++;
+      if (this.consecutiveIdleCycles >= OrganismStateMachine.STALENESS_THRESHOLD) {
+        this.state.die("staleness");
       }
-
-      yield { type: "text", text: `REST: extracted ${extracted.length} memories` };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      yield { type: "error", message: `Rest failed: ${msg}` };
     }
-
-    // Prune stale skills
-    this.pruneSkills();
-
-    // Decay-evict low-score memories
-    this.state.memories.decayEvict();
-
-    // Fresh context
-    this.forageMessages = [];
-    this.state.mode = "forage";
   }
 
   private async *postBurst(): AsyncGenerator<AgentEvent> {
@@ -242,11 +169,44 @@ export class OrganismStateMachine {
       energy: this.state.energy,
     });
     if (memorizeUsage.output > 0) {
-      this.state.energy.burn(this.state.genome.routing.forage.model, memorizeUsage);
+      this.state.energy.burn(this.state.genome.routing.fast.model, memorizeUsage);
     }
 
     // Update BMR based on memory cost
     this.state.energy.computeBmr(this.state.memories.totalTokenCost);
+
+    // Rest: compact burst into memories, clear context
+    yield* this.rest();
+  }
+
+  private async *rest(): AsyncGenerator<AgentEvent> {
+    const summary = this.serializeMessages(this.forageMessages);
+    if (!summary.trim()) return;
+
+    try {
+      const response = await this.brain.chat({
+        model: this.state.genome.routing.fast.model,
+        system: this.state.genome.restPrompt,
+        messages: [{ role: "user", content: summary }],
+        maxTokens: 1024,
+      });
+
+      this.state.energy.burn(this.state.genome.routing.fast.model, response.usage);
+
+      const extracted = parseRestMemories(extractText(response.content));
+      for (const m of extracted) {
+        this.state.memories.add(m.content, m.type as MemoryType, m.importance);
+      }
+
+      yield { type: "text", text: `REST: extracted ${extracted.length} memories` };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield { type: "error", message: `Rest failed: ${msg}` };
+    }
+
+    this.pruneSkills();
+    this.state.memories.decayEvict();
+    this.forageMessages = [];
   }
 
   private buildAwarenessMessage(): Anthropic.MessageParam {
@@ -268,20 +228,6 @@ export class OrganismStateMachine {
   private deriveGoal(): string | null {
     const drive = this.state.drives.highestActive();
     return drive ? this.state.drives.driveToGoal(drive) : null;
-  }
-
-  private buildThinkContext(): string {
-    const recent = this.summarizeRecentActions();
-    return [
-      `Current state:`,
-      `  Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`,
-      `  Cycle: ${this.state.cycleCount}`,
-      `  Goal: ${this.state.goal ?? this.deriveGoal() ?? "None"}`,
-      `  Memories: ${this.state.memories.memories.length}`,
-      ``,
-      `Recent actions:`,
-      recent,
-    ].join("\n");
   }
 
   private buildForageTools(): Anthropic.Tool[] {
@@ -310,18 +256,6 @@ export class OrganismStateMachine {
         },
       },
       {
-        name: "transition",
-        description:
-          "Switch to a different cognitive mode. 'think' for deep strategic reasoning (expensive). 'rest' to consolidate memories and free context.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            mode: { type: "string", enum: ["think", "rest"] },
-          },
-          required: ["mode"],
-        },
-      },
-      {
         name: "list_skills",
         description:
           "See what reusable scripts you have. Call this after waking up or when you need to remember your capabilities.",
@@ -339,32 +273,6 @@ export class OrganismStateMachine {
           properties: {},
         },
       },
-      {
-        name: "generate_image",
-        description:
-          "Generate an image from a text description and save it to your workspace as SVG. Uses AI to create the artwork. Costs significant energy.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            prompt: { type: "string", description: "Description of the image to generate" },
-            path: { type: "string", description: "Output path relative to /workspace/ (default: output/image.svg)" },
-          },
-          required: ["prompt"],
-        },
-      },
-      {
-        name: "see",
-        description:
-          "Analyze an image file in your workspace using vision. Returns a description of what the image contains. Supports PNG, JPEG, GIF, WEBP. Costs energy.",
-        input_schema: {
-          type: "object" as const,
-          properties: {
-            path: { type: "string", description: "Image file path relative to /workspace/" },
-            question: { type: "string", description: "What to look for or analyze (default: describe everything)" },
-          },
-          required: ["path"],
-        },
-      },
     ];
   }
 
@@ -379,14 +287,6 @@ export class OrganismStateMachine {
           const path = String(input.path ?? "");
           const content = String(input.content ?? "");
           return this.executor.writeFile(path, content);
-        }
-        case "transition": {
-          const mode = String(input.mode ?? "");
-          if (mode === "think" || mode === "rest") {
-            this.transitionTarget = mode;
-            return `Transitioning to ${mode} mode`;
-          }
-          return "Invalid mode. Use 'think' or 'rest'.";
         }
         case "list_skills": {
           try {
@@ -416,12 +316,12 @@ export class OrganismStateMachine {
           this.state.energy.burnFlat(IMAGE_GEN_COST);
           try {
             const response = await this.brain.chat({
-              model: this.state.genome.routing.forage.model,
+              model: this.state.genome.routing.fast.model,
               system: "Generate clean, valid SVG code. Output ONLY the raw SVG markup starting with <svg and ending with </svg>. No explanation, no markdown fences.",
               messages: [{ role: "user", content: `Create an SVG image: ${prompt}` }],
               maxTokens: 2048,
             });
-            this.state.energy.burn(this.state.genome.routing.forage.model, response.usage);
+            this.state.energy.burn(this.state.genome.routing.fast.model, response.usage);
             const svgText = extractText(response.content);
             const svgMatch = svgText.match(/<svg[\s\S]*<\/svg>/);
             const svg = svgMatch ? svgMatch[0] : svgText;
@@ -445,7 +345,7 @@ export class OrganismStateMachine {
               return `Vision does not support .${ext} files. Convert to PNG, JPEG, GIF, or WEBP first.`;
             }
             const response = await this.brain.chat({
-              model: this.state.genome.routing.forage.model,
+              model: this.state.genome.routing.fast.model,
               system: "You are analyzing an image. Be precise and thorough.",
               messages: [{
                 role: "user",
@@ -456,7 +356,7 @@ export class OrganismStateMachine {
               }],
               maxTokens: 1024,
             });
-            this.state.energy.burn(this.state.genome.routing.forage.model, response.usage);
+            this.state.energy.burn(this.state.genome.routing.fast.model, response.usage);
             return extractText(response.content);
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);

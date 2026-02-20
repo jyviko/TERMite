@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// Organism modes — the state machine states
-export type OrganismMode = "forage" | "think" | "rest" | "dead";
+// Organism modes
+export type OrganismMode = "forage" | "dead";
 
 // Outcome from resolve
 export type Outcome = "success" | "partial" | "failure" | "uncertain";
@@ -68,8 +68,8 @@ export interface Genome {
 }
 
 export interface RoutingConfig {
-  forage: { model: string; maxTokens: number };
-  think: { model: string; maxTokens: number };
+  fast: { model: string; maxTokens: number };
+  deep: { model: string; maxTokens: number };
   resolve: { model: string; maxTokens: number };
 }
 

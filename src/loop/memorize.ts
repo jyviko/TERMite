@@ -33,7 +33,7 @@ export class Memorizer {
 
     try {
       const response = await this.brain.chat({
-        model: params.genome.routing.forage.model, // Haiku — cheap
+        model: params.genome.routing.fast.model, // Haiku — cheap
         system: prompt,
         messages: [{ role: "user", content: "Reflect and decide what to learn." }],
         maxTokens: 1024,

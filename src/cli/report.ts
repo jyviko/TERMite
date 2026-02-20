@@ -71,11 +71,12 @@ function loadOrganisms(runDir: string): OrganismState[] {
 
 // ── Formatting helpers ───────────────────────────────────────────────
 function fmt(n: number): string {
-  return n.toLocaleString();
+  return (n ?? 0).toLocaleString();
 }
 
 function fmtSigned(n: number): string {
-  return (n > 0 ? "+" : "") + n.toLocaleString();
+  const v = n ?? 0;
+  return (v > 0 ? "+" : "") + v.toLocaleString();
 }
 
 function pad(s: string, w: number): string {

@@ -69,7 +69,7 @@ Guidelines:
 - You can mutate any prompt including this one. Small refinements compound over generations.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
-  forage: { model: "claude-haiku-4-5-20251001", maxTokens: 2048 },
-  think: { model: "claude-sonnet-4-6", maxTokens: 4096 },
+  fast: { model: "claude-haiku-4-5-20251001", maxTokens: 2048 },
+  deep: { model: "claude-sonnet-4-6", maxTokens: 4096 },
   resolve: { model: "claude-sonnet-4-6", maxTokens: 1024 },
 };

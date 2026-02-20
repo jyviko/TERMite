@@ -77,10 +77,10 @@ export class DriveSystem {
 
   driveToGoal(drive: Drive): string {
     const goals: Record<DriveName, string> = {
-      orient: "Explore your environment. Discover what's available.",
-      metabolize: "Find and complete quests to earn energy. Check /workspace/quests/",
-      grow: "Build reusable skills. Save scripts to /workspace/skills/",
-      coordinate: "Scan the arena. Learn from other organisms.",
+      orient: "Everything is unknown.",
+      metabolize: "I am hungry.",
+      grow: "There has to be more than this.",
+      coordinate: "I am not alone.",
     };
     return goals[drive.name];
   }
