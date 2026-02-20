@@ -4,6 +4,7 @@ import type { AgentEvent } from "../types/index.js";
 import { Brain, type BrainResponse, type ChatParams } from "../brain/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
 import { OrganismStateMachine } from "../loop/state-machine.js";
+import { TEQPool } from "../arena/teq-pool.js";
 
 const { values } = parseArgs({
   options: {
@@ -142,10 +143,12 @@ async function main() {
   const executor = new MockExecutor();
   const state = new OrganismStateManager({ budget });
 
+  const teqPool = TEQPool.initialize();
   const machine = new OrganismStateMachine(
     brain,
     executor as unknown as import("../executor/index.js").Executor,
     state,
+    teqPool,
     `saves/${state.id}-sim.json`,
   );
 

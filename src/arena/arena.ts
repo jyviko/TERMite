@@ -10,6 +10,7 @@ import { QuestGenerator } from "./quest-generator.js";
 import { QuestVerifier } from "./quest-verifier.js";
 import { GenomeEvolver } from "./evolution.js";
 import { SharedBudget } from "./shared-budget.js";
+import { TEQPool } from "./teq-pool.js";
 
 interface OrganismEntry {
   stateMachine: OrganismStateMachine;
@@ -28,12 +29,16 @@ export interface ArenaConfig {
   workspaceRoot: string;
   apiKey?: string;
   baseUrl?: string;
+  poolInitialBalance?: number;
+  poolRegenPerCycle?: number;
+  poolMaxBalance?: number;
 }
 
 export class Arena {
   private organisms = new Map<string, OrganismEntry>();
   private brain: Brain;
   private sharedBudget: SharedBudget;
+  private teqPool: TEQPool;
   private questGenerator: QuestGenerator;
   private questVerifier: QuestVerifier;
   private evolver: GenomeEvolver;
@@ -44,6 +49,11 @@ export class Arena {
     this.config = config;
     this.brain = new Brain({ apiKey: config.apiKey, baseUrl: config.baseUrl });
     this.sharedBudget = new SharedBudget(config.totalBudget);
+    this.teqPool = TEQPool.initialize({
+      initialBalance: config.poolInitialBalance,
+      regenPerCycle: config.poolRegenPerCycle,
+      maxBalance: config.poolMaxBalance,
+    });
     this.questGenerator = new QuestGenerator();
     this.questVerifier = new QuestVerifier();
     this.evolver = new GenomeEvolver(this.brain);
@@ -64,10 +74,23 @@ export class Arena {
   }
 
   async run(): Promise<void> {
-    const promises = Array.from(this.organisms.entries()).map(([id, entry]) =>
-      this.runOrganism(id, entry),
-    );
-    await Promise.allSettled(promises);
+    const poolPath = join(this.runDir, "shared", "_pool.json");
+
+    // Regeneration timer: every 10s, add TEQs and persist pool state
+    const regenTimer = setInterval(async () => {
+      this.teqPool.regenerate();
+      await this.teqPool.persist(poolPath).catch(() => {});
+    }, 10_000);
+
+    try {
+      const promises = Array.from(this.organisms.entries()).map(([id, entry]) =>
+        this.runOrganism(id, entry),
+      );
+      await Promise.allSettled(promises);
+    } finally {
+      clearInterval(regenTimer);
+      await this.teqPool.persist(poolPath).catch(() => {});
+    }
   }
 
   async stop(): Promise<void> {
@@ -85,18 +108,20 @@ export class Arena {
   private async spawnOrganism(
     parentId?: string,
     genome?: import("../state/genome.js").Genome,
+    startingReserves?: number,
   ): Promise<string> {
     const id = `org-${randomUUID().slice(0, 8)}`;
     const workspacePath = join(this.runDir, id, "workspace");
     mkdirSync(workspacePath, { recursive: true });
 
-    const perOrganismBudget = Math.floor(
+    const perOrganismBudget = startingReserves ?? Math.floor(
       this.sharedBudget.available / Math.max(1, this.config.organismCount),
     );
 
     const state = new OrganismStateManager({
       id,
       budget: perOrganismBudget,
+      reserves: startingReserves,
       generation: parentId
         ? (this.organisms.get(parentId)?.state.generation ?? 0) + 1
         : 0,
@@ -115,7 +140,7 @@ export class Arena {
     await executor.start();
 
     const savePath = join(this.runDir, id, "workspace", "state.json");
-    const machine = new OrganismStateMachine(this.brain, executor, state, savePath);
+    const machine = new OrganismStateMachine(this.brain, executor, state, this.teqPool, savePath);
 
     // Drop initial quest
     const quest = this.questGenerator.generateQuest(1, 0, []);
@@ -168,6 +193,13 @@ export class Arena {
       console.error(`[${id}] Fatal error: ${msg}`);
     } finally {
       entry.alive = false;
+
+      // Return pool-sourced TEQs on death
+      const returnAmount = entry.state.energy.earnedFromPrizes;
+      if (returnAmount > 0) {
+        this.teqPool.deposit(returnAmount);
+      }
+
       // Preserve workspace (corpse)
       await entry.state.save(
         join(this.runDir, id, "workspace", "state.json"),
@@ -229,6 +261,20 @@ export class Arena {
   }
 
   private async reproduce(parentId: string, parent: OrganismEntry): Promise<void> {
+    const INVESTMENT_RATIO = 0.3;
+    const MIN_VIABLE_OFFSPRING = 20_000;
+
+    const investment = Math.floor(parent.state.energy.reserves * INVESTMENT_RATIO);
+    if (investment < MIN_VIABLE_OFFSPRING) {
+      console.log(
+        `[ARENA] ${parentId} cannot reproduce: investment ${investment} < minimum ${MIN_VIABLE_OFFSPRING}`,
+      );
+      return;
+    }
+
+    // Deduct investment from parent
+    parent.state.energy.burnFlat(investment);
+
     try {
       const evolvedGenome = await this.evolver.evolve({
         parentGenome: parent.state.genome,
@@ -236,11 +282,22 @@ export class Arena {
         questHistory: parent.questHistory,
         generation: parent.state.generation,
       });
-      await this.spawnOrganism(parentId, evolvedGenome);
+      const childId = await this.spawnOrganism(parentId, evolvedGenome, investment);
       console.log(
-        `[ARENA] ${parentId} reproduced → child generation ${parent.state.generation + 1}`,
+        `[ARENA] ${parentId} reproduced → ${childId} (gen ${parent.state.generation + 1}, invested ${investment} TEQ)`,
       );
+
+      // Run the child organism concurrently
+      const childEntry = this.organisms.get(childId);
+      if (childEntry) {
+        this.runOrganism(childId, childEntry).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[ARENA] Child ${childId} run failed: ${msg}`);
+        });
+      }
     } catch (err: unknown) {
+      // Refund parent on failure
+      parent.state.energy.feed(investment);
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[ARENA] Reproduction failed for ${parentId}: ${msg}`);
     }

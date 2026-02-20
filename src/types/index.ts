@@ -38,6 +38,7 @@ export interface EnergyLedgerData {
   reserves: number;
   capacity: number;
   earned: number;
+  earnedFromPrizes: number;
   bmr: number;
   cycleHistory: CycleRecord[];
 }

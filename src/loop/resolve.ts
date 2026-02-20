@@ -3,6 +3,7 @@ import type { Brain, TokenUsage } from "../brain/index.js";
 import { extractText } from "../brain/util.js";
 import type { Genome } from "../state/genome.js";
 import type { EnergyLedger } from "../state/energy.js";
+import type { TEQPool } from "../arena/teq-pool.js";
 
 const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
@@ -81,29 +82,33 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-export function computeIncome(
+export async function computeIncome(
   goalRelevance: number,
   outcome: Outcome,
   questReward: number | null,
-): { amount: number; sources: string[] } {
+  pool: TEQPool,
+): Promise<{ amount: number; requested: number; sources: string[] }> {
   const sources: string[] = [];
-  let total = 0;
+  let requested = 0;
 
   if (questReward) {
-    total += questReward;
+    requested += questReward;
     sources.push(`quest:${questReward}`);
   }
 
   if (outcome === "success") {
-    total += 5000;
+    requested += 5000;
     sources.push("success:5000");
   }
 
   const relevanceIncome = Math.floor(2500 * goalRelevance);
   if (relevanceIncome > 0) {
-    total += relevanceIncome;
+    requested += relevanceIncome;
     sources.push(`relevance:${relevanceIncome}`);
   }
 
-  return { amount: total, sources };
+  // Withdraw the total from the pool in one atomic operation
+  const amount = requested > 0 ? await pool.withdraw(requested) : 0;
+
+  return { amount, requested, sources };
 }

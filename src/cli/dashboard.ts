@@ -146,6 +146,23 @@ function loadGoalBoard(): OrgData[] {
   }
 }
 
+interface PoolData {
+  balance: number;
+  totalWithdrawn: number;
+  totalDeposited: number;
+  totalRegenerated: number;
+  maxBalance: number;
+}
+
+function loadPool(): PoolData | null {
+  const poolPath = join(SAVES_DIR, "shared", "_pool.json");
+  try {
+    return JSON.parse(readFileSync(poolPath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
 // Field accessors — handle both camelCase and snake_case
 function g(obj: OrgData, ...keys: string[]): unknown {
   for (const k of keys) {
@@ -302,25 +319,39 @@ function render(): string {
     .filter((g) => g.status === "open" || g.status === "claimed")
     .reduce((s, g) => s + (typeof g.bounty === "number" ? g.bounty : 0), 0);
 
+  // Pool status
+  const pool = loadPool();
+
   // Row 0: header
   safe(buf, 0, 0, " TERM ARENA ", `${BOLD}${CYAN}`);
   safe(buf, 0, 13, `Spent:${fmt(totalSpent)}  Earned:${fmt(totalEarned)}  Net:${fmtSigned(totalEarned - totalSpent)}`);
   const timeStr = new Date().toTimeString().slice(0, 8);
   safe(buf, 0, width - 20, `${nAlive}/${orgs.length} alive  ${timeStr}`, CYAN);
 
-  // Row 1: bounty board
+  // Row 1: TEQ pool status
+  if (pool) {
+    const poolPct = pool.maxBalance > 0 ? Math.floor((pool.balance / pool.maxBalance) * 100) : 0;
+    const poolColor = poolPct > 40 ? GREEN : poolPct > 15 ? YELLOW : RED;
+    safe(buf, 1, 0,
+      ` Pool: ${pctBar(pool.balance, pool.maxBalance, 12)} ${fmt(pool.balance)}/${fmt(pool.maxBalance)} (${poolPct}%)` +
+      `  W:${fmt(pool.totalWithdrawn)}  D:${fmt(pool.totalDeposited)}  R:${fmt(pool.totalRegenerated)}`,
+      poolColor,
+    );
+  }
+
+  // Row 2: bounty board
   if (goals.length > 0) {
-    safe(buf, 1, 0, ` Bounties: ${nOpen} open  ${nClaimed} claimed  ${nCompleted} done  (${fmt(totalBounty)}e locked)`, YELLOW);
+    safe(buf, 2, 0, ` Bounties: ${nOpen} open  ${nClaimed} claimed  ${nCompleted} done  (${fmt(totalBounty)}e locked)`, YELLOW);
   }
 
   // Empty state
   if (orgs.length === 0) {
-    safe(buf, 3, 2, `Waiting for organisms... (${SAVES_DIR})`, YELLOW);
+    safe(buf, 4, 2, `Waiting for organisms... (${SAVES_DIR})`, YELLOW);
     safe(buf, height - 1, 0, ` [q] quit`, CYAN);
     return buf.join("");
   }
 
-  // Grid layout
+  // Grid layout (start at row 4 to leave room for header, pool, bounties)
   const n = orgs.length;
   const nCols = Math.max(1, Math.floor(width / MIN_COL_W));
   const nGridRows = Math.ceil(n / nCols);
@@ -329,7 +360,7 @@ function render(): string {
   for (let idx = 0; idx < n; idx++) {
     const gridR = Math.floor(idx / nCols);
     const gridC = idx % nCols;
-    const r0 = 3 + gridR * CARD_ROWS;
+    const r0 = 4 + gridR * CARD_ROWS;
     const c0 = gridC * colW;
 
     if (r0 + CARD_ROWS > height - 1) {

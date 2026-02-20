@@ -82,6 +82,7 @@ export class EnergyLedger {
   reserves: number;
   capacity: number;
   earned: number;
+  earnedFromPrizes: number;
   bmr: number;
   cycleHistory: CycleRecord[];
 
@@ -98,6 +99,7 @@ export class EnergyLedger {
     this.reserves = data.reserves ?? data.budget;
     this.capacity = data.capacity ?? data.budget;
     this.earned = data.earned ?? 0;
+    this.earnedFromPrizes = data.earnedFromPrizes ?? 0;
     this.bmr = data.bmr ?? 50;
     this.cycleHistory = data.cycleHistory ?? [];
   }
@@ -125,6 +127,13 @@ export class EnergyLedger {
     return added;
   }
 
+  /** Feed TEQs sourced from the shared pool. Tracks pool-sourced income separately. */
+  feedFromPool(tokens: number): number {
+    const added = this.feed(tokens);
+    this.earnedFromPrizes += added;
+    return added;
+  }
+
   computeBmr(memoryTokens: number): number {
     this.bmr = 50 + Math.floor(memoryTokens / 10);
     return this.bmr;
@@ -135,6 +144,13 @@ export class EnergyLedger {
     this.reserves -= this.bmr;
     this.spent += this.bmr;
     this.cycleCost += this.bmr;
+    if (this.reserves < 0) this.reserves = 0;
+  }
+
+  burnFlat(cost: number): void {
+    this.reserves -= cost;
+    this.spent += cost;
+    this.cycleCost += cost;
     if (this.reserves < 0) this.reserves = 0;
   }
 
@@ -189,6 +205,7 @@ export class EnergyLedger {
       reserves: this.reserves,
       capacity: this.capacity,
       earned: this.earned,
+      earnedFromPrizes: this.earnedFromPrizes,
       bmr: this.bmr,
       cycleHistory: this.cycleHistory,
     };

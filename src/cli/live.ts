@@ -6,6 +6,7 @@ loadEnv();
 import { Executor } from "../executor/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
 import { OrganismStateMachine } from "../loop/state-machine.js";
+import { TEQPool } from "../arena/teq-pool.js";
 
 const { values } = parseArgs({
   options: {
@@ -31,8 +32,9 @@ async function main() {
   const state = new OrganismStateManager({ budget });
   if (values.goal) state.goal = values.goal;
 
+  const teqPool = TEQPool.initialize();
   const savePath = `${values.save}/${state.id}.json`;
-  const machine = new OrganismStateMachine(brain, executor, state, savePath);
+  const machine = new OrganismStateMachine(brain, executor, state, teqPool, savePath);
 
   console.log(`Organism ${state.id} born (budget: ${budget})`);
 

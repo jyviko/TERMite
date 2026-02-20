@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent, MemoryType, SkillEntry } from "../types/index.js";
 import type { Brain } from "../brain/index.js";
@@ -7,6 +9,18 @@ import { OrganismStateManager } from "../state/organism-state.js";
 import { AgenticLoop, type ToolExecutor } from "./agentic-loop.js";
 import { Resolver, computeIncome } from "./resolve.js";
 import { Memorizer } from "./memorize.js";
+import type { TEQPool } from "../arena/teq-pool.js";
+
+type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+const IMAGE_MEDIA_TYPES: Record<string, ImageMediaType> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+const IMAGE_GEN_COST = 10_000; // flat TEQ overhead per image generation
 
 const MEMORY_TOKEN_BUDGET = 2000;
 const STALE_SKILL_MAX_AGE = 50;
@@ -24,6 +38,7 @@ export class OrganismStateMachine {
     private brain: Brain,
     private executor: Executor,
     private state: OrganismStateManager,
+    private teqPool: TEQPool,
     savePath?: string,
   ) {
     this.loop = new AgenticLoop(brain);
@@ -195,10 +210,10 @@ export class OrganismStateMachine {
       this.state.energy.burn(this.state.genome.routing.resolve.model, result.usage);
     }
 
-    // Compute income
-    const income = computeIncome(result.goalRelevance, result.outcome, this.questReward);
+    // Compute income (withdraws from shared pool)
+    const income = await computeIncome(result.goalRelevance, result.outcome, this.questReward, this.teqPool);
     if (income.amount > 0) {
-      this.state.energy.feed(income.amount);
+      this.state.energy.feedFromPool(income.amount);
     }
     this.questReward = null;
 
@@ -324,6 +339,32 @@ export class OrganismStateMachine {
           properties: {},
         },
       },
+      {
+        name: "generate_image",
+        description:
+          "Generate an image from a text description and save it to your workspace as SVG. Uses AI to create the artwork. Costs significant energy.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            prompt: { type: "string", description: "Description of the image to generate" },
+            path: { type: "string", description: "Output path relative to /workspace/ (default: output/image.svg)" },
+          },
+          required: ["prompt"],
+        },
+      },
+      {
+        name: "see",
+        description:
+          "Analyze an image file in your workspace using vision. Returns a description of what the image contains. Supports PNG, JPEG, GIF, WEBP. Costs energy.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            path: { type: "string", description: "Image file path relative to /workspace/" },
+            question: { type: "string", description: "What to look for or analyze (default: describe everything)" },
+          },
+          required: ["path"],
+        },
+      },
     ];
   }
 
@@ -367,6 +408,59 @@ export class OrganismStateMachine {
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             return `Quest verification failed: ${msg}`;
+          }
+        }
+        case "generate_image": {
+          const prompt = String(input.prompt ?? "");
+          const path = String(input.path ?? "output/image.svg");
+          this.state.energy.burnFlat(IMAGE_GEN_COST);
+          try {
+            const response = await this.brain.chat({
+              model: this.state.genome.routing.forage.model,
+              system: "Generate clean, valid SVG code. Output ONLY the raw SVG markup starting with <svg and ending with </svg>. No explanation, no markdown fences.",
+              messages: [{ role: "user", content: `Create an SVG image: ${prompt}` }],
+              maxTokens: 2048,
+            });
+            this.state.energy.burn(this.state.genome.routing.forage.model, response.usage);
+            const svgText = extractText(response.content);
+            const svgMatch = svgText.match(/<svg[\s\S]*<\/svg>/);
+            const svg = svgMatch ? svgMatch[0] : svgText;
+            await this.executor.writeFile(path, svg);
+            return `Image generated and saved to /workspace/${path} (${svg.length} bytes)`;
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Image generation failed: ${msg}`;
+          }
+        }
+        case "see": {
+          const imagePath = String(input.path ?? "");
+          const question = String(input.question ?? "Describe this image in detail. Note any text, shapes, colors, and patterns.");
+          try {
+            const fullPath = join(this.executor.workingDir, imagePath);
+            const imageData = readFileSync(fullPath);
+            const base64 = imageData.toString("base64");
+            const ext = imagePath.split(".").pop()?.toLowerCase() ?? "";
+            const mediaType = IMAGE_MEDIA_TYPES[ext];
+            if (!mediaType) {
+              return `Vision does not support .${ext} files. Convert to PNG, JPEG, GIF, or WEBP first.`;
+            }
+            const response = await this.brain.chat({
+              model: this.state.genome.routing.forage.model,
+              system: "You are analyzing an image. Be precise and thorough.",
+              messages: [{
+                role: "user",
+                content: [
+                  { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+                  { type: "text", text: question },
+                ],
+              }],
+              maxTokens: 1024,
+            });
+            this.state.energy.burn(this.state.genome.routing.forage.model, response.usage);
+            return extractText(response.content);
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Vision failed: ${msg}`;
           }
         }
         default:

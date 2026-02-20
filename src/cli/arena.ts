@@ -11,6 +11,9 @@ const { values } = parseArgs({
     workspace: { type: "string", default: "./arena-workspace" },
     "api-key": { type: "string" },
     "base-url": { type: "string" },
+    "pool-balance": { type: "string" },
+    "pool-regen": { type: "string" },
+    "pool-max": { type: "string" },
   },
 });
 
@@ -27,6 +30,9 @@ async function main() {
     workspaceRoot: values.workspace ?? "./arena-workspace",
     apiKey: values["api-key"] ?? process.env.ANTHROPIC_API_KEY,
     baseUrl: values["base-url"] ?? process.env.ANTHROPIC_BASE_URL,
+    poolInitialBalance: values["pool-balance"] ? parseInt(values["pool-balance"], 10) : undefined,
+    poolRegenPerCycle: values["pool-regen"] ? parseInt(values["pool-regen"], 10) : undefined,
+    poolMaxBalance: values["pool-max"] ? parseInt(values["pool-max"], 10) : undefined,
   });
 
   const shutdown = async () => {
