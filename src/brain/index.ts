@@ -64,6 +64,7 @@ export class Brain {
       : [];
 
     const tools = params.tools ? this.withCacheControl(params.tools) : undefined;
+    const messages = this.withMessageCacheBreakpoint(params.messages);
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -71,7 +72,7 @@ export class Brain {
           model: params.model,
           max_tokens: params.maxTokens,
           system: systemBlocks.length > 0 ? systemBlocks : undefined,
-          messages: params.messages,
+          messages,
           tools: tools && tools.length > 0 ? tools : undefined,
           temperature: params.temperature,
         });
@@ -156,6 +157,40 @@ export class Brain {
           break;
       }
     }
+  }
+
+  /**
+   * Add a cache breakpoint to the last user message so that on the next
+   * API call the entire prefix (system + tools + prior turns) is a cache hit.
+   * Returns a shallow copy — does not mutate the original array.
+   */
+  private withMessageCacheBreakpoint(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+    if (messages.length < 2) return messages;
+
+    // Find the last user message
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]!.role === "user") { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx < 0) return messages;
+
+    const out = messages.slice();
+    const msg = out[lastUserIdx]!;
+    const cc = { cache_control: { type: "ephemeral" as const } };
+
+    if (typeof msg.content === "string") {
+      out[lastUserIdx] = {
+        role: "user",
+        content: [{ type: "text" as const, text: msg.content, ...cc }],
+      };
+    } else if (Array.isArray(msg.content) && msg.content.length > 0) {
+      const blocks = (msg.content as Anthropic.ContentBlockParam[]).slice();
+      const last = blocks[blocks.length - 1]!;
+      blocks[blocks.length - 1] = { ...last, ...cc } as Anthropic.ContentBlockParam;
+      out[lastUserIdx] = { role: "user", content: blocks };
+    }
+
+    return out;
   }
 
   private withCacheControl(tools: Anthropic.Tool[]): Anthropic.Tool[] {

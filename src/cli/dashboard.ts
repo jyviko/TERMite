@@ -53,6 +53,15 @@ const YELLOW = "\x1b[33m";
 const CYAN = "\x1b[36m";
 const MAG = "\x1b[35m";
 
+// ── Model label ──────────────────────────────────────────────────────
+function modelLabel(model?: string): string {
+  if (!model) return "?";
+  if (model.includes("haiku")) return "H";
+  if (model.includes("sonnet")) return "S";
+  if (model.includes("opus")) return "O";
+  return "?";
+}
+
 // ── Helpers (identical to Python) ──────────────────────────────────
 function sparkline(vals: number[], width = 12): string {
   if (vals.length === 0) return "";
@@ -234,7 +243,9 @@ function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: num
     const ln = gn(last, "net");
     const nc = ln >= 0 ? GREEN : RED;
     const yld = gn(last, "goalRelevance", "goal_relevance");
-    safe(buf, r, c0, ` c=${fmt(gn(last, "cost"))} i=${fmt(gn(last, "income"))}`);
+    const ml = modelLabel(gs(last, "model"));
+    const mc = ml === "S" ? MAG : ml === "H" ? CYAN : "";
+    safe(buf, r, c0, ` ${mc}[${ml}]${RST} c=${fmt(gn(last, "cost"))} i=${fmt(gn(last, "income"))}`);
     r++;
     safe(buf, r, c0, ` net=${fmtSigned(ln)} yield=${yld.toFixed(2)}`, nc);
   } else {

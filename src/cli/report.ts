@@ -231,6 +231,15 @@ function renderRow(org: OrganismState): string {
   return cells.join(" │ ");
 }
 
+// ── Model label ──────────────────────────────────────────────────────
+function modelLabel(model?: string): string {
+  if (!model) return "?";
+  if (model.includes("haiku")) return "Hai";
+  if (model.includes("sonnet")) return "Son";
+  if (model.includes("opus")) return "Opu";
+  return model.slice(0, 3);
+}
+
 // ── Last cycle detail ────────────────────────────────────────────────
 function renderLastCycle(org: OrganismState): string[] {
   const lines: string[] = [];
@@ -246,8 +255,11 @@ function renderLastCycle(org: OrganismState): string[] {
     last.outcome === "partial" ? YELLOW :
     last.outcome === "failure" ? RED : DIM;
 
+  const ml = modelLabel(last.model);
+  const modelColor = ml === "Son" ? MAG : ml === "Hai" ? CYAN : DIM;
+
   lines.push([
-    `  Last cycle #${last.cycle}: `,
+    `  Last cycle #${last.cycle} ${modelColor}[${ml}]${RST}: `,
     `cost=${RED}${fmt(last.cost)}${RST} teq `,
     `income=${GREEN}${fmt(last.income)}${RST} `,
     `net=${colorize(last.net)}${fmtSigned(last.net)}${RST} `,
