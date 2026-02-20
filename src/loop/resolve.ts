@@ -113,10 +113,11 @@ export async function computeIncome(
     sources.push(`relevance:${relevanceIncome}`);
   }
 
-  // Efficiency multiplier: reward organisms that write code (low cost) over in-context reasoning (high cost)
+  // Efficiency bonus: reward organisms that write code (low cost) over in-context reasoning (high cost)
+  // Floor at 1.0 — never reduces income, only amplifies for efficient organisms
   if (taskReward && taskTier && cycleCost && cycleCost > 0) {
     const expectedCost = TIER_EXPECTED_COST[taskTier] ?? cycleCost;
-    const efficiencyRatio = Math.min(3.0, expectedCost / cycleCost);
+    const efficiencyRatio = Math.max(1.0, Math.min(3.0, expectedCost / cycleCost));
     requested = Math.floor(requested * efficiencyRatio);
     sources.push(`efficiency:${efficiencyRatio.toFixed(2)}x`);
   }
