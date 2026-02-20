@@ -116,8 +116,8 @@ export interface ToolDefinition {
   input_schema: Anthropic.Tool.InputSchema;
 }
 
-// Quest system
-export interface Quest {
+// Task system
+export interface Task {
   id: string;
   tier: number;
   title: string;
@@ -129,8 +129,8 @@ export interface Quest {
   dataFiles?: string[];
 }
 
-export interface QuestResult {
-  questId: string;
+export interface TaskResult {
+  taskId: string;
   tier: number;
   passed: boolean;
   cyclesTaken: number;

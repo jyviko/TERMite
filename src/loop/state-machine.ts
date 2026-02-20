@@ -17,8 +17,8 @@ export class OrganismStateMachine {
   private memorizer: Memorizer;
   private forageMessages: Anthropic.MessageParam[] = [];
   private savePath: string;
-  private questReward: number | null = null;
-  private questTier: number | null = null;
+  private taskReward: number | null = null;
+  private taskTier: number | null = null;
   private consecutiveIdleCycles = 0;
   private forageModel = "";
   private static readonly STALENESS_THRESHOLD = 5;
@@ -125,16 +125,16 @@ export class OrganismStateMachine {
     const income = await computeIncome(
       result.goalRelevance,
       result.outcome,
-      this.questReward,
+      this.taskReward,
       this.teqPool,
       this.state.energy.currentCycleCost,
-      this.questTier ?? undefined,
+      this.taskTier ?? undefined,
     );
     if (income.amount > 0) {
       this.state.energy.feedFromPool(income.amount);
     }
-    this.questReward = null;
-    this.questTier = null;
+    this.taskReward = null;
+    this.taskTier = null;
 
     // End cycle
     this.state.energy.endCycle(
@@ -315,10 +315,10 @@ export class OrganismStateMachine {
     return lines.join("\n");
   }
 
-  // Allow arena to set quest reward and tier
-  setQuestReward(reward: number, tier: number): void {
-    this.questReward = reward;
-    this.questTier = tier;
+  // Allow arena to set task reward and tier
+  setTaskReward(reward: number, tier: number): void {
+    this.taskReward = reward;
+    this.taskTier = tier;
   }
 }
 

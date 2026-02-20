@@ -1,4 +1,4 @@
-import type { QuestResult, Memory } from "../types/index.js";
+import type { TaskResult, Memory } from "../types/index.js";
 import type { Brain } from "../brain/index.js";
 import { extractText } from "../brain/util.js";
 import { Genome } from "../state/genome.js";
@@ -9,7 +9,7 @@ export class GenomeEvolver {
   async evolve(params: {
     parentGenome: Genome;
     memories: Memory[];
-    questHistory: QuestResult[];
+    taskHistory: TaskResult[];
     generation: number;
   }): Promise<Genome> {
     const formattedMemories = params.memories
@@ -18,7 +18,7 @@ export class GenomeEvolver {
       .map((m) => `[${m.type}] (${m.importance.toFixed(1)}) ${m.content}`)
       .join("\n");
 
-    const formattedQuestHistory = params.questHistory
+    const formattedTaskHistory = params.taskHistory
       .slice(-10)
       .map((q) => `tier ${q.tier}: ${q.passed ? "PASS" : "FAIL"} in ${q.cyclesTaken} cycles`)
       .join("\n");
@@ -31,8 +31,8 @@ ${params.parentGenome.systemPrompt}
 Parent's key memories (sorted by importance):
 ${formattedMemories || "(none)"}
 
-Quest history:
-${formattedQuestHistory || "(none)"}
+Task history:
+${formattedTaskHistory || "(none)"}
 
 Create an evolved system prompt for the child. The child should:
 1. Inherit the parent's successful strategies

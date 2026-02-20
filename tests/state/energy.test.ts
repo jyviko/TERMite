@@ -118,7 +118,7 @@ describe("EnergyLedger", () => {
     const e = new EnergyLedger({ budget: 100000 });
     e.burn(HAIKU, usage(200, 1000, 0, 500));
     e.feed(100);
-    e.endCycle(0, "success", 100, "quest:100");
+    e.endCycle(0, "success", 100, "task:100");
     expect(e.cycleHistory).toHaveLength(1);
     const record = e.cycleHistory[0]!;
     expect(record.income).toBe(100);

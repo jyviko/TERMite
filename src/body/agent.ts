@@ -44,7 +44,7 @@ function handleExecuteShell(cmd: Command): Response {
     return { id: cmd.id, ok: false, error: "Missing command" };
   }
   // Intentional: execSync runs inside Docker container sandbox.
-  // The organism needs shell access to solve quests.
+  // The organism needs shell access to solve tasks.
   try {
     const output = execSync(cmd.command, {
       cwd: WORKSPACE,

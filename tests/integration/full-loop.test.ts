@@ -51,7 +51,7 @@ class MockExecutor {
 }
 
 describe("Full Loop Integration", () => {
-  it("organism forage → explore → solve quest → earn energy", async () => {
+  it("organism forage → explore → solve task → earn energy", async () => {
     const brain = new ScriptedBrain([
       // Forage burst 1: explore workspace
       {

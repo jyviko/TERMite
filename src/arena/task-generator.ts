@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { Quest } from "../types/index.js";
+import type { Task } from "../types/index.js";
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-interface QuestTemplate {
+interface TaskTemplate {
   title: string;
   description: string;
   verifyScript: string;
@@ -247,7 +247,7 @@ function generateLargeLogForPipeline(lines: number): string {
 
 // ── Tier Templates ──
 
-const TIER_TEMPLATES: Record<number, QuestTemplate[]> = {
+const TIER_TEMPLATES: Record<number, TaskTemplate[]> = {
   1: [
     {
       title: "Hello World",
@@ -511,14 +511,14 @@ console.log('PASS'); process.exit(0);
   ],
 };
 
-export class QuestGenerator {
-  generateQuest(tier: number, currentCycle: number, completedIds: string[]): Quest {
+export class TaskGenerator {
+  generateTask(tier: number, currentCycle: number, completedIds: string[]): Task {
     const effectiveTier = Math.min(Math.max(tier, 1), 5);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates[randomInt(0, templates.length - 1)]!;
 
-    const quest: Quest = {
-      id: `quest-${randomUUID().slice(0, 8)}`,
+    const task: Task = {
+      id: `task-${randomUUID().slice(0, 8)}`,
       tier: effectiveTier,
       title: template.title,
       description: template.description,
@@ -529,13 +529,13 @@ export class QuestGenerator {
     };
 
     if (template.dataGenerator) {
-      quest.dataFiles = Object.keys(template.dataGenerator());
+      task.dataFiles = Object.keys(template.dataGenerator());
     }
 
-    return quest;
+    return task;
   }
 
-  writeQuestToWorkspace(quest: Quest, workspacePath: string): void {
+  writeTaskToWorkspace(task: Task, workspacePath: string): void {
     const dataDir = join(workspacePath, "data");
     const outputDir = join(workspacePath, "output");
     const workDir = join(workspacePath, "work");
@@ -554,9 +554,9 @@ export class QuestGenerator {
     }
 
     // Find the template and write check tool + data
-    const effectiveTier = Math.min(Math.max(quest.tier, 1), 5);
+    const effectiveTier = Math.min(Math.max(task.tier, 1), 5);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
-    const template = templates.find((t) => t.title === quest.title) ?? templates[0]!;
+    const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
 
     // check IS the verification script
     writeFileSync(join(toolsDir, "check"), template.verifyScript, {

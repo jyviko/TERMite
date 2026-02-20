@@ -1,13 +1,13 @@
 import { mkdirSync, existsSync, readFileSync, copyFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentEvent, ForageRouting, QuestResult } from "../types/index.js";
+import type { AgentEvent, ForageRouting, TaskResult } from "../types/index.js";
 import { Brain } from "../brain/index.js";
 import { Executor } from "../executor/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
 import { OrganismStateMachine } from "../loop/state-machine.js";
-import { QuestGenerator, TIER_REWARDS } from "./quest-generator.js";
-import { QuestVerifier } from "./quest-verifier.js";
+import { TaskGenerator, TIER_REWARDS } from "./task-generator.js";
+import { TaskVerifier } from "./task-verifier.js";
 import { GenomeEvolver } from "./evolution.js";
 import { SharedBudget } from "./shared-budget.js";
 import { TEQPool } from "./teq-pool.js";
@@ -18,9 +18,9 @@ interface OrganismEntry {
   stateMachine: OrganismStateMachine;
   state: OrganismStateManager;
   executor: Executor;
-  questTier: number;
-  currentQuest: import("../types/index.js").Quest | null;
-  questHistory: QuestResult[];
+  taskTier: number;
+  currentTask: import("../types/index.js").Task | null;
+  taskHistory: TaskResult[];
   alive: boolean;
   consecutivePasses: number;
   consecutiveFails: number;
@@ -44,8 +44,8 @@ export class Arena {
   private brain: Brain;
   private sharedBudget: SharedBudget;
   private teqPool: TEQPool;
-  private questGenerator: QuestGenerator;
-  private questVerifier: QuestVerifier;
+  private taskGenerator: TaskGenerator;
+  private taskVerifier: TaskVerifier;
   private evolver: GenomeEvolver;
   private workRater: WorkRater;
   private openDataGenerator: OpenDataGenerator;
@@ -62,8 +62,8 @@ export class Arena {
       regenPerCycle: config.poolRegenPerCycle,
       maxBalance: config.poolMaxBalance,
     });
-    this.questGenerator = new QuestGenerator();
-    this.questVerifier = new QuestVerifier();
+    this.taskGenerator = new TaskGenerator();
+    this.taskVerifier = new TaskVerifier();
     this.evolver = new GenomeEvolver(this.brain);
     this.workRater = new WorkRater(this.brain);
     this.openDataGenerator = new OpenDataGenerator();
@@ -159,9 +159,9 @@ export class Arena {
     const savePath = join(this.runDir, id, "state.json");
     const machine = new OrganismStateMachine(this.brain, executor, state, this.teqPool, savePath);
 
-    // Drop initial quest
-    const quest = this.questGenerator.generateQuest(1, 0, []);
-    this.questGenerator.writeQuestToWorkspace(quest, workspacePath);
+    // Drop initial task
+    const task = this.taskGenerator.generateTask(1, 0, []);
+    this.taskGenerator.writeTaskToWorkspace(task, workspacePath);
 
     // If child, copy parent's tools
     if (parentId) {
@@ -176,9 +176,9 @@ export class Arena {
       stateMachine: machine,
       state,
       executor,
-      questTier: 1,
-      currentQuest: quest,
-      questHistory: [],
+      taskTier: 1,
+      currentTask: task,
+      taskHistory: [],
       alive: true,
       consecutivePasses: 0,
       consecutiveFails: 0,
@@ -200,13 +200,13 @@ export class Arena {
           break;
         }
 
-        // Check quest completion periodically
-        if (event.type === "tool_result" && event.name === "check_quest") {
+        // Check task completion periodically
+        if (event.type === "tool_result" && event.name === "check_task") {
           if (entry.graduated) {
-            // Post-graduation: rate open work instead of verifying quests
+            // Post-graduation: rate open work instead of verifying tasks
             await this.rateGraduateWork(id, entry);
           } else if (event.result.includes("PASS")) {
-            await this.onQuestComplete(id, entry);
+            await this.onTaskComplete(id, entry);
           }
         }
       }
@@ -230,52 +230,52 @@ export class Arena {
     }
   }
 
-  private async onQuestComplete(id: string, entry: OrganismEntry): Promise<void> {
+  private async onTaskComplete(id: string, entry: OrganismEntry): Promise<void> {
     const workspacePath = join(this.runDir, id, "workspace");
-    const quest = entry.currentQuest;
-    if (!quest) return;
+    const task = entry.currentTask;
+    if (!task) return;
 
     // Verify
-    const result = await this.questVerifier.verify(quest, entry.executor);
+    const result = await this.taskVerifier.verify(task, entry.executor);
     if (!result.passed) return;
 
     // Credit energy
-    entry.stateMachine.setQuestReward(quest.reward, quest.tier);
+    entry.stateMachine.setTaskReward(task.reward, task.tier);
 
     // Record
-    entry.questHistory.push({
-      questId: quest.id,
-      tier: quest.tier,
+    entry.taskHistory.push({
+      taskId: task.id,
+      tier: task.tier,
       passed: true,
-      cyclesTaken: entry.state.cycleCount - quest.assignedCycle,
+      cyclesTaken: entry.state.cycleCount - task.assignedCycle,
     });
     entry.consecutivePasses++;
     entry.consecutiveFails = 0;
 
     // Tier escalation: 3 consecutive passes → tier up (or graduate at tier 5)
     if (entry.consecutivePasses >= 3) {
-      if (entry.questTier >= 5) {
+      if (entry.taskTier >= 5) {
         entry.graduated = true;
         entry.consecutivePasses = 0;
         await this.onGraduation(id, entry);
-        return; // No more structured quests
+        return; // No more structured tasks
       }
-      entry.questTier = Math.min(5, entry.questTier + 1);
+      entry.taskTier = Math.min(5, entry.taskTier + 1);
       entry.consecutivePasses = 0;
     }
 
-    // Drop new quest
-    const newQuest = this.questGenerator.generateQuest(
-      entry.questTier,
+    // Drop new task
+    const newTask = this.taskGenerator.generateTask(
+      entry.taskTier,
       entry.state.cycleCount,
-      entry.questHistory.map((q) => q.questId),
+      entry.taskHistory.map((q) => q.taskId),
     );
-    entry.currentQuest = newQuest;
-    this.questGenerator.writeQuestToWorkspace(newQuest, workspacePath);
+    entry.currentTask = newTask;
+    this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
 
     // Check reproduction conditions
     if (
-      entry.questTier >= 5 &&
+      entry.taskTier >= 5 &&
       entry.state.energy.ratio > 0.7 &&
       entry.state.cycleCount > 20
     ) {
@@ -287,7 +287,7 @@ export class Arena {
     const workspacePath = join(this.runDir, id, "workspace");
     console.log(`[ARENA] ${id} GRADUATED from tier 5 — transitioning to open data`);
 
-    entry.currentQuest = null;
+    entry.currentTask = null;
 
     // Place raw data — organism must figure out what to do
     const result = this.openDataGenerator.placeData(workspacePath);
@@ -305,7 +305,7 @@ export class Arena {
       const reward = Math.floor(rating.score * baseReward);
 
       if (reward > 0) {
-        entry.stateMachine.setQuestReward(reward, 5);
+        entry.stateMachine.setTaskReward(reward, 5);
       }
 
       console.log(
@@ -342,7 +342,7 @@ export class Arena {
       const evolvedGenome = await this.evolver.evolve({
         parentGenome: parent.state.genome,
         memories: parent.state.memories.memories,
-        questHistory: parent.questHistory,
+        taskHistory: parent.taskHistory,
         generation: parent.state.generation,
       });
       const childId = await this.spawnOrganism(parentId, evolvedGenome, investment);
