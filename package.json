@@ -1,0 +1,22 @@
+{
+  "name": "termite",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/cli/live.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "tsx src/cli/sim.ts",
+    "live": "tsx src/cli/live.ts",
+    "arena": "tsx src/cli/arena.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
