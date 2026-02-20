@@ -6,7 +6,10 @@ interface ExecutorConfig {
   workingDir?: string;
   image?: string;
   containerName?: string;
+  extraVolumes?: string[];
 }
+
+type RequiredExecutorConfig = Required<Pick<ExecutorConfig, "workingDir" | "image" | "containerName">>;
 
 interface PipeMessage {
   id: string;
@@ -21,7 +24,7 @@ const READY_TIMEOUT = 10_000;
 const STOP_TIMEOUT = 5_000;
 
 export class Executor {
-  private config: Required<ExecutorConfig>;
+  private config: RequiredExecutorConfig;
   private process: ChildProcess | null = null;
   private buffer = "";
   private pending = new Map<string, {
@@ -32,12 +35,15 @@ export class Executor {
   private mutex = Promise.resolve();
   private started = false;
 
+  private extraVolumes: string[];
+
   constructor(config?: ExecutorConfig) {
     this.config = {
       workingDir: resolve(config?.workingDir ?? process.cwd() + "/workspace"),
       image: config?.image ?? "termite-body",
       containerName: config?.containerName ?? `termite-${randomUUID().slice(0, 8)}`,
     };
+    this.extraVolumes = config?.extraVolumes ?? [];
   }
 
   get workingDir(): string {
@@ -66,9 +72,13 @@ export class Executor {
     }
 
     // Start container
+    const volumeArgs = ["-v", `${this.config.workingDir}:/workspace`];
+    for (const vol of this.extraVolumes) {
+      volumeArgs.push("-v", vol);
+    }
     execFileSync("docker", [
       "run", "-d", "--name", this.config.containerName,
-      "-v", `${this.config.workingDir}:/workspace`,
+      ...volumeArgs,
       this.config.image, "tail", "-f", "/dev/null",
     ], { stdio: "ignore" });
 

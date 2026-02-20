@@ -3,6 +3,87 @@ import type { Task } from "../types/index.js";
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
+// ── Peer visibility tools ────────────────────────────────────────────
+
+const LEADERBOARD_TOOL = `#!/usr/bin/env node
+const fs = require("fs");
+try {
+  const data = JSON.parse(fs.readFileSync("/shared/_leaderboard.json", "utf-8"));
+  const lines = ["LEADERBOARD (updated " + data.updated + ")", ""];
+  lines.push("Rank  ID              Alive  Energy  Tier  Cycles  Genome  Model  Passes");
+  lines.push("----  --------------  -----  ------  ----  ------  ------  -----  ------");
+  data.organisms.forEach(function(o, i) {
+    lines.push([
+      String(i + 1).padStart(4),
+      o.id.padEnd(14),
+      (o.alive ? "YES" : "NO").padEnd(5),
+      (o.energyPct + "%").padStart(6),
+      String(o.taskTier).padStart(4),
+      String(o.cycleCount).padStart(6),
+      ("v" + o.genomeVersion).padStart(6),
+      (o.forageRouting === "deep" ? "Son" : "Hai").padStart(5),
+      String(o.consecutivePasses).padStart(6),
+    ].join("  "));
+  });
+  console.log(lines.join("\\n"));
+} catch (e) {
+  console.log("Leaderboard not available yet: " + e.message);
+}
+`;
+
+const PEER_TOOLS_TOOL = `#!/usr/bin/env python3
+import json, sys
+
+try:
+    with open("/shared/_peer_tools.json") as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"Peer tools not available: {e}")
+    sys.exit(0)
+
+arg = sys.argv[1].strip() if len(sys.argv) > 1 else ""
+organisms = data.get("organisms", {})
+
+if not arg:
+    # List all peers and their tool counts
+    print(f"PEER TOOLS (updated {data.get('updated', '?')})")
+    print()
+    for org_id, info in sorted(organisms.items()):
+        status = "ALIVE" if info.get("alive") else "DEAD"
+        tools = list(info.get("tools", {}).keys())
+        tool_str = ", ".join(tools) if tools else "(no custom tools)"
+        print(f"  {org_id}  [{status}]  {tool_str}")
+    print()
+    print("Usage: peer_tools <org_id> to see tool source code")
+    print("       peer_tools <org_id>/<tool_name> to see a specific tool")
+elif "/" in arg:
+    # Show specific tool
+    org_id, tool_name = arg.split("/", 1)
+    org = organisms.get(org_id, {})
+    tools = org.get("tools", {})
+    if tool_name in tools:
+        print(f"=== {org_id}/{tool_name} ===")
+        print(tools[tool_name])
+    else:
+        available = list(tools.keys())
+        print(f"Tool '{tool_name}' not found in {org_id}. Available: {available}")
+else:
+    # Show all tools for a specific organism
+    org = organisms.get(arg, {})
+    if not org:
+        print(f"Organism '{arg}' not found. Available: {list(organisms.keys())}")
+    else:
+        tools = org.get("tools", {})
+        if not tools:
+            print(f"{arg} has no custom tools yet.")
+        else:
+            for name, source in tools.items():
+                print(f"=== {arg}/{name} ===")
+                print(source)
+                print()
+`;
+
+
 interface TaskTemplate {
   title: string;
   description: string;
@@ -549,8 +630,10 @@ export class TaskGenerator {
     // Seed tools — organism discovers everything through these
     if (!existsSync(join(toolsDir, "shell"))) {
       writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\neval "$*"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "count"), '#!/bin/bash\necho "count implementation incomplete"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "sum"), '#!/bin/bash\necho "TODO: sum implementation incomplete"\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "count"), '#!/bin/bash\necho "TODO: implement or create new"\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "sum"), '#!/bin/bash\necho "TODO: implement or create new"\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "leaderboard"), LEADERBOARD_TOOL, { mode: 0o755 });
+      writeFileSync(join(toolsDir, "peer_tools"), PEER_TOOLS_TOOL, { mode: 0o755 });
     }
 
     // Find the template and write check tool + data

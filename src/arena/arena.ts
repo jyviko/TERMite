@@ -1,5 +1,5 @@
-import { mkdirSync, existsSync, readFileSync, copyFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentEvent, ForageRouting, TaskResult } from "../types/index.js";
 import { Brain } from "../brain/index.js";
@@ -92,6 +92,12 @@ export class Arena {
       await this.teqPool.persist(poolPath).catch(() => {});
     }, 10_000);
 
+    // Peer visibility timer: every 15s, write leaderboard + peer tools
+    const peerTimer = setInterval(() => {
+      this.syncPeerData();
+    }, 15_000);
+    this.syncPeerData(); // initial write
+
     try {
       const promises = Array.from(this.organisms.entries()).map(([id, entry]) =>
         this.runOrganism(id, entry),
@@ -99,6 +105,7 @@ export class Arena {
       await Promise.allSettled(promises);
     } finally {
       clearInterval(regenTimer);
+      clearInterval(peerTimer);
       await this.teqPool.persist(poolPath).catch(() => {});
     }
   }
@@ -149,9 +156,11 @@ export class Arena {
       state.genome = genome;
     }
 
+    const sharedDir = resolve(join(this.runDir, "shared"));
     const executor = new Executor({
       workingDir: workspacePath,
       containerName: `termite-${id}`,
+      extraVolumes: [`${sharedDir}:/shared:ro`],
     });
 
     await executor.start();
@@ -364,6 +373,54 @@ export class Arena {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[ARENA] Reproduction failed for ${parentId}: ${msg}`);
     }
+  }
+
+  private syncPeerData(): void {
+    const sharedDir = join(this.runDir, "shared");
+
+    // Leaderboard
+    const leaderboard = Array.from(this.organisms.entries()).map(([id, entry]) => ({
+      id,
+      alive: entry.state.alive,
+      cycleCount: entry.state.cycleCount,
+      taskTier: entry.taskTier,
+      energyPct: Math.floor(entry.state.energy.ratio * 100),
+      reserves: entry.state.energy.reserves,
+      genomeVersion: entry.state.genome.version,
+      forageRouting: entry.state.forageRouting,
+      consecutivePasses: entry.consecutivePasses,
+      graduated: entry.graduated,
+    }));
+    leaderboard.sort((a, b) => b.energyPct - a.energyPct);
+    writeFileSync(
+      join(sharedDir, "_leaderboard.json"),
+      JSON.stringify({ updated: new Date().toISOString(), organisms: leaderboard }, null, 2),
+    );
+
+    // Peer tools — collect tool names and contents from each organism
+    const peerTools: Record<string, { alive: boolean; tools: Record<string, string> }> = {};
+    for (const [id, entry] of this.organisms) {
+      const toolsDir = join(this.runDir, id, "workspace", "tools");
+      const tools: Record<string, string> = {};
+      try {
+        for (const file of readdirSync(toolsDir)) {
+          // Skip the standard seeded tools — only share custom ones
+          if (["shell", "check", "leaderboard", "peer_tools"].includes(file)) continue;
+          try {
+            tools[file] = readFileSync(join(toolsDir, file), "utf-8");
+          } catch {
+            // unreadable
+          }
+        }
+      } catch {
+        // toolsDir doesn't exist yet
+      }
+      peerTools[id] = { alive: entry.state.alive, tools };
+    }
+    writeFileSync(
+      join(sharedDir, "_peer_tools.json"),
+      JSON.stringify({ updated: new Date().toISOString(), organisms: peerTools }, null, 2),
+    );
   }
 
   private logEvent(id: string, mode: string, event: AgentEvent): void {
