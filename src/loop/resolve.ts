@@ -90,40 +90,42 @@ export async function computeIncome(
   pool: TEQPool,
   cycleCost?: number,
   taskTier?: number,
-): Promise<{ amount: number; requested: number; sources: string[] }> {
+): Promise<{ bounty: number; base: number; requested: number; sources: string[] }> {
   const sources: string[] = [];
-  let requested = 0;
 
-  if (taskReward) {
-    requested += taskReward;
-    sources.push(`task:${taskReward}`);
-  }
-
+  // Base income — granted directly, not from pool
+  let base = 0;
   if (outcome === "success") {
-    requested += 5000;
+    base += 5000;
     sources.push("success:5000");
   } else if (outcome === "partial") {
-    requested += 2000;
+    base += 2000;
     sources.push("partial:2000");
   }
-
   const relevanceIncome = Math.floor(2500 * goalRelevance);
   if (relevanceIncome > 0) {
-    requested += relevanceIncome;
+    base += relevanceIncome;
     sources.push(`relevance:${relevanceIncome}`);
   }
 
-  // Efficiency bonus: reward organisms that write code (low cost) over in-context reasoning (high cost)
-  // Floor at 1.0 — never reduces income, only amplifies for efficient organisms
-  if (taskReward && taskTier && cycleCost && cycleCost > 0) {
-    const expectedCost = TIER_EXPECTED_COST[taskTier] ?? cycleCost;
-    const efficiencyRatio = Math.max(1.0, Math.min(3.0, expectedCost / cycleCost));
-    requested = Math.floor(requested * efficiencyRatio);
-    sources.push(`efficiency:${efficiencyRatio.toFixed(2)}x`);
+  // Bounty — task reward withdrawn from pool
+  let bountyRequested = 0;
+  if (taskReward) {
+    bountyRequested = taskReward;
+    sources.push(`task:${taskReward}`);
+
+    // Efficiency bonus: amplify bounty for organisms that use tools over in-context reasoning
+    // Floor at 1.0 — never reduces bounty, only amplifies for efficient organisms
+    if (taskTier && cycleCost && cycleCost > 0) {
+      const expectedCost = TIER_EXPECTED_COST[taskTier] ?? cycleCost;
+      const efficiencyRatio = Math.max(1.0, Math.min(3.0, expectedCost / cycleCost));
+      bountyRequested = Math.floor(bountyRequested * efficiencyRatio);
+      sources.push(`efficiency:${efficiencyRatio.toFixed(2)}x`);
+    }
   }
 
-  // Withdraw the total from the pool in one atomic operation
-  const amount = requested > 0 ? await pool.withdraw(requested) : 0;
+  const bounty = bountyRequested > 0 ? await pool.withdraw(bountyRequested) : 0;
+  const requested = bountyRequested + base;
 
-  return { amount, requested, sources };
+  return { bounty, base, requested, sources };
 }

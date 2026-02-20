@@ -11,6 +11,11 @@ import type { TEQPool } from "../arena/teq-pool.js";
 
 const MEMORY_TOKEN_BUDGET = 2000;
 
+// Max tool-call iterations per forage burst.
+// Short cycles → frequent resolve/memorize → faster learning.
+// Organism gets multiple short bursts instead of one long runaway.
+const FORAGE_MAX_ITERATIONS = 8;
+
 export class OrganismStateMachine {
   private loop: AgenticLoop;
   private resolver: Resolver;
@@ -84,6 +89,7 @@ export class OrganismStateMachine {
       tools,
       model,
       maxTokens,
+      maxIterations: FORAGE_MAX_ITERATIONS,
       executor: trackingExecutor,
     })) {
       yield event;
@@ -127,7 +133,7 @@ export class OrganismStateMachine {
       this.state.energy.burn(this.state.genome.routing.resolve.model, result.usage);
     }
 
-    // Compute income (withdraws from shared pool)
+    // Compute income: base (free) + bounty (from pool)
     const income = await computeIncome(
       result.goalRelevance,
       result.outcome,
@@ -136,17 +142,21 @@ export class OrganismStateMachine {
       this.state.energy.currentCycleCost,
       this.taskTier ?? undefined,
     );
-    if (income.amount > 0) {
-      this.state.energy.feedFromPool(income.amount);
+    if (income.base > 0) {
+      this.state.energy.feed(income.base);
+    }
+    if (income.bounty > 0) {
+      this.state.energy.feedFromPool(income.bounty);
     }
     this.taskReward = null;
     this.taskTier = null;
 
     // End cycle
+    const totalIncome = income.base + income.bounty;
     this.state.energy.endCycle(
       this.state.cycleCount,
       result.outcome,
-      income.amount,
+      totalIncome,
       income.sources.join(", "),
       result.goalRelevance,
       this.forageModel,

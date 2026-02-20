@@ -14,87 +14,94 @@ describe("computeIncome", () => {
     TEQPool.reset();
   });
 
-  it("computes task reward", async () => {
-    const { amount, sources } = await computeIncome(0.5, "partial", 25000, pool);
-    // task:25000 + partial:2000 + relevance:floor(2500*0.5)=1250
-    expect(amount).toBe(25000 + 2000 + 1250);
+  it("splits task reward (bounty) from base income", async () => {
+    const { bounty, base, sources } = await computeIncome(0.5, "partial", 25000, pool);
+    // bounty: task:25000 from pool
+    // base: partial:2000 + relevance:floor(2500*0.5)=1250
+    expect(bounty).toBe(25000);
+    expect(base).toBe(2000 + 1250);
     expect(sources).toContain("task:25000");
     expect(sources).toContain("partial:2000");
   });
 
-  it("adds success bonus", async () => {
-    const { amount, sources } = await computeIncome(0.8, "success", null, pool);
-    // success:5000 + relevance:floor(2500*0.8)=2000
-    expect(amount).toBe(5000 + 2000);
-    expect(sources).toContain("success:5000");
+  it("base income does not touch pool", async () => {
+    const { bounty, base } = await computeIncome(0.8, "success", null, pool);
+    // No task reward → bounty = 0, pool untouched
+    expect(bounty).toBe(0);
+    expect(base).toBe(5000 + 2000); // success + relevance
   });
 
-  it("partial outcome earns income", async () => {
-    const { amount, sources } = await computeIncome(0.6, "partial", null, pool);
-    // partial:2000 + relevance:floor(2500*0.6)=1500
-    expect(amount).toBe(2000 + 1500);
+  it("partial outcome gives base income without pool", async () => {
+    const { bounty, base, sources } = await computeIncome(0.6, "partial", null, pool);
+    expect(bounty).toBe(0);
+    expect(base).toBe(2000 + 1500);
     expect(sources).toContain("partial:2000");
   });
 
   it("zero relevance failure gives zero income", async () => {
-    const { amount } = await computeIncome(0, "failure", null, pool);
-    expect(amount).toBe(0);
+    const { bounty, base } = await computeIncome(0, "failure", null, pool);
+    expect(bounty).toBe(0);
+    expect(base).toBe(0);
   });
 
   it("full relevance with task and success", async () => {
-    const { amount, sources } = await computeIncome(1.0, "success", 60000, pool);
-    expect(amount).toBe(60000 + 5000 + 2500);
-    expect(sources).toHaveLength(3);
+    const { bounty, base, sources } = await computeIncome(1.0, "success", 60000, pool);
+    expect(bounty).toBe(60000); // from pool
+    expect(base).toBe(5000 + 2500); // free
+    expect(sources).toContain("task:60000");
+    expect(sources).toContain("success:5000");
+    expect(sources).toContain("relevance:2500");
   });
 
-  it("caps withdrawal at pool balance", async () => {
+  it("caps bounty at pool balance, base unaffected", async () => {
     TEQPool.reset();
     const smallPool = TEQPool.initialize({ initialBalance: 100 });
-    const { amount, requested } = await computeIncome(1.0, "success", 60000, smallPool);
+    const { bounty, base, requested } = await computeIncome(1.0, "success", 60000, smallPool);
+    expect(bounty).toBe(100); // capped at pool
+    expect(base).toBe(5000 + 2500); // still granted in full
     expect(requested).toBe(60000 + 5000 + 2500);
-    expect(amount).toBe(100); // capped at pool balance
   });
 
   // ── Efficiency bonus tests ──
 
-  it("applies efficiency bonus when under expected cost (capped at 3x)", async () => {
+  it("efficiency only amplifies bounty, not base", async () => {
     // Tier 1 expected cost: 8000, actual cost: 2000 → ratio = 4.0, capped at 3.0
-    const { requested, sources } = await computeIncome(0, "success", 60000, pool, 2000, 1);
-    // Base: task:60000 + success:5000 = 65000
-    // Efficiency: min(3.0, 8000/2000) = 3.0
-    // Final: floor(65000 * 3.0) = 195000
-    expect(requested).toBe(195000);
+    const { bounty, base, sources } = await computeIncome(0, "success", 60000, pool, 2000, 1);
+    // Bounty: floor(60000 * 3.0) = 180000
+    // Base: success:5000 (not amplified)
+    expect(bounty).toBe(180000);
+    expect(base).toBe(5000);
     expect(sources).toContain("efficiency:3.00x");
   });
 
-  it("floors at 1.0x when over expected cost (no penalty)", async () => {
-    // Tier 1 expected cost: 8000, actual cost: 200000 → raw ratio = 0.04, floored to 1.0
-    const { requested, sources } = await computeIncome(0, "success", 60000, pool, 200000, 1);
-    // Base: 65000 * 1.0 = 65000 (no reduction)
-    expect(requested).toBe(65000);
-    expect(sources).toContain("efficiency:1.00x");
+  it("floors efficiency at 1.0x (no penalty)", async () => {
+    // Tier 1 expected cost: 8000, actual cost: 200000 → floored to 1.0
+    const { bounty, base } = await computeIncome(0, "success", 60000, pool, 200000, 1);
+    expect(bounty).toBe(60000);
+    expect(base).toBe(5000);
   });
 
   it("no efficiency multiplier without cycleCost", async () => {
-    const { requested, sources } = await computeIncome(0, "success", 60000, pool);
-    expect(requested).toBe(65000);
+    const { bounty, sources } = await computeIncome(0, "success", 60000, pool);
+    expect(bounty).toBe(60000);
     expect(sources).not.toContainEqual(expect.stringContaining("efficiency"));
   });
 
   it("no efficiency multiplier without taskTier", async () => {
-    const { requested, sources } = await computeIncome(0, "success", 60000, pool, 5000);
-    expect(requested).toBe(65000);
+    const { bounty, sources } = await computeIncome(0, "success", 60000, pool, 5000);
+    expect(bounty).toBe(60000);
     expect(sources).not.toContainEqual(expect.stringContaining("efficiency"));
   });
 
   it("no efficiency multiplier without taskReward", async () => {
-    const { requested, sources } = await computeIncome(0.5, "success", null, pool, 5000, 1);
-    // No task reward → efficiency not applied
+    const { bounty, sources } = await computeIncome(0.5, "success", null, pool, 5000, 1);
+    expect(bounty).toBe(0);
     expect(sources).not.toContainEqual(expect.stringContaining("efficiency"));
   });
 
   it("backward compat — 4 args still works", async () => {
-    const { amount } = await computeIncome(0.5, "success", 10000, pool);
-    expect(amount).toBe(10000 + 5000 + 1250);
+    const { bounty, base } = await computeIncome(0.5, "success", 10000, pool);
+    expect(bounty).toBe(10000);
+    expect(base).toBe(5000 + 1250);
   });
 });
