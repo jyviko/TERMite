@@ -48,10 +48,10 @@ class MockExecutor {
 
   async executeShell(command: string): Promise<string> {
     if (command.includes("find /workspace/tools")) {
-      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/echo";
+      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/count";
     }
     if (command.startsWith("/workspace/tools/check")) return "PASS";
-    if (command.startsWith("/workspace/tools/echo")) return "";
+    if (command.startsWith("/workspace/tools/count")) return "";
     return `(mock) ${command}`;
   }
 

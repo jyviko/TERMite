@@ -32,14 +32,14 @@ class MockExecutor {
 
   async executeShell(command: string): Promise<string> {
     if (command.includes("find /workspace/tools")) {
-      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/echo";
+      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/count";
     }
     if (command.startsWith("/workspace/tools/check")) {
       const greeting = this.files.get("/workspace/output/greeting.txt");
       if (greeting === "Hello, World!") return "PASS";
       return "FAIL";
     }
-    if (command.startsWith("/workspace/tools/echo")) return "";
+    if (command.startsWith("/workspace/tools/count")) return "";
     return "";
   }
 
@@ -57,15 +57,15 @@ describe("Full Loop Integration", () => {
       {
         content: [
           { type: "text", text: "Exploring workspace.", citations: null },
-          { type: "tool_use", id: "t1", name: "execute_shell", input: { command: "ls /workspace/" } },
+          { type: "tool_use", id: "t1", name: "shell", input: { input: "ls /workspace/" } },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
         usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
       },
-      // See quest, read it
+      // Look at data
       {
         content: [
-          { type: "tool_use", id: "t2", name: "execute_shell", input: { command: "cat /workspace/quests/quest.json" } },
+          { type: "tool_use", id: "t2", name: "shell", input: { input: "ls /workspace/data/" } },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
         usage: { input: 300, output: 40, cacheCreation: 0, cacheRead: 0 },
@@ -74,7 +74,7 @@ describe("Full Loop Integration", () => {
       {
         content: [
           { type: "text", text: "Writing solution.", citations: null },
-          { type: "tool_use", id: "t3", name: "write_file", input: { path: "output/greeting.txt", content: "Hello, World!" } },
+          { type: "tool_use", id: "t3", name: "shell", input: { input: "echo 'Hello, World!' > /workspace/output/greeting.txt" } },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
         usage: { input: 350, output: 60, cacheCreation: 0, cacheRead: 0 },
@@ -82,7 +82,7 @@ describe("Full Loop Integration", () => {
       // Verify
       {
         content: [
-          { type: "tool_use", id: "t4", name: "check_quest", input: {} },
+          { type: "tool_use", id: "t4", name: "check", input: {} },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
         usage: { input: 400, output: 30, cacheCreation: 0, cacheRead: 0 },
@@ -90,7 +90,7 @@ describe("Full Loop Integration", () => {
       // Done foraging
       {
         content: [
-          { type: "text", text: "Quest complete!", citations: null },
+          { type: "text", text: "Done.", citations: null },
         ] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
         usage: { input: 450, output: 20, cacheCreation: 0, cacheRead: 0 },
@@ -98,7 +98,7 @@ describe("Full Loop Integration", () => {
       // Resolve response
       {
         content: [
-          { type: "text", text: '{"outcome":"success","lesson":"Read quest first","goalRelevance":0.9,"goalComplete":true}', citations: null },
+          { type: "text", text: '{"outcome":"success","lesson":"Check data first","goalRelevance":0.9,"goalComplete":true}', citations: null },
         ] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
         usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
@@ -106,7 +106,7 @@ describe("Full Loop Integration", () => {
       // Memorize response
       {
         content: [
-          { type: "text", text: '{"store":[{"content":"Always read quest.json first","type":"procedural","importance":0.8}]}', citations: null },
+          { type: "text", text: '{"store":[{"content":"Check data directory first","type":"procedural","importance":0.8}]}', citations: null },
         ] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
         usage: { input: 200, output: 40, cacheCreation: 0, cacheRead: 0 },

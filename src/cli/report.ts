@@ -58,7 +58,7 @@ function loadOrganisms(runDir: string): OrganismState[] {
 
   for (const entry of readdirSync(runDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "shared") continue;
-    const statePath = join(runDir, entry.name, "workspace", "state.json");
+    const statePath = join(runDir, entry.name, "state.json");
     try {
       organisms.push(JSON.parse(readFileSync(statePath, "utf-8")));
     } catch {

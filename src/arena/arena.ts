@@ -19,6 +19,7 @@ interface OrganismEntry {
   state: OrganismStateManager;
   executor: Executor;
   questTier: number;
+  currentQuest: import("../types/index.js").Quest | null;
   questHistory: QuestResult[];
   alive: boolean;
   consecutivePasses: number;
@@ -155,7 +156,7 @@ export class Arena {
 
     await executor.start();
 
-    const savePath = join(this.runDir, id, "workspace", "state.json");
+    const savePath = join(this.runDir, id, "state.json");
     const machine = new OrganismStateMachine(this.brain, executor, state, this.teqPool, savePath);
 
     // Drop initial quest
@@ -176,6 +177,7 @@ export class Arena {
       state,
       executor,
       questTier: 1,
+      currentQuest: quest,
       questHistory: [],
       alive: true,
       consecutivePasses: 0,
@@ -222,7 +224,7 @@ export class Arena {
 
       // Preserve workspace (corpse)
       await entry.state.save(
-        join(this.runDir, id, "workspace", "state.json"),
+        join(this.runDir, id, "state.json"),
       );
       await entry.executor.stop().catch(() => {});
     }
@@ -230,14 +232,8 @@ export class Arena {
 
   private async onQuestComplete(id: string, entry: OrganismEntry): Promise<void> {
     const workspacePath = join(this.runDir, id, "workspace");
-    const questPath = join(workspacePath, "quests", "quest.json");
-
-    let quest;
-    try {
-      quest = JSON.parse(readFileSync(questPath, "utf-8"));
-    } catch {
-      return;
-    }
+    const quest = entry.currentQuest;
+    if (!quest) return;
 
     // Verify
     const result = await this.questVerifier.verify(quest, entry.executor);
@@ -274,6 +270,7 @@ export class Arena {
       entry.state.cycleCount,
       entry.questHistory.map((q) => q.questId),
     );
+    entry.currentQuest = newQuest;
     this.questGenerator.writeQuestToWorkspace(newQuest, workspacePath);
 
     // Check reproduction conditions
@@ -289,6 +286,8 @@ export class Arena {
   private async onGraduation(id: string, entry: OrganismEntry): Promise<void> {
     const workspacePath = join(this.runDir, id, "workspace");
     console.log(`[ARENA] ${id} GRADUATED from tier 5 — transitioning to open data`);
+
+    entry.currentQuest = null;
 
     // Place raw data — organism must figure out what to do
     const result = this.openDataGenerator.placeData(workspacePath);

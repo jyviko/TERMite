@@ -301,12 +301,6 @@ const DATASET_TEMPLATES: DatasetTemplate[] = [
 
 export class OpenDataGenerator {
   placeData(workspacePath: string): { datasetName: string; files: string[] } {
-    // Remove old quest directory
-    const questDir = join(workspacePath, "quests");
-    if (existsSync(questDir)) {
-      rmSync(questDir, { recursive: true, force: true });
-    }
-
     // Create data and output directories
     const dataDir = join(workspacePath, "data");
     // Clean previous data if any

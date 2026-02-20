@@ -36,7 +36,7 @@ class MockExecutor {
   async executeShell(command: string): Promise<string> {
     // Tool discovery
     if (command.includes("find /workspace/tools")) {
-      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/echo";
+      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/count";
     }
     // Tool execution
     if (command.startsWith("/workspace/tools/shell")) {
@@ -47,7 +47,7 @@ class MockExecutor {
       if (greeting?.includes("Hello, World!")) return "PASS";
       return "FAIL: file not found or wrong content";
     }
-    if (command.startsWith("/workspace/tools/echo")) {
+    if (command.startsWith("/workspace/tools/count")) {
       return "";
     }
     return `(simulated) ${command}`;
@@ -79,8 +79,8 @@ class MockBrain extends Brain {
           {
             type: "tool_use" as const,
             id: `toolu_${this.callIndex}`,
-            name: "execute_shell",
-            input: { command: "ls /workspace/" },
+            name: "shell",
+            input: { input: "ls /workspace/" },
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
@@ -91,12 +91,12 @@ class MockBrain extends Brain {
     if (this.callIndex === 3) {
       return {
         content: [
-          { type: "text" as const, text: "I see a quest. Let me read it." },
+          { type: "text" as const, text: "Let me look at the data." },
           {
             type: "tool_use" as const,
             id: `toolu_${this.callIndex}`,
-            name: "execute_shell",
-            input: { command: "cat /workspace/quests/quest.json" },
+            name: "shell",
+            input: { input: "ls /workspace/data/" },
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
@@ -111,8 +111,8 @@ class MockBrain extends Brain {
           {
             type: "tool_use" as const,
             id: `toolu_${this.callIndex}`,
-            name: "write_file",
-            input: { path: "output/greeting.txt", content: "Hello, World!" },
+            name: "shell",
+            input: { input: "echo 'Hello, World!' > /workspace/output/greeting.txt" },
           },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",

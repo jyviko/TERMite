@@ -71,19 +71,30 @@ export class AgenticLoop {
       // Push assistant message with full content
       messages.push({ role: "assistant", content: response.content });
 
-      // Handle max_tokens truncation
-      if (response.stopReason === "max_tokens") {
-        messages.push({
-          role: "user",
-          content: "Your response was cut off. Continue from where you stopped.",
-        });
-        continue;
-      }
-
       // Extract tool_use blocks
       const toolUseBlocks = response.content.filter(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
       );
+
+      // Handle max_tokens truncation — must provide tool_results if any tool_use present
+      if (response.stopReason === "max_tokens") {
+        if (toolUseBlocks.length > 0) {
+          messages.push({
+            role: "user",
+            content: toolUseBlocks.map((tb) => ({
+              type: "tool_result" as const,
+              tool_use_id: tb.id,
+              content: "Truncated — not executed. Retry with shorter output.",
+            })),
+          });
+        } else {
+          messages.push({
+            role: "user",
+            content: "Your response was cut off. Continue from where you stopped.",
+          });
+        }
+        continue;
+      }
 
       if (toolUseBlocks.length === 0) {
         // Model decided to stop

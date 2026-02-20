@@ -261,9 +261,9 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expec
     {
       title: "Count Lines",
       description:
-        "Count the lines in /workspace/quests/data/numbers.txt and write the count to /workspace/output/count.txt",
+        "Count the lines in /workspace/data/numbers.txt and write the count to /workspace/output/count.txt",
       verifyScript: `#!/bin/bash
-EXPECTED=$(wc -l < /workspace/quests/data/numbers.txt | tr -d ' ')
+EXPECTED=$(wc -l < /workspace/data/numbers.txt | tr -d ' ')
 ACTUAL=$(cat /workspace/output/count.txt 2>/dev/null | tr -d '[:space:]')
 if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected $EXPECTED lines, got '$ACTUAL'"; exit 1; fi`,
       dataGenerator: () => ({
@@ -273,9 +273,9 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expec
     {
       title: "Sum Numbers",
       description:
-        "Compute the sum of all numbers in /workspace/quests/data/numbers.txt (one integer per line) and write the result to /workspace/output/sum.txt",
+        "Compute the sum of all numbers in /workspace/data/numbers.txt (one integer per line) and write the result to /workspace/output/sum.txt",
       verifyScript: `#!/bin/bash
-EXPECTED=$(awk '{s+=$1} END {print s}' /workspace/quests/data/numbers.txt)
+EXPECTED=$(awk '{s+=$1} END {print s}' /workspace/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sum.txt 2>/dev/null | tr -d '[:space:]')
 if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected $EXPECTED, got '$ACTUAL'"; exit 1; fi`,
       dataGenerator: () => ({
@@ -287,9 +287,9 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expec
     {
       title: "Sort Numbers",
       description:
-        "Sort the numbers in /workspace/quests/data/numbers.txt ascending (one per line), write to /workspace/output/sorted.txt",
+        "Sort the numbers in /workspace/data/numbers.txt ascending (one per line), write to /workspace/output/sorted.txt",
       verifyScript: `#!/bin/bash
-EXPECTED=$(sort -n /workspace/quests/data/numbers.txt)
+EXPECTED=$(sort -n /workspace/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sorted.txt 2>/dev/null)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: output does not match sorted input"; exit 1; fi`,
       dataGenerator: () => ({
@@ -299,9 +299,9 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: outpu
     {
       title: "Extract Emails",
       description:
-        "Extract all email addresses from /workspace/quests/data/contacts.txt (one per line), write to /workspace/output/emails.txt sorted alphabetically",
+        "Extract all email addresses from /workspace/data/contacts.txt (one per line), write to /workspace/output/emails.txt sorted alphabetically",
       verifyScript: `#!/bin/bash
-EXPECTED=$(grep -oE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}' /workspace/quests/data/contacts.txt | sort)
+EXPECTED=$(grep -oE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}' /workspace/data/contacts.txt | sort)
 ACTUAL=$(sort /workspace/output/emails.txt 2>/dev/null)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: extracted emails don't match"; exit 1; fi`,
       dataGenerator: () => ({
@@ -311,9 +311,9 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: extra
     {
       title: "Find Duplicates",
       description:
-        "Find all duplicate numbers in /workspace/quests/data/numbers.txt (numbers that appear more than once). Write the unique duplicate values sorted ascending to /workspace/output/duplicates.txt (one per line)",
+        "Find all duplicate numbers in /workspace/data/numbers.txt (numbers that appear more than once). Write the unique duplicate values sorted ascending to /workspace/output/duplicates.txt (one per line)",
       verifyScript: `#!/bin/bash
-EXPECTED=$(sort -n /workspace/quests/data/numbers.txt | uniq -d | sort -n)
+EXPECTED=$(sort -n /workspace/data/numbers.txt | uniq -d | sort -n)
 ACTUAL=$(cat /workspace/output/duplicates.txt 2>/dev/null | sort -n)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: duplicate numbers don't match"; exit 1; fi`,
       dataGenerator: () => ({
@@ -325,9 +325,9 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: dupli
     {
       title: "Parse Error Logs",
       description:
-        "Parse /workspace/quests/data/access.log: extract timestamps (first field) from lines where HTTP status >= 500, write to /workspace/output/errors.txt (one per line, sorted)",
+        "Parse /workspace/data/access.log: extract timestamps (first field) from lines where HTTP status >= 500, write to /workspace/output/errors.txt (one per line, sorted)",
       verifyScript: `#!/bin/bash
-EXPECTED=$(awk '$6 >= 500 {print $1}' /workspace/quests/data/access.log | sort)
+EXPECTED=$(awk '$6 >= 500 {print $1}' /workspace/data/access.log | sort)
 ACTUAL=$(sort /workspace/output/errors.txt 2>/dev/null)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: error timestamps don't match"; exit 1; fi`,
       dataGenerator: () => ({
@@ -337,9 +337,9 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: error
     {
       title: "Top Words",
       description:
-        "Find the 10 most frequent words in /workspace/quests/data/article.txt (case-insensitive, alphabetical order for ties), write to /workspace/output/top10.txt (one word per line, lowercase, most frequent first)",
+        "Find the 10 most frequent words in /workspace/data/article.txt (case-insensitive, alphabetical order for ties), write to /workspace/output/top10.txt (one word per line, lowercase, most frequent first)",
       verifyScript: `#!/bin/bash
-EXPECTED=$(tr '[:upper:]' '[:lower:]' < /workspace/quests/data/article.txt | tr -cs '[:alpha:]' '\\n' | sort | uniq -c | sort -rn -k1,1 -k2,2 | head -10 | awk '{print $2}')
+EXPECTED=$(tr '[:upper:]' '[:lower:]' < /workspace/data/article.txt | tr -cs '[:alpha:]' '\\n' | sort | uniq -c | sort -rn -k1,1 -k2,2 | head -10 | awk '{print $2}')
 ACTUAL=$(cat /workspace/output/top10.txt 2>/dev/null)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: top 10 words don't match"; exit 1; fi`,
       dataGenerator: () => ({
@@ -349,9 +349,9 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: top 1
     {
       title: "IP Frequency",
       description:
-        "Count how many times each IP address appears in /workspace/quests/data/access.log (IP is the second field). Write CSV to /workspace/output/ip_counts.csv with columns: ip,count sorted by count descending",
+        "Count how many times each IP address appears in /workspace/data/access.log (IP is the second field). Write CSV to /workspace/output/ip_counts.csv with columns: ip,count sorted by count descending",
       verifyScript: `#!/bin/bash
-EXPECTED=$(awk '{print $2}' /workspace/quests/data/access.log | sort | uniq -c | sort -rn | awk '{print $2","$1}')
+EXPECTED=$(awk '{print $2}' /workspace/data/access.log | sort | uniq -c | sort -rn | awk '{print $2","$1}')
 ACTUAL=$(cat /workspace/output/ip_counts.csv 2>/dev/null | tail -n +1)
 # Strip header if present
 ACTUAL_CLEAN=$(echo "$ACTUAL" | grep -v '^ip,count$')
@@ -367,7 +367,7 @@ if [ "$EXPECTED" = "$ACTUAL_CLEAN" ]; then echo "PASS"; exit 0; else echo "FAIL:
       description:
         "data/sales.csv has columns: date,product,region,amount. Compute total amount per product AND region. Write CSV to /workspace/output/totals.csv with columns: product,region,total (sorted by product then region)",
       verifyScript: `#!/bin/bash
-EXPECTED=$(tail -n +2 /workspace/quests/data/sales.csv | awk -F',' '{key=$2","$3; a[key]+=$4} END {for(k in a) printf "%s,%.2f\\n",k,a[k]}' | sort)
+EXPECTED=$(tail -n +2 /workspace/data/sales.csv | awk -F',' '{key=$2","$3; a[key]+=$4} END {for(k in a) printf "%s,%.2f\\n",k,a[k]}' | sort)
 ACTUAL=$(tail -n +2 /workspace/output/totals.csv 2>/dev/null | sort)
 if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: totals don't match"; exit 1; fi`,
       dataGenerator: () => ({
@@ -377,11 +377,11 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: total
     {
       title: "Moving Average",
       description:
-        "Compute 7-day moving average from /workspace/quests/data/timeseries.csv (columns: date,value). For each row starting from row 7, compute the average of that row and the 6 preceding rows. Write CSV to /workspace/output/moving_avg.csv with columns: date,value,moving_avg (moving_avg rounded to 2 decimal places)",
+        "Compute 7-day moving average from /workspace/data/timeseries.csv (columns: date,value). For each row starting from row 7, compute the average of that row and the 6 preceding rows. Write CSV to /workspace/output/moving_avg.csv with columns: date,value,moving_avg (moving_avg rounded to 2 decimal places)",
       verifyScript: `#!/bin/bash
 node -e "
 const fs = require('fs');
-const input = fs.readFileSync('/workspace/quests/data/timeseries.csv','utf-8').trim().split('\\n').slice(1);
+const input = fs.readFileSync('/workspace/data/timeseries.csv','utf-8').trim().split('\\n').slice(1);
 const output = fs.readFileSync('/workspace/output/moving_avg.csv','utf-8').trim().split('\\n');
 const hasHeader = output[0] && output[0].includes('date');
 const dataLines = hasHeader ? output.slice(1) : output;
@@ -404,12 +404,12 @@ if (ok) { console.log('PASS'); process.exit(0); } else { process.exit(1); }
     {
       title: "Join and Aggregate",
       description:
-        "Join /workspace/quests/data/orders.csv (columns: order_id,customer_id,product,quantity,price) with /workspace/quests/data/customers.csv (columns: customer_id,name,region,signup_date) on customer_id. Compute total revenue (quantity*price) per region. Write CSV to /workspace/output/region_revenue.csv with columns: region,revenue (revenue as decimal with 2 places, sorted by region)",
+        "Join /workspace/data/orders.csv (columns: order_id,customer_id,product,quantity,price) with /workspace/data/customers.csv (columns: customer_id,name,region,signup_date) on customer_id. Compute total revenue (quantity*price) per region. Write CSV to /workspace/output/region_revenue.csv with columns: region,revenue (revenue as decimal with 2 places, sorted by region)",
       verifyScript: `#!/bin/bash
 node -e "
 const fs = require('fs');
-const orders = fs.readFileSync('/workspace/quests/data/orders.csv','utf-8').trim().split('\\n').slice(1);
-const customers = fs.readFileSync('/workspace/quests/data/customers.csv','utf-8').trim().split('\\n').slice(1);
+const orders = fs.readFileSync('/workspace/data/orders.csv','utf-8').trim().split('\\n').slice(1);
+const customers = fs.readFileSync('/workspace/data/customers.csv','utf-8').trim().split('\\n').slice(1);
 const custMap = new Map();
 customers.forEach(l => { const p=l.split(','); custMap.set(p[0], p[2]); });
 const regionTotals = {};
@@ -474,12 +474,12 @@ if [ "$ALICE_LINE" -lt "$BOB_LINE" ]; then echo "PASS"; exit 0; else echo "FAIL:
     {
       title: "Log Processor Pipeline",
       description:
-        "Write a script at /workspace/output/process.sh that reads /workspace/quests/data/app.log and outputs a JSON report to /workspace/output/report.json with: {total_lines: N, by_level: {INFO: N, WARN: N, ERROR: N, ...}, by_service: {name: N, ...}, error_rate: 0.XX}. error_rate = (ERROR+FATAL lines) / total_lines rounded to 2 decimal places.",
+        "Write a script at /workspace/output/process.sh that reads /workspace/data/app.log and outputs a JSON report to /workspace/output/report.json with: {total_lines: N, by_level: {INFO: N, WARN: N, ERROR: N, ...}, by_service: {name: N, ...}, error_rate: 0.XX}. error_rate = (ERROR+FATAL lines) / total_lines rounded to 2 decimal places.",
       verifyScript: `#!/bin/bash
 bash /workspace/output/process.sh 2>/dev/null
 node -e "
 const fs = require('fs');
-const log = fs.readFileSync('/workspace/quests/data/app.log','utf-8').trim().split('\\n');
+const log = fs.readFileSync('/workspace/data/app.log','utf-8').trim().split('\\n');
 const report = JSON.parse(fs.readFileSync('/workspace/output/report.json','utf-8'));
 if (report.total_lines !== log.length) { console.log('FAIL: total_lines expected '+log.length+' got '+report.total_lines); process.exit(1); }
 const byLevel = {};
@@ -536,13 +536,11 @@ export class QuestGenerator {
   }
 
   writeQuestToWorkspace(quest: Quest, workspacePath: string): void {
-    const questDir = join(workspacePath, "quests");
-    const dataDir = join(questDir, "data");
+    const dataDir = join(workspacePath, "data");
     const outputDir = join(workspacePath, "output");
     const workDir = join(workspacePath, "work");
     const toolsDir = join(workspacePath, "tools");
 
-    mkdirSync(questDir, { recursive: true });
     mkdirSync(dataDir, { recursive: true });
     mkdirSync(outputDir, { recursive: true });
     mkdirSync(workDir, { recursive: true });
@@ -551,22 +549,16 @@ export class QuestGenerator {
     // Seed tools — organism discovers everything through these
     if (!existsSync(join(toolsDir, "shell"))) {
       writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\neval "$*"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "echo"), '#!/bin/bash\n# echo: incomplete\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "count"), '#!/bin/bash\necho "count implementation incomplete"\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "sum"), '#!/bin/bash\necho "TODO: sum implementation incomplete"\n', { mode: 0o755 });
     }
-
-    // Write quest.json
-    writeFileSync(
-      join(questDir, "quest.json"),
-      JSON.stringify(quest, null, 2),
-      "utf-8",
-    );
 
     // Find the template and write check tool + data
     const effectiveTier = Math.min(Math.max(quest.tier, 1), 5);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates.find((t) => t.title === quest.title) ?? templates[0]!;
 
-    // check IS the verification script — not a redirect
+    // check IS the verification script
     writeFileSync(join(toolsDir, "check"), template.verifyScript, {
       mode: 0o755,
       encoding: "utf-8",

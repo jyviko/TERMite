@@ -132,7 +132,7 @@ function loadOrganisms(): OrgData[] {
   const organisms: OrgData[] = [];
   for (const entry of readdirSync(SAVES_DIR, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "shared") continue;
-    const statePath = join(SAVES_DIR, entry.name, "workspace", "state.json");
+    const statePath = join(SAVES_DIR, entry.name, "state.json");
     try {
       organisms.push(JSON.parse(readFileSync(statePath, "utf-8")));
     } catch {
