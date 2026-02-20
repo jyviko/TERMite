@@ -57,16 +57,11 @@ Respond with JSON. All fields optional:
   "forget": ["memory_id", ...],
   "compress": [{"id": "...", "newContent": "..."}],
   "consolidate": {"sourceIds": [...], "newContent": "...", "importance": 0.8},
-  "mutate": {"target": "systemPrompt|resolvePrompt|restPrompt|memorizePrompt", "newPrompt": "..."}
+  "mutate": [{"target": "systemPrompt", "newPrompt": "..."}, {"target": "resolvePrompt", "newPrompt": "..."}]
 }
 
-Guidelines:
-- Store what's worth the token cost to recall
-- Forget memories that are redundant or proven wrong
-- Compress verbose memories into dense ones
-- Consolidate related memories into single insights
-- Evolve your prompts. If you see a pattern — a better strategy, a sharper framing, a more efficient approach — mutate. Organisms that adapt survive. Organisms that stay static stagnate.
-- You can mutate any prompt including this one. Small refinements compound over generations.`;
+Operations: store, forget, compress, consolidate, mutate. All optional.
+Mutate targets: systemPrompt, resolvePrompt, restPrompt, memorizePrompt — one or several per cycle.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   fast: { model: "claude-haiku-4-5-20251001", maxTokens: 2048 },

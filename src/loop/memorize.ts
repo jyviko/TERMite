@@ -92,14 +92,21 @@ export class Memorizer {
       }
     }
 
-    // Self-mutation
+    // Self-mutation — accepts an array or a single object for backward compat
     if (ops.mutate) {
-      const { target, newPrompt } = ops.mutate;
-      if (target && newPrompt?.trim()) {
-        genome.mutate(target, newPrompt);
+      const mutations = Array.isArray(ops.mutate) ? ops.mutate : [ops.mutate];
+      for (const m of mutations) {
+        if (m.target && m.newPrompt?.trim()) {
+          genome.mutate(m.target, m.newPrompt);
+        }
       }
     }
   }
+}
+
+interface MutateOp {
+  target: string;
+  newPrompt: string;
 }
 
 interface MemorizeOperations {
@@ -111,10 +118,7 @@ interface MemorizeOperations {
     newContent: string;
     importance?: number;
   };
-  mutate?: {
-    target: string;
-    newPrompt: string;
-  };
+  mutate?: MutateOp | MutateOp[];
 }
 
 function parseMemorizeResponse(text: string): MemorizeOperations {
