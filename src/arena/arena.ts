@@ -34,7 +34,7 @@ export interface ArenaConfig {
   workspaceRoot: string;
   apiKey?: string;
   baseUrl?: string;
-  /** Override forage model for all organisms (fast + deep routes). */
+  /** Override thinking model for all organisms. */
   model?: string;
   poolInitialBalance?: number;
   poolRegenPerCycle?: number;

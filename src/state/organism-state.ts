@@ -13,7 +13,6 @@ export interface OrganismStateInit {
   parentId?: string | null;
   budget: number;
   reserves?: number;
-  /** Full model ID for thinking (forage) cycles. */
   thinkingModel?: string;
 }
 
