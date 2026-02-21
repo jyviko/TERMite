@@ -1,10 +1,10 @@
 import type { TaskResult, Memory } from "../types/index.js";
-import type { Brain } from "../brain/index.js";
-import { extractText } from "../brain/util.js";
+import type { LLM } from "../llm/index.js";
+import { extractText } from "../llm/util.js";
 import { Genome } from "../state/genome.js";
 
 export class GenomeEvolver {
-  constructor(private brain: Brain) {}
+  constructor(private llm: LLM) {}
 
   async evolve(params: {
     parentGenome: Genome;
@@ -43,7 +43,7 @@ Create an evolved system prompt for the child. The child should:
 Return JSON: { "systemPrompt": "..." }`;
 
     try {
-      const response = await this.brain.chat({
+      const response = await this.llm.chat({
         model: params.parentGenome.routing.thinking.model,
         system: prompt,
         messages: [{ role: "user", content: "Evolve the genome." }],

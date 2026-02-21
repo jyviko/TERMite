@@ -119,7 +119,7 @@ describe("EnergyLedger", () => {
     const e = new EnergyLedger({ budget: 100000 });
     e.burn(HAIKU, usage(200, 1000, 0, 500));
     e.feed(100);
-    e.endCycle(0, "success", 100, "task:100");
+    e.endCycle(0, "success", "task:100");
     expect(e.cycleHistory).toHaveLength(1);
     const record = e.cycleHistory[0]!;
     expect(record.income).toBe(100);
@@ -132,9 +132,9 @@ describe("EnergyLedger", () => {
   it("avgCycleCost computes correctly", () => {
     const e = new EnergyLedger({ budget: 100000 });
     e.burn(HAIKU, usage(100)); // 500
-    e.endCycle(0, null, 0, "");
+    e.endCycle(0, null, "");
     e.burn(HAIKU, usage(200)); // 1000
-    e.endCycle(1, null, 0, "");
+    e.endCycle(1, null, "");
     expect(e.avgCycleCost()).toBe(750); // (500 + 1000) / 2
     expect(e.avgCycleCost(1)).toBe(1000);
   });
@@ -149,7 +149,7 @@ describe("EnergyLedger", () => {
     const e = new EnergyLedger({ budget: 100000 });
     e.burn(HAIKU, usage(200));
     e.feed(200);
-    e.endCycle(0, "partial", 200, "relevance:200");
+    e.endCycle(0, "partial", "relevance:200");
 
     const json = e.toJSON();
     const restored = EnergyLedger.fromJSON(json);

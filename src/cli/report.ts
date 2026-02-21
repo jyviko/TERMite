@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import type { OrganismState, PromptMutation } from "../types/index.js";
+import type { OrganismState } from "../types/index.js";
 
 // ── CLI args ─────────────────────────────────────────────────────────
 const { values } = parseArgs({

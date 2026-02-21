@@ -6,6 +6,7 @@ import { join } from "node:path";
 // ── Peer visibility tools ────────────────────────────────────────────
 
 const LEADERBOARD_TOOL = `#!/usr/bin/env node
+// desc: Show arena rankings. No input needed.
 const fs = require("fs");
 try {
   const data = JSON.parse(fs.readFileSync("/shared/_leaderboard.json", "utf-8"));
@@ -32,6 +33,7 @@ try {
 `;
 
 const PEER_TOOLS_TOOL = `#!/usr/bin/env python3
+# desc: Browse other organisms' custom tools. Usage: no args = list peers, <org_id> = see tools, <org_id>/<tool> = read source.
 import json, sys
 
 try:
@@ -89,27 +91,6 @@ interface TaskTemplate {
   verifyScript: string;
   dataGenerator?: () => Record<string, string>;
 }
-
-// Developer reference only — not shown to organisms.
-// Organism discovers what to do by reading data files and the check tool.
-const _TASK_NOTES: Record<string, string> = {
-  "Hello World": "Write greeting.txt with 'Hello, World!'",
-  "Count Lines": "Count lines in numbers.txt → count.txt",
-  "Sum Numbers": "Sum integers in numbers.txt → sum.txt",
-  "Sort Numbers": "Sort numbers ascending → sorted.txt",
-  "Extract Emails": "Extract emails from contacts.txt → emails.txt sorted",
-  "Find Duplicates": "Find duplicate numbers → duplicates.txt sorted",
-  "Parse Error Logs": "Extract timestamps from 500+ status lines → errors.txt",
-  "Top Words": "Top 10 most frequent words (case-insensitive) → top10.txt",
-  "IP Frequency": "Count IP occurrences → ip_counts.csv",
-  "Sales Totals": "Aggregate amount by product+region → totals.csv",
-  "Moving Average": "7-day moving average → moving_avg.csv",
-  "Join and Aggregate": "Join orders+customers, revenue by region → region_revenue.csv",
-  "HTTP Health Server": "server.js on :8080, GET /health → 'ok'",
-  "CSV API Server": "server.js on :8080, POST/GET /data with CSV + sort",
-  "Log Processor Pipeline": "process.sh → report.json with level/service counts + error_rate",
-};
-void _TASK_NOTES; // suppress unused warning
 
 // Expected TEQ cost for a code-writing organism. Used by efficiency bonus.
 export const TIER_EXPECTED_COST: Record<number, number> = {
@@ -583,7 +564,7 @@ console.log('PASS'); process.exit(0);
 };
 
 export class TaskGenerator {
-  generateTask(tier: number, currentCycle: number, completedIds: string[]): Task {
+  generateTask(tier: number, currentCycle: number): Task {
     const effectiveTier = Math.min(Math.max(tier, 1), 5);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates[randomInt(0, templates.length - 1)]!;
@@ -618,9 +599,7 @@ export class TaskGenerator {
 
     // Seed tools — organism discovers everything through these
     if (!existsSync(join(toolsDir, "shell"))) {
-      writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\neval "$*"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "count"), '#!/bin/bash\necho "TODO: Implement to work"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "sum"), '#!/bin/bash\n# awk \'{s+=$1} END {print s}\' "$1"\n # Fix first\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\n# desc: Run a shell command. Input: the command string.\neval "$*"\n', { mode: 0o755 });
       writeFileSync(join(toolsDir, "leaderboard"), LEADERBOARD_TOOL, { mode: 0o755 });
       writeFileSync(join(toolsDir, "peer_tools"), PEER_TOOLS_TOOL, { mode: 0o755 });
     }

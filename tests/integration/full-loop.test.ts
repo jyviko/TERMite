@@ -1,22 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
-import { Brain, type BrainResponse, type ChatParams } from "../../src/brain/index.js";
+import { LLM, type LLMResponse, type ChatParams } from "../../src/llm/index.js";
 import { Executor } from "../../src/executor/index.js";
 import { OrganismStateManager } from "../../src/state/organism-state.js";
 import { OrganismStateMachine } from "../../src/loop/state-machine.js";
 import { TEQPool } from "../../src/arena/teq-pool.js";
 import type { AgentEvent } from "../../src/types/index.js";
 
-class ScriptedBrain extends Brain {
-  private script: BrainResponse[];
+class ScriptedLLM extends LLM {
+  private script: LLMResponse[];
   private idx = 0;
 
-  constructor(script: BrainResponse[]) {
+  constructor(script: LLMResponse[]) {
     super({});
     this.script = script;
   }
 
-  async chat(_params: ChatParams): Promise<BrainResponse> {
+  async chat(_params: ChatParams): Promise<LLMResponse> {
     const resp = this.script[this.idx % this.script.length]!;
     this.idx++;
     return resp;
@@ -33,14 +33,13 @@ class MockExecutor {
 
   async executeShell(command: string): Promise<string> {
     if (command.includes("find /workspace/tools")) {
-      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/count";
+      return "/workspace/tools/shell\n/workspace/tools/check";
     }
     if (command.startsWith("/workspace/tools/check")) {
       const greeting = this.files.get("/workspace/output/greeting.txt");
       if (greeting === "Hello, World!") return "PASS";
       return "FAIL";
     }
-    if (command.startsWith("/workspace/tools/count")) return "";
     return "";
   }
 
@@ -64,7 +63,7 @@ describe("Full Loop Integration", () => {
   });
 
   it("organism explores → solves task → earns energy", async () => {
-    const brain = new ScriptedBrain([
+    const llm = new ScriptedLLM([
       // Explore workspace
       {
         content: [
@@ -115,21 +114,13 @@ describe("Full Loop Integration", () => {
         stopReason: "end_turn",
         usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
       },
-      // Call memorize (internal tool)
+      // Call memorize (internal tool) — memorize ends the cycle (context resets)
       {
         content: [
-          { type: "tool_use", id: "t6", name: "memorize", input: { input: '{"store":[{"content":"Check data directory first","type":"procedural","importance":0.8}]}' } },
+          { type: "tool_use", id: "t6", name: "memorize", input: { epigenetic: { store: [{ content: "Check data directory first", type: "procedural", importance: 0.8 }] } } },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
         usage: { input: 500, output: 30, cacheCreation: 0, cacheRead: 0 },
-      },
-      // Done foraging
-      {
-        content: [
-          { type: "text", text: "Done.", citations: null },
-        ] as Anthropic.ContentBlock[],
-        stopReason: "end_turn",
-        usage: { input: 450, output: 20, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 
@@ -137,7 +128,7 @@ describe("Full Loop Integration", () => {
     const state = new OrganismStateManager({ budget: 100000 });
 
     const machine = new OrganismStateMachine(
-      brain,
+      llm,
       executor as unknown as Executor,
       state,
       pool,

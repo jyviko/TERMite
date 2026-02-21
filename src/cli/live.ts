@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { loadEnv } from "./env.js";
-import { Brain } from "../brain/index.js";
+import { LLM } from "../llm/index.js";
 
 loadEnv();
 import { Executor } from "../executor/index.js";
@@ -21,7 +21,7 @@ const { values } = parseArgs({
 const budget = parseInt(values.budget ?? "100000", 10);
 
 async function main() {
-  const brain = new Brain({
+  const llm = new LLM({
     apiKey: values["api-key"] ?? process.env.ANTHROPIC_API_KEY,
     baseUrl: values["base-url"] ?? process.env.ANTHROPIC_BASE_URL,
   });
@@ -34,7 +34,7 @@ async function main() {
 
   const teqPool = TEQPool.initialize();
   const savePath = `${values.save}/${state.id}.json`;
-  const machine = new OrganismStateMachine(brain, executor, state, teqPool, savePath);
+  const machine = new OrganismStateMachine(llm, executor, state, teqPool, savePath);
 
   console.log(`Organism ${state.id} born (budget: ${budget})`);
 

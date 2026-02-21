@@ -1,6 +1,6 @@
 import type { Outcome } from "../types/index.js";
-import type { Brain, TokenUsage } from "../brain/index.js";
-import { extractText } from "../brain/util.js";
+import type { LLM, TokenUsage } from "../llm/index.js";
+import { extractText } from "../llm/util.js";
 import type { Genome } from "../state/genome.js";
 import type { EnergyLedger } from "../state/energy.js";
 import type { TEQPool } from "../arena/teq-pool.js";
@@ -12,7 +12,6 @@ export interface ResolveResult {
   outcome: Outcome;
   lesson: string;
   goalRelevance: number;
-  goalComplete: boolean;
   usage: TokenUsage;
 }
 
@@ -20,12 +19,11 @@ const FALLBACK_RESULT: ResolveResult = {
   outcome: "uncertain",
   lesson: "",
   goalRelevance: 0,
-  goalComplete: false,
   usage: ZERO_USAGE,
 };
 
 export class Resolver {
-  constructor(private brain: Brain) {}
+  constructor(private llm: LLM) {}
 
   async resolve(params: {
     genome: Genome;
@@ -40,10 +38,10 @@ export class Resolver {
       .replace("{capacity}", String(params.energy.capacity));
 
     try {
-      const response = await this.brain.chat({
+      const response = await this.llm.chat({
         model: params.genome.routing.resolve.model,
         system: prompt,
-        messages: [{ role: "user", content: "Evaluate the organism's recent actions." }],
+        messages: [{ role: "user", content: "Evaluate." }],
         maxTokens: params.genome.routing.resolve.maxTokens,
       });
 
@@ -67,7 +65,6 @@ function parseResolveResponse(text: string): Omit<ResolveResult, "usage"> {
       outcome: validateOutcome(parsed.outcome),
       lesson: typeof parsed.lesson === "string" ? parsed.lesson : "",
       goalRelevance: clamp(Number(parsed.goalRelevance) || 0, 0, 1),
-      goalComplete: Boolean(parsed.goalComplete),
     };
   } catch {
     return FALLBACK_RESULT;

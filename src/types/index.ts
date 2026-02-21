@@ -1,5 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
-
 // Organism modes
 export type OrganismMode = "alive" | "dead";
 
@@ -103,21 +101,6 @@ export interface OrganismState {
   genome: Genome;
 }
 
-// Re-export Anthropic's types directly
-export type MessageParam = Anthropic.MessageParam;
-export type ContentBlock = Anthropic.ContentBlock;
-export type ContentBlockParam = Anthropic.ContentBlockParam;
-export type ToolUseBlock = Anthropic.ToolUseBlock;
-export type ToolResultBlockParam = Anthropic.ToolResultBlockParam;
-export type TextBlockParam = Anthropic.TextBlockParam;
-
-// Tool definition — matches Anthropic.Tool
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  input_schema: Anthropic.Tool.InputSchema;
-}
-
 // Task system
 export interface Task {
   id: string;
@@ -145,4 +128,6 @@ export type AgentEvent =
   | { type: "tool_result"; name: string; result: string }
   | { type: "usage"; input: number; output: number; cacheCreation: number; cacheRead: number; cumulative: { input: number; output: number; cacheCreation: number; cacheRead: number; iterations: number } }
   | { type: "error"; message: string }
-  | { type: "state_change"; from: OrganismMode; to: OrganismMode };
+  | { type: "state_change"; from: OrganismMode; to: OrganismMode }
+  | { type: "phase_change"; phase: "thinking" | "executing" | "resolving" | "memorizing" }
+  | { type: "tools_available"; tools: string[] };

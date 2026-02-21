@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { Brain, TokenUsage } from "../brain/index.js";
-import { extractText } from "../brain/util.js";
+import type { LLM, TokenUsage } from "../llm/index.js";
+import { extractText } from "../llm/util.js";
 
 export interface WorkRating {
   score: number;
@@ -27,7 +27,7 @@ Respond with ONLY a JSON object:
 const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
 export class WorkRater {
-  constructor(private brain: Brain) {}
+  constructor(private llm: LLM) {}
 
   async rate(dataDir: string, outputDir: string): Promise<WorkRating> {
     const inputSummary = this.summarizeDirectory(dataDir, 500);
@@ -47,7 +47,7 @@ export class WorkRater {
     ].join("\n");
 
     try {
-      const response = await this.brain.chat({
+      const response = await this.llm.chat({
         model: "claude-haiku-4-5-20251001",
         system: RATING_PROMPT,
         messages: [{ role: "user", content: userMessage }],

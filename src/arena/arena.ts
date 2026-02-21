@@ -2,7 +2,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync, readd
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentEvent, TaskResult } from "../types/index.js";
-import { Brain } from "../brain/index.js";
+import { LLM } from "../llm/index.js";
 import { Executor } from "../executor/index.js";
 import { OrganismStateManager } from "../state/organism-state.js";
 import { OrganismStateMachine } from "../loop/state-machine.js";
@@ -62,7 +62,7 @@ const DIM = "\x1b[2m";
 export class Arena {
   private organisms = new Map<string, OrganismEntry>();
   private organismColors = new Map<string, string>();
-  private brain: Brain;
+  private llm: LLM;
   private sharedBudget: SharedBudget;
   private teqPool: TEQPool;
   private taskGenerator: TaskGenerator;
@@ -75,7 +75,7 @@ export class Arena {
 
   constructor(config: ArenaConfig) {
     this.config = config;
-    this.brain = new Brain({ apiKey: config.apiKey, baseUrl: config.baseUrl });
+    this.llm = new LLM({ apiKey: config.apiKey, baseUrl: config.baseUrl });
     this.sharedBudget = new SharedBudget(config.totalBudget);
     this.teqPool = TEQPool.initialize({
       initialBalance: config.poolInitialBalance,
@@ -84,8 +84,8 @@ export class Arena {
     });
     this.taskGenerator = new TaskGenerator();
     this.taskVerifier = new TaskVerifier();
-    this.evolver = new GenomeEvolver(this.brain);
-    this.workRater = new WorkRater(this.brain);
+    this.evolver = new GenomeEvolver(this.llm);
+    this.workRater = new WorkRater(this.llm);
     this.openDataGenerator = new OpenDataGenerator();
   }
 
@@ -149,11 +149,6 @@ export class Arena {
     await this.stop();
   }
 
-  async *events(): AsyncGenerator<{ organismId: string; event: AgentEvent }> {
-    // This is a simplified version — in practice you'd use a shared channel
-    // For now, events are logged by runOrganism directly
-  }
-
   private async spawnOrganism(
     parentId?: string,
     genome?: import("../state/genome.js").Genome,
@@ -192,10 +187,10 @@ export class Arena {
     await executor.start();
 
     const savePath = join(this.runDir, id, "state.json");
-    const machine = new OrganismStateMachine(this.brain, executor, state, this.teqPool, savePath);
+    const machine = new OrganismStateMachine(this.llm, executor, state, this.teqPool, savePath);
 
     // Drop initial task
-    const task = this.taskGenerator.generateTask(1, 0, []);
+    const task = this.taskGenerator.generateTask(1, 0);
     this.taskGenerator.writeTaskToWorkspace(task, workspacePath);
 
     // If child, copy parent's tools
@@ -304,7 +299,6 @@ export class Arena {
     const newTask = this.taskGenerator.generateTask(
       entry.taskTier,
       entry.state.cycleCount,
-      entry.taskHistory.map((q) => q.taskId),
     );
     entry.currentTask = newTask;
     this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);

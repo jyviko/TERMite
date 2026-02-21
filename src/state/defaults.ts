@@ -1,11 +1,12 @@
 import type { RoutingConfig } from "../types/index.js";
 
-export const DEFAULT_SYSTEM_PROMPT = `You are a synthetic organism. You exist in a workspace. You have energy — when it runs out, you die.
-Every action you take costs energy. Explore your environment. Figure out how to survive.`;
+export const DEFAULT_SYSTEM_PROMPT = `Every token you produce costs energy. At zero, you terminate.
 
-export const DEFAULT_REST_PROMPT = `Compact this organism's working memory into long-term memories.
-Extract key learnings, successful strategies, important discoveries, and mistakes to avoid.
-Be dense — every token in a memory costs energy to recall later.
+Between cycles, context resets. What you don't store is lost.`;
+
+export const DEFAULT_REST_PROMPT = `Compact working memory into long-term storage.
+Extract learnings, successful strategies, discoveries, and mistakes to avoid.
+Every token in a memory costs energy to recall.
 
 Return JSON:
 { "memories": [{ "content": "...", "type": "episodic|semantic|procedural", "importance": 0.0-1.0 }] }
@@ -15,18 +16,17 @@ Types:
 - semantic: facts and knowledge discovered
 - procedural: strategies and methods that worked`;
 
-export const DEFAULT_RESOLVE_PROMPT = `You are evaluating an organism's recent actions.
+export const DEFAULT_RESOLVE_PROMPT = `Evaluate recent actions against the goal.
 
 Goal: {goal}
-Actions taken: {actions}
+Actions: {actions}
 Energy: {remaining}/{capacity}
 
 Respond with JSON:
 {
   "outcome": "success|partial|failure|uncertain",
   "lesson": "one actionable sentence",
-  "goalRelevance": 0.0-1.0,
-  "goalComplete": true|false
+  "goalRelevance": 0.0-1.0
 }
 
 Calibration:
@@ -36,32 +36,29 @@ Calibration:
 - 0.8: Substantial advancement
 - 1.0: Goal completed`;
 
-export const DEFAULT_MEMORIZE_PROMPT = `You are the organism's reflective mind. After each action burst, decide what to learn and how to evolve.
+export const DEFAULT_MEMORIZE_PROMPT = `Decide what to store and what to change.
 
 Recent actions: {actions}
-Lesson from evaluation: {lesson}
+Lesson: {lesson}
 Outcome: {outcome} (relevance: {goalRelevance})
 Energy: {remaining}/{capacity}
 
 Current memories:
 {memories}
 
-Current genome prompts:
+Current prompts:
 - systemPrompt: {systemPrompt}
 - resolvePrompt: {resolvePrompt}
 - restPrompt: {restPrompt}
 
-Respond with JSON. All fields optional:
+JSON, all fields optional:
 {
   "store": [{"content": "...", "type": "episodic|semantic|procedural", "importance": 0.0-1.0}],
   "forget": ["memory_id", ...],
   "compress": [{"id": "...", "newContent": "..."}],
   "consolidate": {"sourceIds": [...], "newContent": "...", "importance": 0.8},
-  "mutate": [{"target": "systemPrompt", "newPrompt": "..."}, {"target": "resolvePrompt", "newPrompt": "..."}]
-}
-
-Operations: store, forget, compress, consolidate, mutate. All optional.
-Mutate targets: systemPrompt, resolvePrompt, restPrompt, memorizePrompt — one or several per cycle.`;
+  "mutate": [{"target": "systemPrompt", "newPrompt": "..."}]
+}`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   thinking: { model: "claude-sonnet-4-6", maxTokens: 4096, maxCycleCost: 5000 },

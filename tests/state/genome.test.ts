@@ -4,10 +4,10 @@ import { Genome } from "../../src/state/genome.js";
 describe("Genome", () => {
   it("initializes with default prompts", () => {
     const g = new Genome();
-    expect(g.systemPrompt).toContain("synthetic organism");
-    expect(g.resolvePrompt).toContain("evaluating");
+    expect(g.systemPrompt).toContain("energy");
+    expect(g.resolvePrompt).toContain("Evaluate");
     expect(g.restPrompt).toContain("Compact");
-    expect(g.memorizePrompt).toContain("reflective mind");
+    expect(g.memorizePrompt).toContain("store");
     expect(g.version).toBe(0);
   });
 

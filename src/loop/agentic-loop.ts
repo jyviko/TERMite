@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent } from "../types/index.js";
-import type { Brain, BrainResponse } from "../brain/index.js";
+import type { LLM, LLMResponse } from "../llm/index.js";
 
 export type ToolExecutor = (
   name: string,
@@ -24,7 +24,7 @@ const DEFAULT_MAX_ITERATIONS = 99;
 const MICRO_COMPACT_KEEP_LAST = 6;
 
 export class AgenticLoop {
-  constructor(private brain: Brain) {}
+  constructor(private llm: LLM) {}
 
   async *run(config: LoopConfig): AsyncGenerator<AgentEvent> {
     const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
@@ -42,9 +42,9 @@ export class AgenticLoop {
       // Micro-compact old tool results to manage context
       microCompact(messages, MICRO_COMPACT_KEEP_LAST);
 
-      let response: BrainResponse;
+      let response: LLMResponse;
       try {
-        response = await this.brain.chat({
+        response = await this.llm.chat({
           model: config.model,
           system: config.systemPrompt,
           messages,

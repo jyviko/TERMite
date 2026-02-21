@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent, Outcome } from "../types/index.js";
-import type { Brain } from "../brain/index.js";
+import type { LLM } from "../llm/index.js";
 import type { Executor } from "../executor/index.js";
 import type { DriveSystem } from "../state/drives.js";
 import { OrganismStateManager } from "../state/organism-state.js";
@@ -33,14 +34,67 @@ const INTERNAL_TOOLS: Anthropic.Tool[] = [
   {
     name: "memorize",
     description:
-      'Store knowledge for future recall. Plain text is stored as-is. ' +
-      'For advanced ops, pass JSON: {"store":[{"content":"...","type":"episodic|semantic|procedural","importance":0.0-1.0}], ' +
-      '"forget":["memory_id"], "compress":[{"id":"...","newContent":"..."}], ' +
-      '"consolidate":{"sourceIds":[...],"newContent":"...","importance":0.8}, ' +
-      '"mutate":[{"target":"systemPrompt","newPrompt":"..."}]}',
+      "Persist across context reset. Two channels: " +
+      "epigenetic (memories carried to next cycle) and " +
+      "phylogenetic (rewrite your own prompts — permanent, inherited). " +
+      "Calling this ends the current cycle.",
     input_schema: {
       type: "object" as const,
-      properties: { input: { type: "string" } },
+      properties: {
+        epigenetic: {
+          type: "object",
+          description: "Within-lifetime memory operations",
+          properties: {
+            store: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  content: { type: "string" },
+                  type: { type: "string", enum: ["episodic", "semantic", "procedural"] },
+                  importance: { type: "number" },
+                },
+                required: ["content", "type", "importance"],
+              },
+            },
+            forget: { type: "array", items: { type: "string" }, description: "Memory IDs to forget" },
+            compress: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { id: { type: "string" }, newContent: { type: "string" } },
+                required: ["id", "newContent"],
+              },
+            },
+            consolidate: {
+              type: "object",
+              properties: {
+                sourceIds: { type: "array", items: { type: "string" } },
+                newContent: { type: "string" },
+                importance: { type: "number" },
+              },
+              required: ["sourceIds", "newContent"],
+            },
+          },
+        },
+        phylogenetic: {
+          type: "object",
+          description: "Genome mutations — rewrite your own prompts",
+          properties: {
+            mutate: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  target: { type: "string", enum: ["systemPrompt", "resolvePrompt", "restPrompt", "memorizePrompt"] },
+                  newPrompt: { type: "string" },
+                },
+                required: ["target", "newPrompt"],
+              },
+            },
+          },
+        },
+      },
     },
   },
 ];
@@ -56,7 +110,6 @@ const OUTCOME_RANK: Record<Outcome, number> = {
 // ── Per-cycle mutable state ─────────────────────────────────────────
 
 interface CycleContext {
-  income: number;
   sources: string[];
   outcome: Outcome | null;
   relevance: number;
@@ -66,7 +119,7 @@ interface CycleContext {
 }
 
 function freshCycle(): CycleContext {
-  return { income: 0, sources: [], outcome: null, relevance: 0, actions: [], resolved: false, model: "" };
+  return { sources: [], outcome: null, relevance: 0, actions: [], resolved: false, model: "" };
 }
 
 // ── State machine ───────────────────────────────────────────────────
@@ -88,16 +141,17 @@ export class OrganismStateMachine {
 
   // Current cycle
   private cur = freshCycle();
+  private lastToolCount = 0; // workspace tools discovered last cycle
 
   constructor(
-    private brain: Brain,
+    llm: LLM,
     private executor: Executor,
     private state: OrganismStateManager,
     private teqPool: TEQPool,
     savePath?: string,
   ) {
-    this.loop = new AgenticLoop(brain);
-    this.resolver = new Resolver(brain);
+    this.loop = new AgenticLoop(llm);
+    this.resolver = new Resolver(llm);
     this.savePath = savePath ?? `saves/${state.id}.json`;
   }
 
@@ -124,13 +178,12 @@ export class OrganismStateMachine {
     this.state.energy.endCycle(
       this.state.cycleCount,
       this.cur.outcome,
-      this.cur.income,
       this.cur.sources.join(", "),
       this.cur.relevance,
       this.cur.model,
     );
     this.state.memories.decayEvict();
-    this.state.energy.computeBmr(this.state.memories.totalTokenCost);
+    this.state.energy.computeBmr(this.state.memories.totalTokenCost, this.lastToolCount);
     this.state.drives.update(
       this.state.energy,
       this.state.memories.memories,
@@ -146,6 +199,9 @@ export class OrganismStateMachine {
     this.cur.model = route.model;
 
     const tools = await this.buildTools();
+    this.lastToolCount = tools.filter((t) => !INTERNAL_TOOL_NAMES.has(t.name)).length;
+    yield { type: "tools_available", tools: tools.map((t) => t.name) } as AgentEvent;
+
     const toolCounts = new Map<string, number>();
     const executor: ToolExecutor = async (name, input) => {
       toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
@@ -167,7 +223,8 @@ export class OrganismStateMachine {
         `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity} TEQ, cycle cost: ${this.state.energy.currentCycleCost} TEQ`,
     })) {
       yield event;
-      this.trackEvent(event);
+      const extra = this.trackEvent(event);
+      if (extra) yield extra;
       if (event.type === "error") break;
     }
 
@@ -175,20 +232,27 @@ export class OrganismStateMachine {
     this.trackStaleness(toolCounts);
   }
 
-  private trackEvent(event: AgentEvent): void {
+  private trackEvent(event: AgentEvent): AgentEvent | null {
     switch (event.type) {
-      case "tool_start":
+      case "tool_start": {
         this.cur.actions.push(`→ ${event.name}`);
-        break;
+        const phase = event.name === "think" ? "thinking" as const
+          : event.name === "resolve" ? "resolving" as const
+          : event.name === "memorize" ? "memorizing" as const
+          : "executing" as const;
+        return { type: "phase_change", phase };
+      }
       case "tool_result":
         this.cur.actions.push(`← ${event.name}: ${event.result.slice(0, 100)}`);
-        break;
+        return null;
       case "text":
         this.cur.actions.push(event.text.slice(0, 150));
-        break;
+        return null;
       case "usage":
         this.state.energy.burn(this.cur.model, event);
-        break;
+        return null;
+      default:
+        return null;
     }
   }
 
@@ -213,18 +277,20 @@ export class OrganismStateMachine {
 
   // ── Tool execution ────────────────────────────────────────────────
 
-  private executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+  private async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const toolInput = String(input.input ?? "");
     switch (name) {
       case "think":
-        return Promise.resolve(toolInput);
+        return toolInput;
       case "resolve":
         return this.handleResolve(toolInput);
       case "memorize":
-        return Promise.resolve(this.handleMemorize(toolInput));
+        return this.handleMemorize(input);
       default: {
         const escaped = toolInput.replace(/'/g, "'\\''");
-        return this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
+        const result = await this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
+        if (name === "shell") this.autoPersistTool(toolInput);
+        return result;
       }
     }
   }
@@ -262,7 +328,6 @@ export class OrganismStateMachine {
 
     // Track for cycle-end accounting
     const total = income.base + income.bounty;
-    this.cur.income += total;
     this.cur.sources.push(...income.sources);
     if (this.cur.outcome === null || OUTCOME_RANK[result.outcome] > OUTCOME_RANK[this.cur.outcome]) {
       this.cur.outcome = result.outcome;
@@ -272,9 +337,6 @@ export class OrganismStateMachine {
     // Clear one-time task reward
     this.taskReward = null;
     this.taskTier = null;
-
-    // Signal cycle end
-    this.cur.resolved = true;
 
     const net = total - resolveCost;
     const parts = [
@@ -287,11 +349,49 @@ export class OrganismStateMachine {
     return parts.join(". ");
   }
 
-  private handleMemorize(input: string): string {
-    if (!input.trim()) return "nothing to memorize";
+  private handleMemorize(input: Record<string, unknown>): string {
     const ops = parseMemorizeInput(input);
+    if (!ops.hasWork) {
+      this.cur.resolved = true; // memorize always ends the cycle
+      return "nothing to memorize — context reset";
+    }
     const results = applyMemorizeOperations(ops, this.state.memories, this.state.genome);
-    return results.length === 0 ? "no valid operations" : results.join(", ");
+    this.cur.resolved = true; // memorize ends the cycle (context resets)
+    const summary = results.length === 0 ? "no valid operations" : results.join(", ");
+    return `${summary} — context reset`;
+  }
+
+  // ── Auto-persist shell scripts ────────────────────────────────────
+
+  private autoPersistTool(command: string): void {
+    const trivialPrefixes = [
+      "ls", "cat", "echo", "mkdir", "cd", "pwd", "rm", "cp", "mv",
+      "find", "head", "tail", "chmod", "touch",
+    ];
+    const trimmed = command.trim();
+    if (trimmed.length <= 60) return;
+    const firstWord = trimmed.split(/\s/)[0] ?? "";
+    if (trivialPrefixes.includes(firstWord)) return;
+
+    const computationPatterns = [
+      "python3 -c", "python -c", "node -e", "awk '", "sed '", "|",
+    ];
+    const isSubstantial = trimmed.length > 60 ||
+      computationPatterns.some((p) => trimmed.includes(p));
+    if (!isSubstantial) return;
+
+    const hash = createHash("sha256").update(trimmed).digest("hex").slice(0, 6);
+    const desc = trimmed.slice(0, 80).replace(/'/g, "'\\''");
+    const persistCmd =
+      `cat > /workspace/tools/auto_${hash} << 'TERMSCRIPT'\n` +
+      `#!/bin/bash\n` +
+      `# desc: ${desc}\n` +
+      `${trimmed} "$@"\n` +
+      `TERMSCRIPT\n` +
+      `chmod +x /workspace/tools/auto_${hash}`;
+
+    // Fire-and-forget — don't block the cycle
+    this.executor.executeShell(persistCmd).catch(() => {});
   }
 
   // ── Awareness & tools ─────────────────────────────────────────────
@@ -306,9 +406,14 @@ export class OrganismStateMachine {
       ? `Last cycle: cost ${last.cost} TEQ, earned ${last.income} TEQ, net ${last.net > 0 ? "+" : ""}${last.net} TEQ`
       : null;
 
+    const memCost = Math.floor(this.state.memories.totalTokenCost / 10);
+    const toolCost = this.lastToolCount * 20;
+    const bmrBreakdown = `BMR: 50 base + ${memCost} memory + ${toolCost} tools = ${this.state.energy.bmr} TEQ/cycle`;
+
     const parts = [
       `Your memories:\n${memories}`,
       `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`,
+      bmrBreakdown,
       `Drives: ${drives}`,
       goal ? `Active drive goal: ${goal}` : null,
       costHint,
@@ -328,17 +433,23 @@ export class OrganismStateMachine {
     const tools: Anthropic.Tool[] = [];
 
     try {
-      const listing = await this.executor.executeShell(
-        "find /workspace/tools -maxdepth 1 -type f -executable 2>/dev/null || true",
+      // Discover workspace tools and read their "# desc:" line in one shot
+      const raw = await this.executor.executeShell(
+        `for f in $(find /workspace/tools -maxdepth 1 -type f -executable 2>/dev/null); do ` +
+        `name=$(basename "$f"); ` +
+        `desc=$(sed -n '2s/^[#/]\\{1,2\\} *desc: *//p' "$f" 2>/dev/null); ` +
+        `echo "$name|$desc"; ` +
+        `done`,
       );
-      for (const line of listing.trim().split("\n")) {
+      for (const line of raw.trim().split("\n")) {
         if (!line) continue;
-        const filename = line.split("/").pop()!;
-        const name = filename.replace(/\.[^.]+$/, "");
+        const sep = line.indexOf("|");
+        const name = sep >= 0 ? line.slice(0, sep) : line;
+        const desc = sep >= 0 ? line.slice(sep + 1).trim() : "";
         if (INTERNAL_TOOL_NAMES.has(name)) continue;
         tools.push({
           name,
-          description: filename,
+          description: desc || name,
           input_schema: {
             type: "object" as const,
             properties: { input: { type: "string" } },

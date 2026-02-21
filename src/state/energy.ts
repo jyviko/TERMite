@@ -136,8 +136,8 @@ export class EnergyLedger {
     return added;
   }
 
-  computeBmr(memoryTokens: number): number {
-    this.bmr = 50 + Math.floor(memoryTokens / 10);
+  computeBmr(memoryTokens: number, toolCount = 0): number {
+    this.bmr = 50 + Math.floor(memoryTokens / 10) + toolCount * 20;
     return this.bmr;
   }
 
@@ -156,7 +156,7 @@ export class EnergyLedger {
     if (this.reserves < 0) this.reserves = 0;
   }
 
-  endCycle(cycle: number, outcome: Outcome | null, _income: number, sources: string, goalRelevance = 0, model?: string): void {
+  endCycle(cycle: number, outcome: Outcome | null, sources: string, goalRelevance = 0, model?: string): void {
     // Use actual credited income (from feed/feedFromPool), not requested amount
     const actualIncome = this.cycleIncome;
     this.cycleHistory.push({

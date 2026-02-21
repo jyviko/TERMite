@@ -8,7 +8,7 @@ describe("TaskGenerator", () => {
   const gen = new TaskGenerator();
 
   it("generates a tier 1 task", () => {
-    const task = gen.generateTask(1, 0, []);
+    const task = gen.generateTask(1, 0);
     expect(task.tier).toBe(1);
     expect(task.id).toMatch(/^task-/);
     expect(task.reward).toBeGreaterThan(0);
@@ -17,19 +17,19 @@ describe("TaskGenerator", () => {
 
   it("generates tasks at different tiers", () => {
     for (const tier of [1, 2, 3, 4, 5]) {
-      const task = gen.generateTask(tier, 0, []);
+      const task = gen.generateTask(tier, 0);
       expect(task.tier).toBe(tier);
     }
   });
 
   it("clamps tier to 5 maximum", () => {
-    const task = gen.generateTask(99, 0, []);
+    const task = gen.generateTask(99, 0);
     expect(task.tier).toBeLessThanOrEqual(5);
     expect(task.tier).toBeGreaterThanOrEqual(1);
   });
 
   it("clamps tier to 1 minimum", () => {
-    const task = gen.generateTask(-5, 0, []);
+    const task = gen.generateTask(-5, 0);
     expect(task.tier).toBe(1);
   });
 
@@ -37,7 +37,7 @@ describe("TaskGenerator", () => {
     const workspace = join(tmpdir(), `termite-test-${Date.now()}`);
     mkdirSync(workspace, { recursive: true });
 
-    const task = gen.generateTask(1, 0, []);
+    const task = gen.generateTask(1, 0);
     gen.writeTaskToWorkspace(task, workspace);
 
     expect(existsSync(join(workspace, "tools", "check"))).toBe(true);
@@ -50,9 +50,9 @@ describe("TaskGenerator", () => {
   });
 
   it("rewards scale with tier", () => {
-    const t1 = gen.generateTask(1, 0, []);
-    const t3 = gen.generateTask(3, 0, []);
-    const t5 = gen.generateTask(5, 0, []);
+    const t1 = gen.generateTask(1, 0);
+    const t3 = gen.generateTask(3, 0);
+    const t5 = gen.generateTask(5, 0);
     expect(t3.reward).toBeGreaterThan(t1.reward);
     expect(t5.reward).toBeGreaterThan(t3.reward);
   });
@@ -80,7 +80,7 @@ describe("TaskGenerator", () => {
     // Tier 2 task with data should produce large files
     // Run multiple times to cover different task types
     for (let i = 0; i < 3; i++) {
-      const task = gen.generateTask(2, 0, []);
+      const task = gen.generateTask(2, 0);
       gen.writeTaskToWorkspace(task, workspace);
 
       if (task.dataFiles && task.dataFiles.length > 0) {
