@@ -22,7 +22,7 @@ export class Config {
     this.promptHistory = data?.promptHistory ?? [];
   }
 
-  mutate(phase: string, newPrompt: string): void {
+  rewrite(phase: string, newPrompt: string): void {
     const current = this.getPrompt(phase);
     if (!current || !newPrompt.trim()) return;
 

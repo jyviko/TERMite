@@ -21,7 +21,7 @@ interface ConsolidateOp {
   importance?: number;
 }
 
-interface EpigeneticOps {
+interface SessionOps {
   store?: StoreOp[];
   forget?: string[];
   compress?: CompressOp[];
@@ -42,7 +42,7 @@ interface PersistentOps {
 // ── Parsed result ───────────────────────────────────────────────────
 
 export interface ParsedMemorizeInput {
-  session: EpigeneticOps;
+  session: SessionOps;
   persistent: PersistentOps;
   hasWork: boolean;
 }
@@ -53,12 +53,12 @@ export interface ParsedMemorizeInput {
  * flat JSON in `input` string field.
  */
 export function parseMemorizeInput(raw: Record<string, unknown>): ParsedMemorizeInput {
-  const session: EpigeneticOps = {};
+  const session: SessionOps = {};
   const persistent: PersistentOps = {};
 
   // Structured input — session/persistent fields
   if (raw.session || raw.persistent) {
-    const s = raw.session as EpigeneticOps | undefined;
+    const s = raw.session as SessionOps | undefined;
     if (s) {
       if (s.store) session.store = s.store;
       if (s.forget) session.forget = s.forget;
@@ -153,7 +153,7 @@ export function applyMemorizeOperations(
   if (ops.persistent.rewrite) {
     for (const r of ops.persistent.rewrite) {
       if (r.target && r.newPrompt?.trim()) {
-        config.mutate(r.target, r.newPrompt);
+        config.rewrite(r.target, r.newPrompt);
         results.push(`rewrote ${r.target}`);
       }
     }

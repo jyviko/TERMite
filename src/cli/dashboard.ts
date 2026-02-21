@@ -204,12 +204,12 @@ function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: num
   safe(buf, r, c0, "─".repeat(colW - 1), CYAN);
   r++;
 
-  // Row 2: alive / dead
-  const alive = Boolean(g(org, "alive"));
-  if (alive) {
-    safe(buf, r, c0, " \u25cf ALIVE", `${GREEN}${BOLD}`);
+  // Row 2: active / stopped
+  const active = Boolean(g(org, "active"));
+  if (active) {
+    safe(buf, r, c0, " \u25cf ACTIVE", `${GREEN}${BOLD}`);
   } else {
-    const cause = gs(org, "causeOfDeath", "cause_of_death") || "?";
+    const cause = gs(org, "stopReason", "stop_reason") || "?";
     safe(buf, r, c0, ` \u2717 ${cause}`.slice(0, colW - 1), RED);
   }
   r++;
@@ -231,8 +231,8 @@ function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: num
   safe(buf, r, c0 + 17, `${fmt(res)}`.slice(0, colW - 18), ec);
   r++;
 
-  // Row 5: capacity + BMR
-  safe(buf, r, c0, ` Cap=${fmt(cap)} BMR=${gn(e, "bmr")}`);
+  // Row 5: capacity + base cost
+  safe(buf, r, c0, ` Cap=${fmt(cap)} Base=${gn(e, "baseCost")}`);
   r++;
 
   // Row 6-7: last cycle cost/income/net/yield
@@ -320,7 +320,7 @@ function render(): string {
   // Global stats
   const totalSpent = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as OrgData, "spent"), 0);
   const totalEarned = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as OrgData, "earned"), 0);
-  const nAlive = orgs.filter((o) => Boolean(g(o, "alive"))).length;
+  const nActive = orgs.filter((o) => Boolean(g(o, "active"))).length;
 
   // Goal board
   const goals = loadGoalBoard();
@@ -338,7 +338,7 @@ function render(): string {
   safe(buf, 0, 0, " TERM ARENA ", `${BOLD}${CYAN}`);
   safe(buf, 0, 13, `Spent:${fmt(totalSpent)}  Earned:${fmt(totalEarned)}  Net:${fmtSigned(totalEarned - totalSpent)}`);
   const timeStr = new Date().toTimeString().slice(0, 8);
-  safe(buf, 0, width - 20, `${nAlive}/${orgs.length} alive  ${timeStr}`, CYAN);
+  safe(buf, 0, width - 20, `${nActive}/${orgs.length} active  ${timeStr}`, CYAN);
 
   // Row 1: TEQ pool status
   if (pool) {

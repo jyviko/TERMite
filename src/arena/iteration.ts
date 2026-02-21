@@ -3,11 +3,11 @@ import type { LLM } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
 import { Config } from "../state/config.js";
 
-export class ConfigEvolver {
+export class ConfigIterator {
   constructor(private llm: LLM) {}
 
-  async evolve(params: {
-    parentConfig: Config;
+  async iterate(params: {
+    sourceConfig: Config;
     memories: Memory[];
     taskHistory: TaskResult[];
     generation: number;
@@ -26,7 +26,7 @@ export class ConfigEvolver {
     const prompt = `You are iterating an agent's configuration for the next version.
 
 Current config (version ${params.generation}):
-${params.parentConfig.systemPrompt}
+${params.sourceConfig.systemPrompt}
 
 Source agent's key memories (sorted by importance):
 ${formattedMemories || "(none)"}
@@ -44,7 +44,7 @@ Return JSON: { "systemPrompt": "..." }`;
 
     try {
       const response = await this.llm.chat({
-        model: params.parentConfig.routing.thinking.model,
+        model: params.sourceConfig.routing.thinking.model,
         system: prompt,
         messages: [{ role: "user", content: "Iterate the configuration." }],
         maxTokens: 2048,
@@ -52,29 +52,29 @@ Return JSON: { "systemPrompt": "..." }`;
 
       const text = extractText(response.content);
 
-      const parsed = parseEvolveResponse(text);
+      const parsed = parseIterateResponse(text);
 
-      const child = new Config({
-        ...params.parentConfig.toJSON(),
-        systemPrompt: parsed.systemPrompt ?? params.parentConfig.systemPrompt,
-        version: params.parentConfig.version + 1,
+      const next = new Config({
+        ...params.sourceConfig.toJSON(),
+        systemPrompt: parsed.systemPrompt ?? params.sourceConfig.systemPrompt,
+        version: params.sourceConfig.version + 1,
         promptHistory: [],
       });
 
-      applyRewrites(child);
+      applyRewrites(next);
 
-      return child;
+      return next;
     } catch {
       return new Config({
-        ...params.parentConfig.toJSON(),
-        version: params.parentConfig.version + 1,
+        ...params.sourceConfig.toJSON(),
+        version: params.sourceConfig.version + 1,
         promptHistory: [],
       });
     }
   }
 }
 
-function parseEvolveResponse(text: string): { systemPrompt?: string } {
+function parseIterateResponse(text: string): { systemPrompt?: string } {
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return {};

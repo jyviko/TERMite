@@ -1,0 +1,25 @@
+#!/usr/bin/env node
+// description: leaderboard - Show arena rankings. No input needed.
+const fs = require("fs");
+try {
+  const data = JSON.parse(fs.readFileSync("/shared/_leaderboard.json", "utf-8"));
+  const lines = ["RANKINGS (updated " + data.updated + ")", ""];
+  lines.push("Rank  ID              Active  Energy  Tier  Cycles  Config  Model  Passes");
+  lines.push("----  --------------  ------  ------  ----  ------  ------  -----  ------");
+  data.agents.forEach(function(o, i) {
+    lines.push([
+      String(i + 1).padStart(4),
+      o.id.padEnd(14),
+      (o.active ? "YES" : "NO").padEnd(6),
+      (o.energyPct + "%").padStart(6),
+      String(o.taskTier).padStart(4),
+      String(o.cycleCount).padStart(6),
+      ("v" + o.configVersion).padStart(6),
+      ((o.model || "").split("-")[1] || "?").slice(0, 3).padStart(5),
+      String(o.consecutivePasses).padStart(6),
+    ].join("  "));
+  });
+  console.log(lines.join("\n"));
+} catch (e) {
+  console.log("Rankings not available yet: " + e.message);
+}

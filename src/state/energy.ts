@@ -83,7 +83,7 @@ export class EnergyLedger {
   capacity: number;
   earned: number;
   earnedFromPrizes: number;
-  bmr: number;
+  baseCost: number;
   cycleHistory: CycleRecord[];
 
   private cycleCost = 0;
@@ -100,7 +100,7 @@ export class EnergyLedger {
     this.capacity = data.capacity ?? data.budget;
     this.earned = data.earned ?? 0;
     this.earnedFromPrizes = data.earnedFromPrizes ?? 0;
-    this.bmr = data.bmr ?? 50;
+    this.baseCost = data.baseCost ?? 50;
     this.cycleHistory = data.cycleHistory ?? [];
   }
 
@@ -118,7 +118,7 @@ export class EnergyLedger {
     this.cycleCacheRead += usage.cacheRead;
   }
 
-  feed(tokens: number): number {
+  credit(tokens: number): number {
     this.reserves += tokens;
     this.earned += tokens;
     this.cycleIncome += tokens;
@@ -129,23 +129,23 @@ export class EnergyLedger {
     return tokens;
   }
 
-  /** Feed TEQs sourced from the shared pool. Tracks pool-sourced income separately. */
-  feedFromPool(tokens: number): number {
-    const added = this.feed(tokens);
+  /** Credit TEQs sourced from the shared pool. Tracks pool-sourced income separately. */
+  creditFromPool(tokens: number): number {
+    const added = this.credit(tokens);
     this.earnedFromPrizes += added;
     return added;
   }
 
-  computeBmr(memoryTokens: number, toolCount = 0): number {
-    this.bmr = 50 + Math.floor(memoryTokens / 10) + toolCount * 20;
-    return this.bmr;
+  computeBaseCost(memoryTokens: number, toolCount = 0): number {
+    this.baseCost = 50 + Math.floor(memoryTokens / 10) + toolCount * 20;
+    return this.baseCost;
   }
 
-  burnBmr(): void {
-    // BMR is a flat metabolic cost, not an API call — deduct directly
-    this.reserves -= this.bmr;
-    this.spent += this.bmr;
-    this.cycleCost += this.bmr;
+  burnBaseCost(): void {
+    // Base cost is a flat overhead, not an API call — deduct directly
+    this.reserves -= this.baseCost;
+    this.spent += this.baseCost;
+    this.cycleCost += this.baseCost;
     if (this.reserves < 0) this.reserves = 0;
   }
 
@@ -157,7 +157,7 @@ export class EnergyLedger {
   }
 
   endCycle(cycle: number, outcome: Outcome | null, sources: string, goalRelevance = 0, model?: string): void {
-    // Use actual credited income (from feed/feedFromPool), not requested amount
+    // Use actual credited income (from credit/creditFromPool), not requested amount
     const actualIncome = this.cycleIncome;
     this.cycleHistory.push({
       cycle,
@@ -195,7 +195,7 @@ export class EnergyLedger {
     return this.budget - this.spent;
   }
 
-  get alive(): boolean {
+  get active(): boolean {
     return this.reserves > 0 && this.spent < this.budget;
   }
 
@@ -215,7 +215,7 @@ export class EnergyLedger {
       capacity: this.capacity,
       earned: this.earned,
       earnedFromPrizes: this.earnedFromPrizes,
-      bmr: this.bmr,
+      baseCost: this.baseCost,
       cycleHistory: this.cycleHistory,
     };
   }

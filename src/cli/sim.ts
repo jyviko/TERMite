@@ -36,7 +36,7 @@ class MockExecutor {
   async executeShell(command: string): Promise<string> {
     // Tool discovery
     if (command.includes("find /workspace/tools")) {
-      return "/workspace/tools/shell\n/workspace/tools/check";
+      return "shell|shell - Run a shell command\ncheck|check - Validate task output";
     }
     // Tool execution
     if (command.startsWith("/workspace/tools/shell")) {
@@ -145,7 +145,7 @@ async function main() {
     `saves/${state.id}-sim.json`,
   );
 
-  console.log(`Agent ${state.id} born\n`);
+  console.log(`Agent ${state.id} started\n`);
 
   let cycles = 0;
   for await (const event of machine.run()) {
@@ -160,12 +160,12 @@ async function main() {
   }
 
   console.log(`\n=== FINAL STATE ===`);
-  console.log(`Alive: ${state.alive}`);
+  console.log(`Active: ${state.active}`);
   console.log(`Energy: ${state.energy.remaining}/${state.energy.capacity}`);
   console.log(`Cycles: ${state.cycleCount}`);
   console.log(`Memories: ${state.memories.memories.length}`);
   console.log(`Config version: ${state.config.version}`);
-  if (state.causeOfDeath) console.log(`Cause of death: ${state.causeOfDeath}`);
+  if (state.stopReason) console.log(`Stop reason: ${state.stopReason}`);
 }
 
 function logEvent(id: string, mode: string, event: AgentEvent): void {

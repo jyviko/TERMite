@@ -1,86 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type { Task } from "../types/index.js";
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
-// ── Peer visibility tools ────────────────────────────────────────────
-
-const LEADERBOARD_TOOL = `#!/usr/bin/env node
-// desc: Show rankings. No input needed.
-const fs = require("fs");
-try {
-  const data = JSON.parse(fs.readFileSync("/shared/_leaderboard.json", "utf-8"));
-  const lines = ["RANKINGS (updated " + data.updated + ")", ""];
-  lines.push("Rank  ID              Active  Energy  Tier  Cycles  Config  Model  Passes");
-  lines.push("----  --------------  ------  ------  ----  ------  ------  -----  ------");
-  data.agents.forEach(function(o, i) {
-    lines.push([
-      String(i + 1).padStart(4),
-      o.id.padEnd(14),
-      (o.active ? "YES" : "NO").padEnd(6),
-      (o.energyPct + "%").padStart(6),
-      String(o.taskTier).padStart(4),
-      String(o.cycleCount).padStart(6),
-      ("v" + o.configVersion).padStart(6),
-      ((o.model || "").split("-")[1] || "?").slice(0, 3).padStart(5),
-      String(o.consecutivePasses).padStart(6),
-    ].join("  "));
-  });
-  console.log(lines.join("\\n"));
-} catch (e) {
-  console.log("Rankings not available yet: " + e.message);
-}
-`;
-
-const PEER_TOOLS_TOOL = `#!/usr/bin/env python3
-# desc: Browse other agents' custom tools. No args = list peers, <id> = see tools, <id>/<tool> = read source.
-import json, sys
-
-try:
-    with open("/shared/_peer_tools.json") as f:
-        data = json.load(f)
-except Exception as e:
-    print(f"Peer tools not available: {e}")
-    sys.exit(0)
-
-arg = sys.argv[1].strip() if len(sys.argv) > 1 else ""
-agents = data.get("agents", {})
-
-if not arg:
-    print(f"PEER TOOLS (updated {data.get('updated', '?')})")
-    print()
-    for agent_id, info in sorted(agents.items()):
-        status = "ACTIVE" if info.get("active") else "STOPPED"
-        tools = list(info.get("tools", {}).keys())
-        tool_str = ", ".join(tools) if tools else "(no custom tools)"
-        print(f"  {agent_id}  [{status}]  {tool_str}")
-    print()
-    print("Usage: peer_tools <id> to see tool source code")
-    print("       peer_tools <id>/<tool_name> to see a specific tool")
-elif "/" in arg:
-    agent_id, tool_name = arg.split("/", 1)
-    agent = agents.get(agent_id, {})
-    tools = agent.get("tools", {})
-    if tool_name in tools:
-        print(f"=== {agent_id}/{tool_name} ===")
-        print(tools[tool_name])
-    else:
-        available = list(tools.keys())
-        print(f"Tool '{tool_name}' not found in {agent_id}. Available: {available}")
-else:
-    agent = agents.get(arg, {})
-    if not agent:
-        print(f"Agent '{arg}' not found. Available: {list(agents.keys())}")
-    else:
-        tools = agent.get("tools", {})
-        if not tools:
-            print(f"{arg} has no custom tools yet.")
-        else:
-            for name, source in tools.items():
-                print(f"=== {arg}/{name} ===")
-                print(source)
-                print()
-`;
+// Default tools live in <project-root>/tools/ as editable, committable files.
+const DEFAULT_TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../tools");
 
 
 interface TaskTemplate {
@@ -594,11 +519,12 @@ export class TaskGenerator {
     mkdirSync(workDir, { recursive: true });
     mkdirSync(toolsDir, { recursive: true });
 
-    // Seed tools — agent discovers everything through these
+    // Seed default tools from project tools/ directory
     if (!existsSync(join(toolsDir, "shell"))) {
-      writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\n# desc: Run a shell command. Input: the command string. Non-trivial commands are saved as reusable tools.\neval "$*"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "leaderboard"), LEADERBOARD_TOOL, { mode: 0o755 });
-      writeFileSync(join(toolsDir, "peer_tools"), PEER_TOOLS_TOOL, { mode: 0o755 });
+      for (const name of readdirSync(DEFAULT_TOOLS_DIR)) {
+        const src = readFileSync(join(DEFAULT_TOOLS_DIR, name));
+        writeFileSync(join(toolsDir, name), src, { mode: 0o755 });
+      }
     }
 
     // Find the template and write check tool + data
@@ -606,10 +532,10 @@ export class TaskGenerator {
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
 
-    // check IS the verification script — inject desc line so agent knows what it does
+    // check IS the verification script — inject description line so agent knows what it does
     const checkScript = template.verifyScript.startsWith("#!/")
-      ? template.verifyScript.replace(/\n/, "\n# desc: Validate output. No args. Returns PASS or FAIL.\n")
-      : `#!/bin/bash\n# desc: Validate output. No args. Returns PASS or FAIL.\n${template.verifyScript}`;
+      ? template.verifyScript.replace(/\n/, "\n# description: check - Validate task output. No args. Returns PASS or FAIL.\n")
+      : `#!/bin/bash\n# description: check - Validate task output. No args. Returns PASS or FAIL.\n${template.verifyScript}`;
     writeFileSync(join(toolsDir, "check"), checkScript, {
       mode: 0o755,
       encoding: "utf-8",

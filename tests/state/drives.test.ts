@@ -58,13 +58,13 @@ describe("DriveSystem", () => {
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
     energy.burn(h, u);
-    energy.feed(500);
+    energy.credit(500);
     energy.endCycle(0, "success", "");
     energy.burn(h, u);
-    energy.feed(500);
+    energy.credit(500);
     energy.endCycle(1, "success", "");
     energy.burn(h, u);
-    energy.feed(500);
+    energy.credit(500);
     energy.endCycle(2, "success", "");
 
     ds.update(energy, [], 3);

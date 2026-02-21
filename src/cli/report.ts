@@ -127,8 +127,8 @@ const columns: Column[] = [
     header: "Status",
     width: 18,
     align: "left",
-    value: (o) => (o.alive ? "ALIVE" : `DEAD (${o.causeOfDeath ?? "?"})`),
-    color: (o) => (o.alive ? GREEN : RED),
+    value: (o) => (o.active ? "ACTIVE" : `STOPPED (${o.stopReason ?? "?"})`),
+    color: (o) => (o.active ? GREEN : RED),
   },
   {
     header: "Gen",
@@ -187,10 +187,10 @@ const columns: Column[] = [
     color: (o) => colorize(o.energy.earned - o.energy.spent),
   },
   {
-    header: "BMR",
+    header: "Base",
     width: 5,
     align: "right",
-    value: (o) => String(o.energy.bmr),
+    value: (o) => String(o.energy.baseCost),
   },
   {
     header: "Mems",
@@ -199,7 +199,7 @@ const columns: Column[] = [
     value: (o) => String(o.memories.length),
   },
   {
-    header: "Drives(O/M/G/C)",
+    header: "Drives(E/A/G/C)",
     width: 17,
     align: "left",
     value: (o) => {
@@ -333,7 +333,7 @@ function formatAge(ts: number): string {
 function renderAggregates(agents: AgentState[]): string[] {
   const lines: string[] = [];
   const n = agents.length;
-  const alive = agents.filter((o) => o.alive).length;
+  const nActive = agents.filter((o) => o.active).length;
   const totalSpent = agents.reduce((s, o) => s + o.energy.spent, 0);
   const totalEarned = agents.reduce((s, o) => s + o.energy.earned, 0);
   const totalCycles = agents.reduce((s, o) => s + o.cycleCount, 0);
@@ -344,8 +344,8 @@ function renderAggregates(agents: AgentState[]): string[] {
   lines.push(`${BOLD}${CYAN}── Aggregates ──────────────────────────────────────────${RST}`);
   lines.push(
     `  agents: ${BOLD}${n}${RST}  ` +
-    `Alive: ${alive > 0 ? GREEN : RED}${alive}${RST}  ` +
-    `Dead: ${RED}${n - alive}${RST}`
+    `Active: ${nActive > 0 ? GREEN : RED}${nActive}${RST}  ` +
+    `Stopped: ${RED}${n - nActive}${RST}`
   );
   lines.push(
     `  Total cycles: ${fmt(totalCycles)}  ` +
@@ -372,13 +372,13 @@ function renderDetailIdentity(org: AgentState): string[] {
   const lines: string[] = [];
   lines.push(renderDetailSection("Identity"));
 
-  const status = org.alive ? `${GREEN}ALIVE${RST}` : `${RED}DEAD${RST}`;
-  const born = new Date(org.bornAt).toISOString().replace("T", " ").slice(0, 19);
+  const status = org.active ? `${GREEN}ACTIVE${RST}` : `${RED}STOPPED${RST}`;
+  const created = new Date(org.createdAt).toISOString().replace("T", " ").slice(0, 19);
 
   lines.push(`  ID:             ${BOLD}${org.id}${RST}`);
-  lines.push(`  Status:         ${status}${org.causeOfDeath ? `  (${org.causeOfDeath})` : ""}`);
-  lines.push(`  Generation:     ${org.generation}${org.parentId ? `  parent=${org.parentId}` : ""}`);
-  lines.push(`  Born:           ${born}`);
+  lines.push(`  Status:         ${status}${org.stopReason ? `  (${org.stopReason})` : ""}`);
+  lines.push(`  Generation:     ${org.generation}${org.sourceId ? `  source=${org.sourceId}` : ""}`);
+  lines.push(`  Created:        ${created}`);
   lines.push(`  Cycles:         ${org.cycleCount}`);
   lines.push(`  Mode:           ${org.mode}`);
   lines.push(`  Model:          ${org.config.routing.thinking.model}`);
@@ -400,7 +400,7 @@ function renderDetailEnergy(org: AgentState): string[] {
   lines.push(`  Spent:          ${RED}${fmt(e.spent)}${RST}`);
   lines.push(`  Earned:         ${GREEN}${fmt(e.earned)}${RST}  (pool: ${fmt(e.earnedFromPrizes)})`);
   lines.push(`  Net:            ${colorize(net)}${fmtSigned(net)}${RST}`);
-  lines.push(`  BMR:            ${e.bmr}/cycle`);
+  lines.push(`  Base cost:      ${e.baseCost}/cycle`);
   lines.push(`  Avg cycle cost: ${fmt(Math.round(e.cycleHistory.reduce((s, r) => s + r.cost, 0) / Math.max(1, e.cycleHistory.length)))}`);
 
   return lines;
@@ -534,7 +534,7 @@ function renderDetailMemories(org: AgentState): string[] {
   return lines;
 }
 
-function renderDetailGenome(org: AgentState): string[] {
+function renderDetailConfig(org: AgentState): string[] {
   const lines: string[] = [];
   const g = org.config;
   lines.push(renderDetailSection("Config"));
@@ -580,7 +580,7 @@ function renderOrgDetail(org: AgentState): void {
   for (const line of renderDetailCycleHistory(org)) console.log(line);
   for (const line of renderDetailDrives(org)) console.log(line);
   for (const line of renderDetailMemories(org)) console.log(line);
-  for (const line of renderDetailGenome(org)) console.log(line);
+  for (const line of renderDetailConfig(org)) console.log(line);
   console.log();
 }
 
@@ -608,7 +608,7 @@ function main(): void {
     if (!match) {
       console.error(`${RED}Agent "${values.org}" not found.${RST} Available:`);
       for (const o of agents) {
-        console.error(`  ${o.id}${o.alive ? "" : ` ${DIM}(dead)${RST}`}`);
+        console.error(`  ${o.id}${o.active ? "" : ` ${DIM}(stopped)${RST}`}`);
       }
       process.exit(1);
     }
@@ -624,8 +624,8 @@ function main(): void {
   if (values.json) {
     const report = agents.map((o) => ({
       id: o.id,
-      alive: o.alive,
-      causeOfDeath: o.causeOfDeath,
+      active: o.active,
+      stopReason: o.stopReason,
       generation: o.generation,
       cycleCount: o.cycleCount,
       configVersion: o.config.version,
@@ -635,11 +635,11 @@ function main(): void {
         spent: o.energy.spent,
         earned: o.energy.earned,
         lifetime: o.energy.earned - o.energy.spent,
-        bmr: o.energy.bmr,
+        baseCost: o.energy.baseCost,
       },
       drives: {
-        orient: o.drives.explore.level,
-        metabolize: o.drives.acquire.level,
+        explore: o.drives.explore.level,
+        acquire: o.drives.acquire.level,
         grow: o.drives.grow.level,
         coordinate: o.drives.coordinate.level,
       },
@@ -684,7 +684,7 @@ function main(): void {
 
   for (const org of agents) {
     console.log();
-    console.log(`${BOLD}${org.id}${RST}  ${org.alive ? `${GREEN}ALIVE${RST}` : `${RED}DEAD${RST}`}`);
+    console.log(`${BOLD}${org.id}${RST}  ${org.active ? `${GREEN}ACTIVE${RST}` : `${RED}STOPPED${RST}`}`);
     for (const line of renderLastCycle(org)) {
       console.log(line);
     }

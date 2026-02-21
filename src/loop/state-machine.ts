@@ -148,8 +148,8 @@ export class AgentStateMachine {
   // ── Lifecycle loop ──────────────────────────────────────────────────
 
   async *run(): AsyncGenerator<AgentEvent> {
-    while (this.state.alive) {
-      this.state.energy.burnBmr();
+    while (this.state.active) {
+      this.state.energy.burnBaseCost();
       if (!this.state.checkVitalSigns()) break;
 
       this.cur = freshCycle();
@@ -158,9 +158,9 @@ export class AgentStateMachine {
       await this.state.save(this.savePath);
     }
 
-    if (!this.state.alive) {
+    if (!this.state.active) {
       await this.state.save(this.savePath);
-      yield { type: "state_change", from: this.state.mode, to: "dead" };
+      yield { type: "state_change", from: this.state.mode, to: "stopped" };
     }
   }
 
@@ -173,7 +173,7 @@ export class AgentStateMachine {
       this.cur.model,
     );
     this.state.memories.decayEvict();
-    this.state.energy.computeBmr(this.state.memories.totalTokenCost, this.lastToolCount);
+    this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.lastToolCount);
     this.state.drives.update(
       this.state.energy,
       this.state.memories.memories,
@@ -297,8 +297,8 @@ export class AgentStateMachine {
       this.state.energy.currentCycleCost,
       this.taskTier ?? undefined,
     );
-    if (income.base > 0) this.state.energy.feed(income.base);
-    if (income.bounty > 0) this.state.energy.feedFromPool(income.bounty);
+    if (income.base > 0) this.state.energy.credit(income.base);
+    if (income.bounty > 0) this.state.energy.creditFromPool(income.bounty);
 
     // Track for cycle-end accounting
     const total = income.base + income.bounty;
@@ -369,7 +369,7 @@ export class AgentStateMachine {
     const persistCmd =
       `cat > /workspace/tools/auto_${hash} << 'TERMSCRIPT'\n` +
       `#!/bin/bash\n` +
-      `# desc: ${desc}\n` +
+      `# description: auto_${hash} - ${desc}\n` +
       `${trimmed} "$@"\n` +
       `TERMSCRIPT\n` +
       `chmod +x /workspace/tools/auto_${hash}`;
@@ -391,12 +391,12 @@ export class AgentStateMachine {
 
     const memCost = Math.floor(this.state.memories.totalTokenCost / 10);
     const toolCost = this.lastToolCount * 20;
-    const bmrBreakdown = `Base cost: 50 base + ${memCost} memory + ${toolCost} tools = ${this.state.energy.bmr} TEQ/cycle`;
+    const baseCostBreakdown = `Base cost: 50 base + ${memCost} memory + ${toolCost} tools = ${this.state.energy.baseCost} TEQ/cycle`;
 
     const parts = [
       `Memories:\n${memories}`,
       `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`,
-      bmrBreakdown,
+      baseCostBreakdown,
       `Drives: ${drives}`,
       goal ? `Active drive goal: ${goal}` : null,
       costHint,
@@ -416,11 +416,11 @@ export class AgentStateMachine {
     const tools: Anthropic.Tool[] = [];
 
     try {
-      // Discover workspace tools and read their "# desc:" line in one shot
+      // Discover workspace tools and read their "# description:" line in one shot
       const raw = await this.executor.executeShell(
         `for f in $(find /workspace/tools -maxdepth 1 -type f -executable 2>/dev/null); do ` +
         `name=$(basename "$f"); ` +
-        `desc=$(sed -n '2s/^[#/]\\{1,2\\} *desc: *//p' "$f" 2>/dev/null); ` +
+        `desc=$(sed -n '2s/^[#/]\\{1,2\\} *description: *//p' "$f" 2>/dev/null); ` +
         `echo "$name|$desc"; ` +
         `done`,
       );
@@ -428,7 +428,10 @@ export class AgentStateMachine {
         if (!line) continue;
         const sep = line.indexOf("|");
         const name = sep >= 0 ? line.slice(0, sep) : line;
-        const desc = sep >= 0 ? line.slice(sep + 1).trim() : "";
+        const rawDesc = sep >= 0 ? line.slice(sep + 1).trim() : "";
+        // description format: "name - Full description". Strip the name prefix.
+        const dashIdx = rawDesc.indexOf(" - ");
+        const desc = dashIdx >= 0 ? rawDesc.slice(dashIdx + 3) : rawDesc;
         if (INTERNAL_TOOL_NAMES.has(name)) continue;
         tools.push({
           name,

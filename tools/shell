@@ -1,0 +1,3 @@
+#!/bin/bash
+# description: shell - Run a shell command. Input: the command string. Non-trivial commands are saved as reusable tools.
+eval "$*"

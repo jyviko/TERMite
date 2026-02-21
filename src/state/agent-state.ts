@@ -10,7 +10,7 @@ import { Config } from "./config.js";
 export interface AgentStateInit {
   id?: string;
   generation?: number;
-  parentId?: string | null;
+  sourceId?: string | null;
   budget: number;
   reserves?: number;
   thinkingModel?: string;
@@ -19,10 +19,10 @@ export interface AgentStateInit {
 export class AgentStateManager {
   readonly id: string;
   generation: number;
-  parentId: string | null;
-  bornAt: number;
-  alive: boolean;
-  causeOfDeath: string | null;
+  sourceId: string | null;
+  createdAt: number;
+  active: boolean;
+  stopReason: string | null;
   cycleCount: number;
   mode: AgentMode;
   goal: string | null;
@@ -35,12 +35,12 @@ export class AgentStateManager {
   constructor(init: AgentStateInit) {
     this.id = init.id ?? `org-${randomUUID().slice(0, 8)}`;
     this.generation = init.generation ?? 0;
-    this.parentId = init.parentId ?? null;
-    this.bornAt = Date.now();
-    this.alive = true;
-    this.causeOfDeath = null;
+    this.sourceId = init.sourceId ?? null;
+    this.createdAt = Date.now();
+    this.active = true;
+    this.stopReason = null;
     this.cycleCount = 0;
-    this.mode = "alive";
+    this.mode = "active";
     this.goal = null;
     this.energy = new EnergyLedger({
       budget: init.budget,
@@ -55,23 +55,23 @@ export class AgentStateManager {
   }
 
   checkVitalSigns(): boolean {
-    if (!this.energy.alive) {
-      this.die("energy_depleted");
+    if (!this.energy.active) {
+      this.terminate("energy_depleted");
       return false;
     }
-    return this.alive;
+    return this.active;
   }
 
-  die(cause: string): void {
-    this.alive = false;
-    this.causeOfDeath = cause;
-    this.mode = "dead";
+  terminate(cause: string): void {
+    this.active = false;
+    this.stopReason = cause;
+    this.mode = "stopped";
   }
 
-  respawn(budget: number): void {
-    this.alive = true;
-    this.causeOfDeath = null;
-    this.mode = "alive";
+  restart(budget: number): void {
+    this.active = true;
+    this.stopReason = null;
+    this.mode = "active";
     this.energy = new EnergyLedger({ budget });
     this.cycleCount = 0;
   }
@@ -92,10 +92,10 @@ export class AgentStateManager {
     return {
       id: this.id,
       generation: this.generation,
-      parentId: this.parentId,
-      bornAt: this.bornAt,
-      alive: this.alive,
-      causeOfDeath: this.causeOfDeath,
+      sourceId: this.sourceId,
+      createdAt: this.createdAt,
+      active: this.active,
+      stopReason: this.stopReason,
       cycleCount: this.cycleCount,
       mode: this.mode,
       goal: this.goal,
@@ -109,10 +109,10 @@ export class AgentStateManager {
   static fromJSON(data: AgentState): AgentStateManager {
     const mgr = new AgentStateManager({ id: data.id, budget: data.energy.budget });
     mgr.generation = data.generation;
-    mgr.parentId = data.parentId;
-    mgr.bornAt = data.bornAt;
-    mgr.alive = data.alive;
-    mgr.causeOfDeath = data.causeOfDeath;
+    mgr.sourceId = data.sourceId;
+    mgr.createdAt = data.createdAt;
+    mgr.active = data.active;
+    mgr.stopReason = data.stopReason;
     mgr.cycleCount = data.cycleCount;
     mgr.mode = data.mode;
     mgr.goal = data.goal;

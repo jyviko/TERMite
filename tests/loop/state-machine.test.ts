@@ -49,7 +49,7 @@ class MockExecutor {
 
   async executeShell(command: string): Promise<string> {
     if (command.includes("find /workspace/tools")) {
-      return "/workspace/tools/shell\n/workspace/tools/check";
+      return "shell|shell - Run a shell command\ncheck|check - Validate task output";
     }
     if (command.startsWith("/workspace/tools/check")) return "PASS";
     return `(mock) ${command}`;
@@ -81,13 +81,13 @@ describe("AgentStateMachine", () => {
     TEQPool.reset();
   });
 
-  it("starts in alive mode", () => {
+  it("starts in active mode", () => {
     const state = new AgentStateManager({ budget: 50000 });
-    expect(state.mode).toBe("alive");
-    expect(state.alive).toBe(true);
+    expect(state.mode).toBe("active");
+    expect(state.active).toBe(true);
   });
 
-  it("Agent dies at energy 0", async () => {
+  it("Agent stops at energy 0", async () => {
     const llm = new MockLLM();
     // Return end_turn immediately so cycle completes
     llm.addResponse(
@@ -107,8 +107,8 @@ describe("AgentStateMachine", () => {
     );
 
     const events = await collectEvents(machine.run());
-    expect(state.alive).toBe(false);
-    expect(events.some((e) => e.type === "state_change" && (e as any).to === "dead")).toBe(true);
+    expect(state.active).toBe(false);
+    expect(events.some((e) => e.type === "state_change" && (e as any).to === "stopped")).toBe(true);
   });
 
   it("internal resolve tool triggers income computation", async () => {
@@ -249,7 +249,7 @@ describe("AgentStateMachine", () => {
 
   it("memorize tool supports self-rewrite", async () => {
     const llm = new MockLLM();
-    // Call memorize with mutate operation — memorize ends cycle
+    // Call memorize with rewrite operation — memorize ends cycle
     llm.addResponse(
       [
         {
@@ -271,15 +271,15 @@ describe("AgentStateMachine", () => {
       executor as unknown as Executor,
       state,
       pool,
-      "/tmp/test-mutate.json",
+      "/tmp/test-rewrite.json",
     );
 
     const events = await collectEvents(machine.run(), 20);
-    const mutResult = events.find(
+    const rewriteResult = events.find(
       (e) => e.type === "tool_result" && (e as any).name === "memorize",
     );
-    expect(mutResult).toBeDefined();
-    expect((mutResult as any).result).toContain("rewrote systemPrompt");
+    expect(rewriteResult).toBeDefined();
+    expect((rewriteResult as any).result).toContain("rewrote systemPrompt");
     expect(state.config.systemPrompt).toBe("Optimize for tool usage over reasoning.");
     expect(state.config.systemPrompt).not.toBe(originalPrompt);
     expect(state.config.version).toBeGreaterThanOrEqual(1);
@@ -388,8 +388,8 @@ describe("AgentStateMachine", () => {
     );
 
     const executor = new MockExecutor();
-    // Low budget: exactly enough for 1 cycle (BMR=50 + chat=350 + resolver=350 = 750).
-    // Agent dies at start of cycle 2 (spent >= budget), so no further brain calls.
+    // Low budget: exactly enough for 1 cycle (baseCost=50 + chat=350 + resolver=350 = 750).
+    // Agent stops at start of cycle 2 (spent >= budget), so no further LLM calls.
     const state = new AgentStateManager({ budget: 800, reserves: 800 });
 
     const machine = new AgentStateMachine(

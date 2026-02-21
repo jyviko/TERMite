@@ -36,7 +36,7 @@ async function main() {
   const savePath = `${values.save}/${state.id}.json`;
   const machine = new AgentStateMachine(llm, executor, state, teqPool, savePath);
 
-  console.log(`Agent ${state.id} born (budget: ${budget})`);
+  console.log(`Agent ${state.id} started (budget: ${budget})`);
 
   const shutdown = async () => {
     console.log("\nShutting down...");
@@ -52,7 +52,7 @@ async function main() {
     logEvent(state.id, state.mode, event);
   }
 
-  console.log(`Agent ${state.id} died: ${state.causeOfDeath ?? "unknown"}`);
+  console.log(`Agent ${state.id} stopped: ${state.stopReason ?? "unknown"}`);
   await state.save(savePath);
   await executor.stop();
 }

@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+# description: peers - Browse other agents' custom tools. No args = list peers, <id> = see tools, <id>/<tool> = read source.
+import json, sys
+
+try:
+    with open("/shared/_peers.json") as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"Peer tools not available: {e}")
+    sys.exit(0)
+
+arg = sys.argv[1].strip() if len(sys.argv) > 1 else ""
+agents = data.get("agents", {})
+
+if not arg:
+    print(f"PEER TOOLS (updated {data.get('updated', '?')})")
+    print()
+    for agent_id, info in sorted(agents.items()):
+        status = "ACTIVE" if info.get("active") else "STOPPED"
+        tools = list(info.get("tools", {}).keys())
+        tool_str = ", ".join(tools) if tools else "(no custom tools)"
+        print(f"  {agent_id}  [{status}]  {tool_str}")
+    print()
+    print("Usage: peers <id> to see tool source code")
+    print("       peers <id>/<tool_name> to see a specific tool")
+elif "/" in arg:
+    agent_id, tool_name = arg.split("/", 1)
+    agent = agents.get(agent_id, {})
+    tools = agent.get("tools", {})
+    if tool_name in tools:
+        print(f"=== {agent_id}/{tool_name} ===")
+        print(tools[tool_name])
+    else:
+        available = list(tools.keys())
+        print(f"Tool '{tool_name}' not found in {agent_id}. Available: {available}")
+else:
+    agent = agents.get(arg, {})
+    if not agent:
+        print(f"Agent '{arg}' not found. Available: {list(agents.keys())}")
+    else:
+        tools = agent.get("tools", {})
+        if not tools:
+            print(f"{arg} has no custom tools yet.")
+        else:
+            for name, source in tools.items():
+                print(f"=== {arg}/{name} ===")
+                print(source)
+                print()

@@ -1,5 +1,5 @@
 // Agent modes
-export type AgentMode = "alive" | "dead";
+export type AgentMode = "active" | "stopped";
 
 // Outcome from resolve
 export type Outcome = "success" | "partial" | "failure" | "uncertain";
@@ -38,7 +38,7 @@ export interface EnergyLedgerData {
   capacity: number;
   earned: number;
   earnedFromPrizes: number;
-  bmr: number;
+  baseCost: number;
   cycleHistory: CycleRecord[];
 }
 
@@ -89,10 +89,10 @@ export interface PromptRewrite {
 export interface AgentState {
   id: string;
   generation: number;
-  parentId: string | null;
-  bornAt: number;
-  alive: boolean;
-  causeOfDeath: string | null;
+  sourceId: string | null;
+  createdAt: number;
+  active: boolean;
+  stopReason: string | null;
   cycleCount: number;
   mode: AgentMode;
   goal: string | null;
