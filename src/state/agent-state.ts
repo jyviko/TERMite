@@ -33,7 +33,7 @@ export class AgentStateManager {
   config: Config;
 
   constructor(init: AgentStateInit) {
-    this.id = init.id ?? `org-${randomUUID().slice(0, 8)}`;
+    this.id = init.id ?? `agent-${randomUUID().slice(0, 8)}`;
     this.generation = init.generation ?? 0;
     this.sourceId = init.sourceId ?? null;
     this.createdAt = Date.now();

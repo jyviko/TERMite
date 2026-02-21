@@ -1,11 +1,11 @@
 /**
- * TERMITE Report — tabular agent summary with rewrites and stats.
+ * TERM Report — tabular agent summary with rewrites and stats.
  *
  * Usage:
  *     yarn report                          # latest run, all agents
- *     yarn report --org org-abc12345       # detail view for one agent
- *     yarn report --org abc1              # partial ID match
- *     yarn report --org abc1 --json       # raw JSON for one agent
+ *     yarn report --agent agent-abc12345   # detail view for one agent
+ *     yarn report --agent abc1            # partial ID match
+ *     yarn report --agent abc1 --json     # raw JSON for one agent
  *     yarn report --run run-2026-02-20...  # specific run
  *     yarn report --workspace ./arena-workspace
  */
@@ -20,7 +20,7 @@ const { values } = parseArgs({
   options: {
     workspace: { type: "string", default: "./arena-workspace" },
     run: { type: "string" },
-    org: { type: "string" },
+    agent: { type: "string" },
     json: { type: "boolean", default: false },
   },
 });
@@ -571,16 +571,16 @@ function renderDetailConfig(org: AgentState): string[] {
   return lines;
 }
 
-function renderOrgDetail(org: AgentState): void {
+function renderAgentDetail(agent: AgentState): void {
   console.log();
-  console.log(`${BOLD}${CYAN} TERMITE Agent Detail${RST}`);
+  console.log(`${BOLD}${CYAN} TERM Agent Detail${RST}`);
 
-  for (const line of renderDetailIdentity(org)) console.log(line);
-  for (const line of renderDetailEnergy(org)) console.log(line);
-  for (const line of renderDetailCycleHistory(org)) console.log(line);
-  for (const line of renderDetailDrives(org)) console.log(line);
-  for (const line of renderDetailMemories(org)) console.log(line);
-  for (const line of renderDetailConfig(org)) console.log(line);
+  for (const line of renderDetailIdentity(agent)) console.log(line);
+  for (const line of renderDetailEnergy(agent)) console.log(line);
+  for (const line of renderDetailCycleHistory(agent)) console.log(line);
+  for (const line of renderDetailDrives(agent)) console.log(line);
+  for (const line of renderDetailMemories(agent)) console.log(line);
+  for (const line of renderDetailConfig(agent)) console.log(line);
   console.log();
 }
 
@@ -601,12 +601,12 @@ function main(): void {
   }
 
   // Single Agent detail mode
-  if (values.org) {
+  if (values.agent) {
     const match = agents.find((o) =>
-      o.id === values.org || o.id.includes(values.org!)
+      o.id === values.agent || o.id.includes(values.agent!)
     );
     if (!match) {
-      console.error(`${RED}Agent "${values.org}" not found.${RST} Available:`);
+      console.error(`${RED}Agent "${values.agent}" not found.${RST} Available:`);
       for (const o of agents) {
         console.error(`  ${o.id}${o.active ? "" : ` ${DIM}(stopped)${RST}`}`);
       }
@@ -615,7 +615,7 @@ function main(): void {
     if (values.json) {
       console.log(JSON.stringify(match, null, 2));
     } else {
-      renderOrgDetail(match);
+      renderAgentDetail(match);
     }
     return;
   }
@@ -659,7 +659,7 @@ function main(): void {
   // Header
   const runName = runDir.split("/").pop() ?? runDir;
   console.log();
-  console.log(`${BOLD}${CYAN} TERMITE Report${RST}  ${DIM}${runName}${RST}`);
+  console.log(`${BOLD}${CYAN} TERM Report${RST}  ${DIM}${runName}${RST}`);
   console.log();
 
   // Aggregates

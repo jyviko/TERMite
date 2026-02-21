@@ -61,6 +61,6 @@ JSON, all fields optional:
 }`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
-  thinking: { model: "claude-sonnet-4-6", maxTokens: 4096, maxCycleCost: 5000 },
+  thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 5000 },
   resolve: { model: "claude-haiku-4-5-20251001", maxTokens: 1024 },
 };

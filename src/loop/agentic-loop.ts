@@ -39,6 +39,9 @@ export class AgenticLoop {
         break;
       }
 
+      // Pre-flight budget check: avoid wasted LLM call if cost already exceeded
+      if (iteration > 0 && config.shouldStop?.()) break;
+
       // Micro-compact old tool results to manage context
       microCompact(messages, MICRO_COMPACT_KEEP_LAST);
 

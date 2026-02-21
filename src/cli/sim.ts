@@ -129,7 +129,7 @@ class MockLLM extends LLM {
 }
 
 async function main() {
-  console.log(`=== TERMITE SIMULATION ===`);
+  console.log(`=== TERM SIMULATION ===`);
   console.log(`Budget: ${budget} | Max cycles: ${maxCycles}`);
 
   const llm = new MockLLM();

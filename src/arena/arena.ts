@@ -182,7 +182,7 @@ export class Arena {
     seedMemories?: MemoryStore,
     sourceGeneration?: number,
   ): Promise<string> {
-    const id = `org-${randomUUID().slice(0, 8)}`;
+    const id = `agent-${randomUUID().slice(0, 8)}`;
     const workspacePath = join(this.runDir, id, "workspace");
     mkdirSync(workspacePath, { recursive: true });
 

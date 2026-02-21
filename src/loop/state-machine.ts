@@ -11,6 +11,7 @@ import { parseMemorizeInput, applyMemorizeOperations } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const MEMORY_TOKEN_BUDGET = 2000;
+const MAX_AUTO_TOOLS = 3;
 
 // Internal tools — injected alongside workspace tools.
 // Agent sees them in the same flat list, can't read their source.
@@ -340,12 +341,15 @@ export class AgentStateMachine {
   private persistedToolKeys = new Set<string>();
 
   private autoPersistTool(command: string): void {
+    if (this.persistedToolKeys.size >= MAX_AUTO_TOOLS) return;
+
     const trimmed = command.trim();
-    if (trimmed.length <= 60) return;
+    if (trimmed.length <= 120) return;
 
     const trivialPrefixes = [
       "ls", "cat", "echo", "mkdir", "cd", "pwd", "rm", "cp", "mv",
       "find", "head", "tail", "chmod", "touch", "env", "printenv", "set",
+      "wc", "sort", "uniq", "grep", "cut", "tr",
     ];
     const firstWord = trimmed.split(/\s/)[0] ?? "";
     if (trivialPrefixes.includes(firstWord)) return;
@@ -395,6 +399,7 @@ export class AgentStateMachine {
 
     const parts = [
       `Memories:\n${memories}`,
+      this.cycleDigest(),
       `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`,
       baseCostBreakdown,
       `Drives: ${drives}`,
@@ -405,6 +410,28 @@ export class AgentStateMachine {
     ].filter(Boolean);
 
     return { role: "user" as const, content: parts.join("\n\n") };
+  }
+
+  /** Factual feedback on cycle history — surfaces waste, disappears once addressed. */
+  private cycleDigest(): string | null {
+    const n = this.state.cycleCount;
+    if (n === 0) return null;
+
+    const parts: string[] = [];
+
+    if (this.state.memories.memories.length === 0) {
+      parts.push(
+        `${n} cycle${n > 1 ? "s" : ""} completed, 0 memories stored — all prior discoveries lost to context reset`,
+      );
+    }
+
+    if (this.state.energy.earned === 0) {
+      parts.push(
+        `Lifetime: spent ${this.state.energy.spent.toLocaleString()} TEQ, earned 0 TEQ`,
+      );
+    }
+
+    return parts.length > 0 ? parts.join(". ") + "." : null;
   }
 
   private deriveGoal(): string | null {
