@@ -1,18 +1,19 @@
 /**
- * TERMITE Report — tabular organism summary with mutations and stats.
+ * TERMITE Report — tabular agent summary with rewrites and stats.
  *
  * Usage:
- *     yarn report                          # latest run, all organisms
- *     yarn report --org org-abc12345       # detail view for one organism
+ *     yarn report                          # latest run, all agents
+ *     yarn report --org org-abc12345       # detail view for one agent
  *     yarn report --org abc1              # partial ID match
- *     yarn report --org abc1 --json       # raw JSON for one organism
+ *     yarn report --org abc1 --json       # raw JSON for one agent
  *     yarn report --run run-2026-02-20...  # specific run
  *     yarn report --workspace ./arena-workspace
  */
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import type { OrganismState } from "../types/index.js";
+import { DRIVE_NAMES } from "../types/index.js";
+import type { AgentState } from "../types/index.js";
 
 // ── CLI args ─────────────────────────────────────────────────────────
 const { values } = parseArgs({
@@ -56,21 +57,21 @@ function findRunDir(): string | null {
   return join(workspaceRoot, runs[runs.length - 1]!);
 }
 
-// ── Load organisms ───────────────────────────────────────────────────
-function loadOrganisms(runDir: string): OrganismState[] {
-  const organisms: OrganismState[] = [];
+// ── Load agents ───────────────────────────────────────────────────
+function loadAgents(runDir: string): AgentState[] {
+  const agents: AgentState[] = [];
 
   for (const entry of readdirSync(runDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "shared") continue;
     const statePath = join(runDir, entry.name, "state.json");
     try {
-      organisms.push(JSON.parse(readFileSync(statePath, "utf-8")));
+      agents.push(JSON.parse(readFileSync(statePath, "utf-8")));
     } catch {
       // State file not written yet — skip
     }
   }
 
-  return organisms.sort((a, b) => a.id.localeCompare(b.id));
+  return agents.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────
@@ -110,8 +111,8 @@ interface Column {
   header: string;
   width: number;
   align: "left" | "right";
-  value: (org: OrganismState) => string;
-  color?: (org: OrganismState) => string;
+  value: (org: AgentState) => string;
+  color?: (org: AgentState) => string;
 }
 
 const columns: Column[] = [
@@ -142,11 +143,11 @@ const columns: Column[] = [
     value: (o) => String(o.cycleCount),
   },
   {
-    header: "Genome",
+    header: "Config",
     width: 7,
     align: "right",
-    value: (o) => `v${o.genome.version}`,
-    color: (o) => (o.genome.version > 0 ? MAG : DIM),
+    value: (o) => `v${o.config.version}`,
+    color: (o) => (o.config.version > 0 ? MAG : DIM),
   },
   {
     header: "Energy",
@@ -204,8 +205,8 @@ const columns: Column[] = [
     value: (o) => {
       const d = o.drives;
       return [
-        d.orient.level.toFixed(1),
-        d.metabolize.level.toFixed(1),
+        d.explore.level.toFixed(1),
+        d.acquire.level.toFixed(1),
         d.grow.level.toFixed(1),
         d.coordinate.level.toFixed(1),
       ].join("/");
@@ -225,7 +226,7 @@ function renderHeader(): string {
   return BOLD + CYAN + cells.join(" │ ") + RST;
 }
 
-function renderRow(org: OrganismState): string {
+function renderRow(org: AgentState): string {
   const cells = columns.map((c) => {
     const raw = c.value(org);
     const aligned = c.align === "right" ? padR(raw, c.width) : pad(raw, c.width);
@@ -245,7 +246,7 @@ function modelLabel(model?: string): string {
 }
 
 // ── Last cycle detail ────────────────────────────────────────────────
-function renderLastCycle(org: OrganismState): string[] {
+function renderLastCycle(org: AgentState): string[] {
   const lines: string[] = [];
   const history = org.energy.cycleHistory;
   if (history.length === 0) {
@@ -283,22 +284,22 @@ function renderLastCycle(org: OrganismState): string[] {
   return lines;
 }
 
-// ── Mutations section ────────────────────────────────────────────────
-function renderMutations(org: OrganismState): string[] {
+// ── Rewrites section ────────────────────────────────────────────────
+function renderRewrites(org: AgentState): string[] {
   const lines: string[] = [];
-  const history = org.genome.promptHistory;
+  const history = org.config.promptHistory;
 
   if (history.length === 0) {
-    lines.push(`  ${DIM}no mutations${RST}`);
+    lines.push(`  ${DIM}no rewrites${RST}`);
     return lines;
   }
 
-  // Show the latest mutation
+  // Show the latest rewrite
   const latest = history[history.length - 1]!;
   const age = formatAge(latest.timestamp);
 
   lines.push(
-    `  ${MAG}Latest mutation${RST} ` +
+    `  ${MAG}Latest rewrite${RST} ` +
     `${DIM}(${latest.phase} v${latest.version} → v${latest.version + 1}, ${age})${RST}`
   );
 
@@ -310,7 +311,7 @@ function renderMutations(org: OrganismState): string[] {
   lines.push(`  ${GREEN}+ ${truncate(latest.newPrompt.replace(/\n/g, " "), maxPromptLen)}${RST}`);
 
   if (history.length > 1) {
-    lines.push(`  ${DIM}(${history.length} total mutations)${RST}`);
+    lines.push(`  ${DIM}(${history.length} total rewrites)${RST}`);
   }
 
   return lines;
@@ -329,27 +330,27 @@ function formatAge(ts: number): string {
 }
 
 // ── Aggregate stats ──────────────────────────────────────────────────
-function renderAggregates(organisms: OrganismState[]): string[] {
+function renderAggregates(agents: AgentState[]): string[] {
   const lines: string[] = [];
-  const n = organisms.length;
-  const alive = organisms.filter((o) => o.alive).length;
-  const totalSpent = organisms.reduce((s, o) => s + o.energy.spent, 0);
-  const totalEarned = organisms.reduce((s, o) => s + o.energy.earned, 0);
-  const totalCycles = organisms.reduce((s, o) => s + o.cycleCount, 0);
-  const totalMutations = organisms.reduce((s, o) => s + o.genome.promptHistory.length, 0);
-  const totalMemories = organisms.reduce((s, o) => s + o.memories.length, 0);
-  const avgGenomeVersion = organisms.reduce((s, o) => s + o.genome.version, 0) / (n || 1);
+  const n = agents.length;
+  const alive = agents.filter((o) => o.alive).length;
+  const totalSpent = agents.reduce((s, o) => s + o.energy.spent, 0);
+  const totalEarned = agents.reduce((s, o) => s + o.energy.earned, 0);
+  const totalCycles = agents.reduce((s, o) => s + o.cycleCount, 0);
+  const totalRewrites = agents.reduce((s, o) => s + o.config.promptHistory.length, 0);
+  const totalMemories = agents.reduce((s, o) => s + o.memories.length, 0);
+  const avgConfigVersion = agents.reduce((s, o) => s + o.config.version, 0) / (n || 1);
 
   lines.push(`${BOLD}${CYAN}── Aggregates ──────────────────────────────────────────${RST}`);
   lines.push(
-    `  Organisms: ${BOLD}${n}${RST}  ` +
+    `  agents: ${BOLD}${n}${RST}  ` +
     `Alive: ${alive > 0 ? GREEN : RED}${alive}${RST}  ` +
     `Dead: ${RED}${n - alive}${RST}`
   );
   lines.push(
     `  Total cycles: ${fmt(totalCycles)}  ` +
-    `Total mutations: ${MAG}${totalMutations}${RST}  ` +
-    `Avg genome: v${avgGenomeVersion.toFixed(1)}  ` +
+    `Total rewrites: ${MAG}${totalRewrites}${RST}  ` +
+    `Avg config: v${avgConfigVersion.toFixed(1)}  ` +
     `Total memories: ${totalMemories}`
   );
   lines.push(
@@ -361,13 +362,13 @@ function renderAggregates(organisms: OrganismState[]): string[] {
   return lines;
 }
 
-// ── Detail view for single organism ──────────────────────────────────
+// ── Detail view for single Agent ──────────────────────────────────
 
 function renderDetailSection(title: string): string {
   return `\n${BOLD}${CYAN}── ${title} ${"─".repeat(Math.max(0, 56 - title.length))}${RST}`;
 }
 
-function renderDetailIdentity(org: OrganismState): string[] {
+function renderDetailIdentity(org: AgentState): string[] {
   const lines: string[] = [];
   lines.push(renderDetailSection("Identity"));
 
@@ -380,13 +381,13 @@ function renderDetailIdentity(org: OrganismState): string[] {
   lines.push(`  Born:           ${born}`);
   lines.push(`  Cycles:         ${org.cycleCount}`);
   lines.push(`  Mode:           ${org.mode}`);
-  lines.push(`  Model:          ${org.genome.routing.thinking.model}`);
+  lines.push(`  Model:          ${org.config.routing.thinking.model}`);
   if (org.goal) lines.push(`  Goal:           ${org.goal}`);
 
   return lines;
 }
 
-function renderDetailEnergy(org: OrganismState): string[] {
+function renderDetailEnergy(org: AgentState): string[] {
   const lines: string[] = [];
   const e = org.energy;
   lines.push(renderDetailSection("Energy"));
@@ -405,7 +406,7 @@ function renderDetailEnergy(org: OrganismState): string[] {
   return lines;
 }
 
-function renderDetailCycleHistory(org: OrganismState): string[] {
+function renderDetailCycleHistory(org: AgentState): string[] {
   const lines: string[] = [];
   const history = org.energy.cycleHistory;
   lines.push(renderDetailSection(`Cycle History (${history.length} cycles)`));
@@ -483,19 +484,13 @@ function renderDetailCycleHistory(org: OrganismState): string[] {
   return lines;
 }
 
-function renderDetailDrives(org: OrganismState): string[] {
+function renderDetailDrives(org: AgentState): string[] {
   const lines: string[] = [];
   lines.push(renderDetailSection("Drives"));
 
-  const driveNames: Array<{ key: string; label: string }> = [
-    { key: "orient", label: "Orient" },
-    { key: "metabolize", label: "Metabolize" },
-    { key: "grow", label: "Grow" },
-    { key: "coordinate", label: "Coordinate" },
-  ];
-
-  for (const { key, label } of driveNames) {
-    const d = org.drives[key as keyof typeof org.drives];
+  for (const key of DRIVE_NAMES) {
+    const d = org.drives[key];
+    const label = key.charAt(0).toUpperCase() + key.slice(1);
     const barLen = 20;
     const filled = Math.round(d.level * barLen);
     const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
@@ -509,7 +504,7 @@ function renderDetailDrives(org: OrganismState): string[] {
   return lines;
 }
 
-function renderDetailMemories(org: OrganismState): string[] {
+function renderDetailMemories(org: AgentState): string[] {
   const lines: string[] = [];
   lines.push(renderDetailSection(`Memories (${org.memories.length})`));
 
@@ -539,12 +534,12 @@ function renderDetailMemories(org: OrganismState): string[] {
   return lines;
 }
 
-function renderDetailGenome(org: OrganismState): string[] {
+function renderDetailGenome(org: AgentState): string[] {
   const lines: string[] = [];
-  const g = org.genome;
-  lines.push(renderDetailSection("Genome"));
+  const g = org.config;
+  lines.push(renderDetailSection("Config"));
 
-  lines.push(`  Version:   ${MAG}v${g.version}${RST}  (${g.promptHistory.length} mutations)`);
+  lines.push(`  Version:   ${MAG}v${g.version}${RST}  (${g.promptHistory.length} rewrites)`);
   lines.push(`  Routing:   thinking=${g.routing.thinking.model} (${g.routing.thinking.maxTokens})`);
   lines.push(`             resolve=${g.routing.resolve.model} (${g.routing.resolve.maxTokens})`);
 
@@ -564,7 +559,7 @@ function renderDetailGenome(org: OrganismState): string[] {
   }
 
   if (g.promptHistory.length > 0) {
-    lines.push(`\n  ${BOLD}Mutation History:${RST}`);
+    lines.push(`\n  ${BOLD}rewrite History:${RST}`);
     for (const mut of g.promptHistory) {
       const age = formatAge(mut.timestamp);
       lines.push(`  ${MAG}v${mut.version}→v${mut.version + 1}${RST} ${DIM}(${mut.phase}, ${age})${RST}`);
@@ -576,9 +571,9 @@ function renderDetailGenome(org: OrganismState): string[] {
   return lines;
 }
 
-function renderOrgDetail(org: OrganismState): void {
+function renderOrgDetail(org: AgentState): void {
   console.log();
-  console.log(`${BOLD}${CYAN} TERMITE Organism Detail${RST}`);
+  console.log(`${BOLD}${CYAN} TERMITE Agent Detail${RST}`);
 
   for (const line of renderDetailIdentity(org)) console.log(line);
   for (const line of renderDetailEnergy(org)) console.log(line);
@@ -598,21 +593,21 @@ function main(): void {
     process.exit(1);
   }
 
-  const organisms = loadOrganisms(runDir);
+  const agents = loadAgents(runDir);
 
-  if (organisms.length === 0) {
-    console.error(`${YELLOW}No organisms found in ${runDir}${RST}`);
+  if (agents.length === 0) {
+    console.error(`${YELLOW}No agents found in ${runDir}${RST}`);
     process.exit(1);
   }
 
-  // Single organism detail mode
+  // Single Agent detail mode
   if (values.org) {
-    const match = organisms.find((o) =>
+    const match = agents.find((o) =>
       o.id === values.org || o.id.includes(values.org!)
     );
     if (!match) {
-      console.error(`${RED}Organism "${values.org}" not found.${RST} Available:`);
-      for (const o of organisms) {
+      console.error(`${RED}Agent "${values.org}" not found.${RST} Available:`);
+      for (const o of agents) {
         console.error(`  ${o.id}${o.alive ? "" : ` ${DIM}(dead)${RST}`}`);
       }
       process.exit(1);
@@ -627,13 +622,13 @@ function main(): void {
 
   // JSON output mode
   if (values.json) {
-    const report = organisms.map((o) => ({
+    const report = agents.map((o) => ({
       id: o.id,
       alive: o.alive,
       causeOfDeath: o.causeOfDeath,
       generation: o.generation,
       cycleCount: o.cycleCount,
-      genomeVersion: o.genome.version,
+      configVersion: o.config.version,
       energy: {
         reserves: o.energy.reserves,
         capacity: o.energy.capacity,
@@ -643,15 +638,15 @@ function main(): void {
         bmr: o.energy.bmr,
       },
       drives: {
-        orient: o.drives.orient.level,
-        metabolize: o.drives.metabolize.level,
+        orient: o.drives.explore.level,
+        metabolize: o.drives.acquire.level,
         grow: o.drives.grow.level,
         coordinate: o.drives.coordinate.level,
       },
       memories: o.memories.length,
-      mutations: o.genome.promptHistory.length,
-      latestMutation: o.genome.promptHistory.length > 0
-        ? o.genome.promptHistory[o.genome.promptHistory.length - 1]
+      rewrites: o.config.promptHistory.length,
+      latestRewrite: o.config.promptHistory.length > 0
+        ? o.config.promptHistory[o.config.promptHistory.length - 1]
         : null,
       lastCycle: o.energy.cycleHistory.length > 0
         ? o.energy.cycleHistory[o.energy.cycleHistory.length - 1]
@@ -668,32 +663,32 @@ function main(): void {
   console.log();
 
   // Aggregates
-  for (const line of renderAggregates(organisms)) {
+  for (const line of renderAggregates(agents)) {
     console.log(line);
   }
   console.log();
 
-  // Organism table
-  console.log(`${BOLD}${CYAN}── Organisms ───────────────────────────────────────────${RST}`);
+  // Agent table
+  console.log(`${BOLD}${CYAN}── agents ───────────────────────────────────────────${RST}`);
   console.log(renderHeader());
   console.log(renderSeparator());
 
-  for (const org of organisms) {
+  for (const org of agents) {
     console.log(renderRow(org));
   }
 
   console.log();
 
-  // Per-organism detail: last cycle + mutations
-  console.log(`${BOLD}${CYAN}── Last Cycle & Mutations ──────────────────────────────${RST}`);
+  // Per-Agent detail: last cycle + rewrites
+  console.log(`${BOLD}${CYAN}── Last Cycle & Rewrites ──────────────────────────────${RST}`);
 
-  for (const org of organisms) {
+  for (const org of agents) {
     console.log();
     console.log(`${BOLD}${org.id}${RST}  ${org.alive ? `${GREEN}ALIVE${RST}` : `${RED}DEAD${RST}`}`);
     for (const line of renderLastCycle(org)) {
       console.log(line);
     }
-    for (const line of renderMutations(org)) {
+    for (const line of renderRewrites(org)) {
       console.log(line);
     }
   }

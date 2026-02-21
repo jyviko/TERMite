@@ -1,13 +1,13 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { OrganismMode, OrganismState } from "../types/index.js";
+import type { AgentMode, AgentState } from "../types/index.js";
 import { EnergyLedger } from "./energy.js";
 import { DriveSystem } from "./drives.js";
 import { MemoryStore } from "./memory.js";
-import { Genome } from "./genome.js";
+import { Config } from "./config.js";
 
-export interface OrganismStateInit {
+export interface AgentStateInit {
   id?: string;
   generation?: number;
   parentId?: string | null;
@@ -16,7 +16,7 @@ export interface OrganismStateInit {
   thinkingModel?: string;
 }
 
-export class OrganismStateManager {
+export class AgentStateManager {
   readonly id: string;
   generation: number;
   parentId: string | null;
@@ -24,15 +24,15 @@ export class OrganismStateManager {
   alive: boolean;
   causeOfDeath: string | null;
   cycleCount: number;
-  mode: OrganismMode;
+  mode: AgentMode;
   goal: string | null;
 
   energy: EnergyLedger;
   drives: DriveSystem;
   memories: MemoryStore;
-  genome: Genome;
+  config: Config;
 
-  constructor(init: OrganismStateInit) {
+  constructor(init: AgentStateInit) {
     this.id = init.id ?? `org-${randomUUID().slice(0, 8)}`;
     this.generation = init.generation ?? 0;
     this.parentId = init.parentId ?? null;
@@ -48,9 +48,9 @@ export class OrganismStateManager {
     });
     this.drives = new DriveSystem();
     this.memories = new MemoryStore();
-    this.genome = new Genome();
+    this.config = new Config();
     if (init.thinkingModel) {
-      this.genome.routing.thinking.model = init.thinkingModel;
+      this.config.routing.thinking.model = init.thinkingModel;
     }
   }
 
@@ -82,13 +82,13 @@ export class OrganismStateManager {
     await writeFile(path, JSON.stringify(data, null, 2), "utf-8");
   }
 
-  static async load(path: string): Promise<OrganismStateManager> {
+  static async load(path: string): Promise<AgentStateManager> {
     const raw = await readFile(path, "utf-8");
-    const data: OrganismState = JSON.parse(raw);
-    return OrganismStateManager.fromJSON(data);
+    const data: AgentState = JSON.parse(raw);
+    return AgentStateManager.fromJSON(data);
   }
 
-  toJSON(): OrganismState {
+  toJSON(): AgentState {
     return {
       id: this.id,
       generation: this.generation,
@@ -102,12 +102,12 @@ export class OrganismStateManager {
       energy: this.energy.toJSON(),
       drives: this.drives.toJSON(),
       memories: this.memories.toJSON(),
-      genome: this.genome.toJSON(),
+      config: this.config.toJSON(),
     };
   }
 
-  static fromJSON(data: OrganismState): OrganismStateManager {
-    const mgr = new OrganismStateManager({ id: data.id, budget: data.energy.budget });
+  static fromJSON(data: AgentState): AgentStateManager {
+    const mgr = new AgentStateManager({ id: data.id, budget: data.energy.budget });
     mgr.generation = data.generation;
     mgr.parentId = data.parentId;
     mgr.bornAt = data.bornAt;
@@ -119,7 +119,7 @@ export class OrganismStateManager {
     mgr.energy = EnergyLedger.fromJSON(data.energy);
     mgr.drives = DriveSystem.fromJSON(data.drives);
     mgr.memories = MemoryStore.fromJSON(data.memories);
-    mgr.genome = Genome.fromJSON(data.genome);
+    mgr.config = Config.fromJSON(data.config);
     return mgr;
   }
 }

@@ -16,7 +16,7 @@ class MockLLM extends LLM {
   }
 
   async chat(params: ChatParams): Promise<LLMResponse> {
-    // Snapshot messages so mutations after the call don't affect our record
+    // Snapshot messages so rewrites after the call don't affect our record
     this.calls.push({ ...params, messages: [...params.messages] });
     const resp = this.responses[this.callIndex];
     if (!resp) throw new Error("MockLLM: no more responses");

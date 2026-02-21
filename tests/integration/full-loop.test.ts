@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
 import { LLM, type LLMResponse, type ChatParams } from "../../src/llm/index.js";
 import { Executor } from "../../src/executor/index.js";
-import { OrganismStateManager } from "../../src/state/organism-state.js";
-import { OrganismStateMachine } from "../../src/loop/state-machine.js";
+import { AgentStateManager } from "../../src/state/agent-state.js";
+import { AgentStateMachine } from "../../src/loop/state-machine.js";
 import { TEQPool } from "../../src/arena/teq-pool.js";
 import type { AgentEvent } from "../../src/types/index.js";
 
@@ -62,7 +62,7 @@ describe("Full Loop Integration", () => {
     TEQPool.reset();
   });
 
-  it("organism explores → solves task → earns energy", async () => {
+  it("Agent explores → solves task → earns energy", async () => {
     const llm = new ScriptedLLM([
       // Explore workspace
       {
@@ -117,7 +117,7 @@ describe("Full Loop Integration", () => {
       // Call memorize (internal tool) — memorize ends the cycle (context resets)
       {
         content: [
-          { type: "tool_use", id: "t6", name: "memorize", input: { epigenetic: { store: [{ content: "Check data directory first", type: "procedural", importance: 0.8 }] } } },
+          { type: "tool_use", id: "t6", name: "memorize", input: { session: { store: [{ content: "Check data directory first", type: "procedural", importance: 0.8 }] } } },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
         usage: { input: 500, output: 30, cacheCreation: 0, cacheRead: 0 },
@@ -125,9 +125,9 @@ describe("Full Loop Integration", () => {
     ]);
 
     const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 100000 });
+    const state = new AgentStateManager({ budget: 100000 });
 
-    const machine = new OrganismStateMachine(
+    const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,

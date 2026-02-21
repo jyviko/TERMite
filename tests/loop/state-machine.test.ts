@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
 import { LLM, type LLMResponse, type ChatParams } from "../../src/llm/index.js";
 import { Executor } from "../../src/executor/index.js";
-import { OrganismStateManager } from "../../src/state/organism-state.js";
-import { OrganismStateMachine } from "../../src/loop/state-machine.js";
+import { AgentStateManager } from "../../src/state/agent-state.js";
+import { AgentStateMachine } from "../../src/loop/state-machine.js";
 import { TEQPool } from "../../src/arena/teq-pool.js";
 import type { AgentEvent } from "../../src/types/index.js";
 
@@ -69,7 +69,7 @@ async function collectEvents(gen: AsyncGenerator<AgentEvent>, maxEvents = 50): P
   return events;
 }
 
-describe("OrganismStateMachine", () => {
+describe("AgentStateMachine", () => {
   let pool: TEQPool;
 
   beforeEach(() => {
@@ -82,12 +82,12 @@ describe("OrganismStateMachine", () => {
   });
 
   it("starts in alive mode", () => {
-    const state = new OrganismStateManager({ budget: 50000 });
+    const state = new AgentStateManager({ budget: 50000 });
     expect(state.mode).toBe("alive");
     expect(state.alive).toBe(true);
   });
 
-  it("organism dies at energy 0", async () => {
+  it("Agent dies at energy 0", async () => {
     const llm = new MockLLM();
     // Return end_turn immediately so cycle completes
     llm.addResponse(
@@ -96,66 +96,19 @@ describe("OrganismStateMachine", () => {
     );
 
     const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 10, reserves: 10 });
+    const state = new AgentStateManager({ budget: 10, reserves: 10 });
 
-    const machine = new OrganismStateMachine(
+    const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,
       pool,
-      "/tmp/test-organism.json",
+      "/tmp/test-Agent.json",
     );
 
     const events = await collectEvents(machine.run());
     expect(state.alive).toBe(false);
     expect(events.some((e) => e.type === "state_change" && (e as any).to === "dead")).toBe(true);
-  });
-
-  it("internal think tool returns input unchanged", async () => {
-    const llm = new MockLLM();
-    // Call think tool
-    llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_t1",
-          name: "think",
-          input: { input: "I should explore the workspace" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-    // After think, call memorize to end cycle
-    llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_m1",
-          name: "memorize",
-          input: { input: "explored workspace" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-
-    const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 100000 });
-
-    const machine = new OrganismStateMachine(
-      llm,
-      executor as unknown as Executor,
-      state,
-      pool,
-      "/tmp/test-think.json",
-    );
-
-    const events = await collectEvents(machine.run(), 20);
-    // think tool should produce a tool_result with the same input
-    const thinkResult = events.find(
-      (e) => e.type === "tool_result" && (e as any).name === "think",
-    );
-    expect(thinkResult).toBeDefined();
-    expect((thinkResult as any).result).toBe("I should explore the workspace");
   });
 
   it("internal resolve tool triggers income computation", async () => {
@@ -191,9 +144,9 @@ describe("OrganismStateMachine", () => {
     );
 
     const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 100000 });
+    const state = new AgentStateManager({ budget: 100000 });
 
-    const machine = new OrganismStateMachine(
+    const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,
@@ -222,16 +175,16 @@ describe("OrganismStateMachine", () => {
           type: "tool_use",
           id: "toolu_m1",
           name: "memorize",
-          input: { epigenetic: { store: [{ content: "Always check data directory first", type: "procedural", importance: 0.9 }] } },
+          input: { session: { store: [{ content: "Always check data directory first", type: "procedural", importance: 0.9 }] } },
         },
       ] as Anthropic.ContentBlock[],
       "tool_use",
     );
 
     const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 100000 });
+    const state = new AgentStateManager({ budget: 100000 });
 
-    const machine = new OrganismStateMachine(
+    const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,
@@ -269,9 +222,9 @@ describe("OrganismStateMachine", () => {
     );
 
     const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 100000 });
+    const state = new AgentStateManager({ budget: 100000 });
 
-    const machine = new OrganismStateMachine(
+    const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,
@@ -294,7 +247,7 @@ describe("OrganismStateMachine", () => {
     expect(state.memories.memories[0]!.importance).toBe(0.5);
   });
 
-  it("memorize tool supports self-mutation", async () => {
+  it("memorize tool supports self-rewrite", async () => {
     const llm = new MockLLM();
     // Call memorize with mutate operation — memorize ends cycle
     llm.addResponse(
@@ -303,17 +256,17 @@ describe("OrganismStateMachine", () => {
           type: "tool_use",
           id: "toolu_mut",
           name: "memorize",
-          input: { phylogenetic: { mutate: [{ target: "systemPrompt", newPrompt: "I am an evolved organism." }] } },
+          input: { persistent: { rewrite: [{ target: "systemPrompt", newPrompt: "Optimize for tool usage over reasoning." }] } },
         },
       ] as Anthropic.ContentBlock[],
       "tool_use",
     );
 
     const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 100000 });
-    const originalPrompt = state.genome.systemPrompt;
+    const state = new AgentStateManager({ budget: 100000 });
+    const originalPrompt = state.config.systemPrompt;
 
-    const machine = new OrganismStateMachine(
+    const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,
@@ -326,10 +279,10 @@ describe("OrganismStateMachine", () => {
       (e) => e.type === "tool_result" && (e as any).name === "memorize",
     );
     expect(mutResult).toBeDefined();
-    expect((mutResult as any).result).toContain("mutated systemPrompt");
-    expect(state.genome.systemPrompt).toBe("I am an evolved organism.");
-    expect(state.genome.systemPrompt).not.toBe(originalPrompt);
-    expect(state.genome.version).toBeGreaterThanOrEqual(1);
+    expect((mutResult as any).result).toContain("rewrote systemPrompt");
+    expect(state.config.systemPrompt).toBe("Optimize for tool usage over reasoning.");
+    expect(state.config.systemPrompt).not.toBe(originalPrompt);
+    expect(state.config.version).toBeGreaterThanOrEqual(1);
   });
 
   it("multi-resolve keeps best outcome and max relevance", async () => {
@@ -376,9 +329,9 @@ describe("OrganismStateMachine", () => {
     );
 
     const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 500_000 });
+    const state = new AgentStateManager({ budget: 500_000 });
 
-    const machine = new OrganismStateMachine(
+    const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,
@@ -393,41 +346,6 @@ describe("OrganismStateMachine", () => {
     const lastCycle = state.energy.cycleHistory[0]!;
     expect(lastCycle.outcome).toBe("success");
     expect(lastCycle.goalRelevance).toBe(0.9);
-  });
-
-  it("think-only cycles count as idle for staleness", async () => {
-    const llm = new MockLLM();
-    // Every cycle: call think then end — no external tool use
-    llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_idle",
-          name: "think",
-          input: { input: "just thinking" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-    llm.addResponse(
-      [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
-      "end_turn",
-    );
-
-    const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 1_000_000, reserves: 1_000_000 });
-
-    const machine = new OrganismStateMachine(
-      llm,
-      executor as unknown as Executor,
-      state,
-      pool,
-      "/tmp/test-think-idle.json",
-    );
-
-    const events = await collectEvents(machine.run(), 200);
-    expect(state.alive).toBe(false);
-    expect(state.causeOfDeath).toBe("staleness");
   });
 
   it("memorize ends the agentic loop — no further API calls after memorize", async () => {
@@ -471,10 +389,10 @@ describe("OrganismStateMachine", () => {
 
     const executor = new MockExecutor();
     // Low budget: exactly enough for 1 cycle (BMR=50 + chat=350 + resolver=350 = 750).
-    // Organism dies at start of cycle 2 (spent >= budget), so no further brain calls.
-    const state = new OrganismStateManager({ budget: 800, reserves: 800 });
+    // Agent dies at start of cycle 2 (spent >= budget), so no further brain calls.
+    const state = new AgentStateManager({ budget: 800, reserves: 800 });
 
-    const machine = new OrganismStateMachine(
+    const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,
@@ -504,32 +422,4 @@ describe("OrganismStateMachine", () => {
     expect(llm.callIndex).toBe(2);
   });
 
-  it("staleness kills organism after idle cycles", async () => {
-    const llm = new MockLLM();
-    // Return end_turn immediately every cycle (no tool calls → idle)
-    llm.addResponse(
-      [{ type: "text", text: "Nothing to do.", citations: null }] as Anthropic.ContentBlock[],
-      "end_turn",
-    );
-    // Resolve response (required for resolver calls)
-    llm.addResponse(
-      [{ type: "text", text: '{"outcome":"uncertain","lesson":"","goalRelevance":0,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
-      "end_turn",
-    );
-
-    const executor = new MockExecutor();
-    const state = new OrganismStateManager({ budget: 1_000_000, reserves: 1_000_000 });
-
-    const machine = new OrganismStateMachine(
-      llm,
-      executor as unknown as Executor,
-      state,
-      pool,
-      "/tmp/test-staleness.json",
-    );
-
-    const events = await collectEvents(machine.run(), 100);
-    expect(state.alive).toBe(false);
-    expect(events.some((e) => e.type === "state_change" && (e as any).to === "dead")).toBe(true);
-  });
 });

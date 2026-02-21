@@ -1,7 +1,7 @@
 import type { Outcome } from "../types/index.js";
 import type { LLM, TokenUsage } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
-import type { Genome } from "../state/genome.js";
+import type { Config } from "../state/config.js";
 import type { EnergyLedger } from "../state/energy.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 import { TIER_EXPECTED_COST } from "../arena/task-generator.js";
@@ -26,12 +26,12 @@ export class Resolver {
   constructor(private llm: LLM) {}
 
   async resolve(params: {
-    genome: Genome;
+    config: Config;
     goal: string;
     actions: string;
     energy: EnergyLedger;
   }): Promise<ResolveResult> {
-    const prompt = params.genome.resolvePrompt
+    const prompt = params.config.resolvePrompt
       .replace("{goal}", params.goal)
       .replace("{actions}", params.actions)
       .replace("{remaining}", String(params.energy.remaining))
@@ -39,10 +39,10 @@ export class Resolver {
 
     try {
       const response = await this.llm.chat({
-        model: params.genome.routing.resolve.model,
+        model: params.config.routing.resolve.model,
         system: prompt,
         messages: [{ role: "user", content: "Evaluate." }],
-        maxTokens: params.genome.routing.resolve.maxTokens,
+        maxTokens: params.config.routing.resolve.maxTokens,
       });
 
       const text = extractText(response.content);
@@ -111,8 +111,8 @@ export async function computeIncome(
     bountyRequested = taskReward;
     sources.push(`task:${taskReward}`);
 
-    // Efficiency bonus: amplify bounty for organisms that use tools over in-context reasoning
-    // Floor at 1.0 — never reduces bounty, only amplifies for efficient organisms
+    // Efficiency bonus: amplify bounty for agents that use tools over in-context reasoning
+    // Floor at 1.0 — never reduces bounty, only amplifies for efficient agents
     if (taskTier && cycleCost && cycleCost > 0) {
       const expectedCost = TIER_EXPECTED_COST[taskTier] ?? cycleCost;
       const efficiencyRatio = Math.max(1.0, Math.min(3.0, expectedCost / cycleCost));

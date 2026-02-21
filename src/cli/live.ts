@@ -4,8 +4,8 @@ import { LLM } from "../llm/index.js";
 
 loadEnv();
 import { Executor } from "../executor/index.js";
-import { OrganismStateManager } from "../state/organism-state.js";
-import { OrganismStateMachine } from "../loop/state-machine.js";
+import { AgentStateManager } from "../state/agent-state.js";
+import { AgentStateMachine } from "../loop/state-machine.js";
 import { TEQPool } from "../arena/teq-pool.js";
 
 const { values } = parseArgs({
@@ -29,14 +29,14 @@ async function main() {
   const executor = new Executor();
   await executor.start();
 
-  const state = new OrganismStateManager({ budget });
+  const state = new AgentStateManager({ budget });
   if (values.goal) state.goal = values.goal;
 
   const teqPool = TEQPool.initialize();
   const savePath = `${values.save}/${state.id}.json`;
-  const machine = new OrganismStateMachine(llm, executor, state, teqPool, savePath);
+  const machine = new AgentStateMachine(llm, executor, state, teqPool, savePath);
 
-  console.log(`Organism ${state.id} born (budget: ${budget})`);
+  console.log(`Agent ${state.id} born (budget: ${budget})`);
 
   const shutdown = async () => {
     console.log("\nShutting down...");
@@ -52,7 +52,7 @@ async function main() {
     logEvent(state.id, state.mode, event);
   }
 
-  console.log(`Organism ${state.id} died: ${state.causeOfDeath ?? "unknown"}`);
+  console.log(`Agent ${state.id} died: ${state.causeOfDeath ?? "unknown"}`);
   await state.save(savePath);
   await executor.stop();
 }

@@ -1,16 +1,16 @@
-import type { Genome as GenomeData, PromptMutation, RoutingConfig } from "../types/index.js";
+import type { Config as ConfigData, PromptRewrite, RoutingConfig } from "../types/index.js";
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_RESOLVE_PROMPT, DEFAULT_REST_PROMPT, DEFAULT_MEMORIZE_PROMPT, DEFAULT_ROUTING } from "./defaults.js";
 
-export class Genome {
+export class Config {
   systemPrompt: string;
   resolvePrompt: string;
   restPrompt: string;
   memorizePrompt: string;
   routing: RoutingConfig;
   version: number;
-  promptHistory: PromptMutation[];
+  promptHistory: PromptRewrite[];
 
-  constructor(data?: Partial<GenomeData>) {
+  constructor(data?: Partial<ConfigData>) {
     this.systemPrompt = data?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.resolvePrompt = data?.resolvePrompt ?? DEFAULT_RESOLVE_PROMPT;
     this.restPrompt = data?.restPrompt ?? DEFAULT_REST_PROMPT;
@@ -57,7 +57,7 @@ export class Genome {
     }
   }
 
-  toJSON(): GenomeData {
+  toJSON(): ConfigData {
     return {
       systemPrompt: this.systemPrompt,
       resolvePrompt: this.resolvePrompt,
@@ -69,7 +69,7 @@ export class Genome {
     };
   }
 
-  static fromJSON(data: GenomeData): Genome {
-    return new Genome(data);
+  static fromJSON(data: ConfigData): Config {
+    return new Config(data);
   }
 }

@@ -57,7 +57,7 @@ JSON, all fields optional:
   "forget": ["memory_id", ...],
   "compress": [{"id": "...", "newContent": "..."}],
   "consolidate": {"sourceIds": [...], "newContent": "...", "importance": 0.8},
-  "mutate": [{"target": "systemPrompt", "newPrompt": "..."}]
+  "rewrite": [{"target": "systemPrompt", "newPrompt": "..."}]
 }`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {

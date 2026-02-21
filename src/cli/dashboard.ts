@@ -1,10 +1,10 @@
 /**
- * TERMITE Arena Dashboard — live terminal monitor.
+ * TERM-ITE Arena Dashboard — live terminal monitor.
  *
- * Reads organism state files and displays real-time status.
+ * Reads agent state files and displays real-time status.
  * Run alongside the arena:
  *
- *     yarn arena --organisms 3 --budget 300000 &
+ *     yarn arena --agents 3 --budget 300000 &
  *     yarn dash
  *
  * 1:1 port of the Python curses dashboard.
@@ -127,21 +127,21 @@ interface OrgData {
   [key: string]: unknown;
 }
 
-function loadOrganisms(): OrgData[] {
+function loadAgents(): OrgData[] {
   if (!existsSync(SAVES_DIR)) return [];
-  const organisms: OrgData[] = [];
+  const agents: OrgData[] = [];
   for (const entry of readdirSync(SAVES_DIR, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "shared") continue;
     const statePath = join(SAVES_DIR, entry.name, "state.json");
     try {
-      organisms.push(JSON.parse(readFileSync(statePath, "utf-8")));
+      agents.push(JSON.parse(readFileSync(statePath, "utf-8")));
     } catch {
       // Not written yet
     }
   }
-  return organisms.sort((a, b) => {
-    const aid = String(a.id ?? a.organism_id ?? "");
-    const bid = String(b.id ?? b.organism_id ?? "");
+  return agents.sort((a, b) => {
+    const aid = String(a.id ?? a.agent_id ?? "");
+    const bid = String(b.id ?? b.agent_id ?? "");
     return aid.localeCompare(bid);
   });
 }
@@ -195,8 +195,8 @@ function gs(obj: OrgData, ...keys: string[]): string {
 function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: number): void {
   let r = r0;
 
-  // Row 0: organism ID (8 chars, like Python)
-  const oid = gs(org, "id", "organism_id").slice(0, 8) || "?";
+  // Row 0: agent ID (8 chars, like Python)
+  const oid = gs(org, "id", "agent_id").slice(0, 8) || "?";
   safe(buf, r, c0, ` [${oid}]`, BOLD);
   r++;
 
@@ -214,10 +214,10 @@ function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: num
   }
   r++;
 
-  // Row 3: cycle + genome version
+  // Row 3: cycle + config version
   const cyc = gn(org, "cycleCount", "cycle_count");
-  const genome = (g(org, "genome") ?? {}) as OrgData;
-  const gv = gn(genome, "version");
+  const cfg = (g(org, "config") ?? {}) as OrgData;
+  const gv = gn(cfg, "version");
   safe(buf, r, c0, ` Cyc ${cyc}  v${gv}`);
   r++;
 
@@ -315,7 +315,7 @@ function render(): string {
   // Clear
   buf.push("\x1b[2J\x1b[H");
 
-  const orgs = loadOrganisms();
+  const orgs = loadAgents();
 
   // Global stats
   const totalSpent = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as OrgData, "spent"), 0);
@@ -358,7 +358,7 @@ function render(): string {
 
   // Empty state
   if (orgs.length === 0) {
-    safe(buf, 4, 2, `Waiting for organisms... (${SAVES_DIR})`, YELLOW);
+    safe(buf, 4, 2, `Waiting for agents... (${SAVES_DIR})`, YELLOW);
     safe(buf, height - 1, 0, ` [q] quit`, CYAN);
     return buf.join("");
   }
@@ -376,7 +376,7 @@ function render(): string {
     const c0 = gridC * colW;
 
     if (r0 + CARD_ROWS > height - 1) {
-      safe(buf, height - 2, 0, ` +${n - idx} more organisms (resize terminal)`, YELLOW);
+      safe(buf, height - 2, 0, ` +${n - idx} more agents (resize terminal)`, YELLOW);
       break;
     }
 
@@ -384,7 +384,7 @@ function render(): string {
   }
 
   // Footer
-  safe(buf, height - 1, 0, ` [q] quit  ${n} organisms  ${nCols}x${nGridRows} grid`, CYAN);
+  safe(buf, height - 1, 0, ` [q] quit  ${n} agents  ${nCols}x${nGridRows} grid`, CYAN);
 
   return buf.join("");
 }

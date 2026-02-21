@@ -9,8 +9,8 @@ export interface WorkRating {
   usage: TokenUsage;
 }
 
-const RATING_PROMPT = `You are evaluating work produced by an autonomous AI organism.
-You will be given a summary of input data files and output files the organism produced.
+const RATING_PROMPT = `You are evaluating work produced by an autonomous AI agent.
+You will be given a summary of input data files and output files the agent produced.
 Rate the quality of the work on a 0.0-1.0 scale.
 
 Rating scale:

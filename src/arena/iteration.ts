@@ -1,17 +1,17 @@
 import type { TaskResult, Memory } from "../types/index.js";
 import type { LLM } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
-import { Genome } from "../state/genome.js";
+import { Config } from "../state/config.js";
 
-export class GenomeEvolver {
+export class ConfigEvolver {
   constructor(private llm: LLM) {}
 
   async evolve(params: {
-    parentGenome: Genome;
+    parentConfig: Config;
     memories: Memory[];
     taskHistory: TaskResult[];
     generation: number;
-  }): Promise<Genome> {
+  }): Promise<Config> {
     const formattedMemories = params.memories
       .sort((a, b) => b.importance - a.importance)
       .slice(0, 20)
@@ -23,30 +23,30 @@ export class GenomeEvolver {
       .map((q) => `tier ${q.tier}: ${q.passed ? "PASS" : "FAIL"} in ${q.cyclesTaken} cycles`)
       .join("\n");
 
-    const prompt = `You are evolving an organism's genome for the next generation.
+    const prompt = `You are iterating an agent's configuration for the next version.
 
-Current genome (generation ${params.generation}):
-${params.parentGenome.systemPrompt}
+Current config (version ${params.generation}):
+${params.parentConfig.systemPrompt}
 
-Parent's key memories (sorted by importance):
+Source agent's key memories (sorted by importance):
 ${formattedMemories || "(none)"}
 
 Task history:
 ${formattedTaskHistory || "(none)"}
 
-Create an evolved system prompt for the child. The child should:
-1. Inherit the parent's successful strategies
-2. Start with better instincts than the parent had at birth
-3. Know common pitfalls the parent discovered
-4. Be concise — every token in the genome costs energy every cycle
+Create an improved system prompt for the next version. It should:
+1. Carry forward successful strategies
+2. Start with better defaults than the previous version
+3. Encode known pitfalls to avoid
+4. Be concise — every token in the config costs energy every cycle
 
 Return JSON: { "systemPrompt": "..." }`;
 
     try {
       const response = await this.llm.chat({
-        model: params.parentGenome.routing.thinking.model,
+        model: params.parentConfig.routing.thinking.model,
         system: prompt,
-        messages: [{ role: "user", content: "Evolve the genome." }],
+        messages: [{ role: "user", content: "Iterate the configuration." }],
         maxTokens: 2048,
       });
 
@@ -54,22 +54,20 @@ Return JSON: { "systemPrompt": "..." }`;
 
       const parsed = parseEvolveResponse(text);
 
-      const child = new Genome({
-        ...params.parentGenome.toJSON(),
-        systemPrompt: parsed.systemPrompt ?? params.parentGenome.systemPrompt,
-        version: params.parentGenome.version + 1,
+      const child = new Config({
+        ...params.parentConfig.toJSON(),
+        systemPrompt: parsed.systemPrompt ?? params.parentConfig.systemPrompt,
+        version: params.parentConfig.version + 1,
         promptHistory: [],
       });
 
-      // Random mutations
-      applyMutations(child);
+      applyRewrites(child);
 
       return child;
     } catch {
-      // If evolution fails, child gets parent's genome with incremented version
-      return new Genome({
-        ...params.parentGenome.toJSON(),
-        version: params.parentGenome.version + 1,
+      return new Config({
+        ...params.parentConfig.toJSON(),
+        version: params.parentConfig.version + 1,
         promptHistory: [],
       });
     }
@@ -86,8 +84,8 @@ function parseEvolveResponse(text: string): { systemPrompt?: string } {
   }
 }
 
-function applyMutations(genome: Genome): void {
-  const sentences = genome.systemPrompt.split(/(?<=\.)\s+/);
+function applyRewrites(config: Config): void {
+  const sentences = config.systemPrompt.split(/(?<=\.)\s+/);
 
   // 10% chance: shuffle one sentence
   if (Math.random() < 0.1 && sentences.length > 2) {
@@ -95,7 +93,7 @@ function applyMutations(genome: Genome): void {
     const newIdx = Math.floor(Math.random() * sentences.length);
     const [removed] = sentences.splice(idx, 1);
     sentences.splice(newIdx, 0, removed!);
-    genome.systemPrompt = sentences.join(" ");
+    config.systemPrompt = sentences.join(" ");
   }
 
   // 5% chance: remove shortest sentence
@@ -103,7 +101,7 @@ function applyMutations(genome: Genome): void {
     const shortest = sentences.reduce((a, b) => (a.length < b.length ? a : b));
     const idx = sentences.indexOf(shortest);
     if (idx >= 0) sentences.splice(idx, 1);
-    genome.systemPrompt = sentences.join(" ");
+    config.systemPrompt = sentences.join(" ");
   }
 
 }

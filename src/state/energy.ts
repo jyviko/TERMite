@@ -122,7 +122,7 @@ export class EnergyLedger {
     this.reserves += tokens;
     this.earned += tokens;
     this.cycleIncome += tokens;
-    // Capacity grows with reserves — organisms can accumulate wealth
+    // Capacity grows with reserves — agents can accumulate wealth
     if (this.reserves > this.capacity) {
       this.capacity = this.reserves;
     }

@@ -2,8 +2,8 @@ import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent } from "../types/index.js";
 import { LLM, type LLMResponse, type ChatParams } from "../llm/index.js";
-import { OrganismStateManager } from "../state/organism-state.js";
-import { OrganismStateMachine } from "../loop/state-machine.js";
+import { AgentStateManager } from "../state/agent-state.js";
+import { AgentStateMachine } from "../loop/state-machine.js";
 import { TEQPool } from "../arena/teq-pool.js";
 
 const { values } = parseArgs({
@@ -134,10 +134,10 @@ async function main() {
 
   const llm = new MockLLM();
   const executor = new MockExecutor();
-  const state = new OrganismStateManager({ budget });
+  const state = new AgentStateManager({ budget });
 
   const teqPool = TEQPool.initialize();
-  const machine = new OrganismStateMachine(
+  const machine = new AgentStateMachine(
     llm,
     executor as unknown as import("../executor/index.js").Executor,
     state,
@@ -145,7 +145,7 @@ async function main() {
     `saves/${state.id}-sim.json`,
   );
 
-  console.log(`Organism ${state.id} born\n`);
+  console.log(`Agent ${state.id} born\n`);
 
   let cycles = 0;
   for await (const event of machine.run()) {
@@ -164,7 +164,7 @@ async function main() {
   console.log(`Energy: ${state.energy.remaining}/${state.energy.capacity}`);
   console.log(`Cycles: ${state.cycleCount}`);
   console.log(`Memories: ${state.memories.memories.length}`);
-  console.log(`Genome version: ${state.genome.version}`);
+  console.log(`Config version: ${state.config.version}`);
   if (state.causeOfDeath) console.log(`Cause of death: ${state.causeOfDeath}`);
 }
 

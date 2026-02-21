@@ -1,8 +1,8 @@
 import type { MemoryType } from "../types/index.js";
-import type { Genome } from "../state/genome.js";
+import type { Config } from "../state/config.js";
 import type { MemoryStore } from "../state/memory.js";
 
-// ── Epigenetic operations (within-lifetime memories) ────────────────
+// ── Session operations (cycle-scoped memories) ─────────────────────
 
 interface StoreOp {
   content: string;
@@ -28,81 +28,78 @@ interface EpigeneticOps {
   consolidate?: ConsolidateOp;
 }
 
-// ── Phylogenetic operations (genome mutations) ──────────────────────
+// ── Persistent operations (prompt rewrites) ─────────────────────────
 
-interface MutateOp {
+interface RewriteOp {
   target: string;
   newPrompt: string;
 }
 
-interface PhylogeneticOps {
-  mutate?: MutateOp[];
+interface PersistentOps {
+  rewrite?: RewriteOp[];
 }
 
 // ── Parsed result ───────────────────────────────────────────────────
 
 export interface ParsedMemorizeInput {
-  epigenetic: EpigeneticOps;
-  phylogenetic: PhylogeneticOps;
+  session: EpigeneticOps;
+  persistent: PersistentOps;
   hasWork: boolean;
 }
 
 /**
  * Parse structured memorize input from tool_use.
- * Accepts the structured schema (epigenetic/phylogenetic) or
- * legacy format (flat JSON in `input` string field) for backward compat.
+ * Accepts the structured schema (session/persistent) or
+ * flat JSON in `input` string field.
  */
 export function parseMemorizeInput(raw: Record<string, unknown>): ParsedMemorizeInput {
-  const epigenetic: EpigeneticOps = {};
-  const phylogenetic: PhylogeneticOps = {};
+  const session: EpigeneticOps = {};
+  const persistent: PersistentOps = {};
 
-  // Structured input — epigenetic/phylogenetic fields
-  if (raw.epigenetic || raw.phylogenetic) {
-    const epi = raw.epigenetic as EpigeneticOps | undefined;
-    if (epi) {
-      if (epi.store) epigenetic.store = epi.store;
-      if (epi.forget) epigenetic.forget = epi.forget;
-      if (epi.compress) epigenetic.compress = epi.compress;
-      if (epi.consolidate) epigenetic.consolidate = epi.consolidate;
+  // Structured input — session/persistent fields
+  if (raw.session || raw.persistent) {
+    const s = raw.session as EpigeneticOps | undefined;
+    if (s) {
+      if (s.store) session.store = s.store;
+      if (s.forget) session.forget = s.forget;
+      if (s.compress) session.compress = s.compress;
+      if (s.consolidate) session.consolidate = s.consolidate;
     }
-    const phylo = raw.phylogenetic as PhylogeneticOps | undefined;
-    if (phylo?.mutate) {
-      phylogenetic.mutate = phylo.mutate;
+    const p = raw.persistent as PersistentOps | undefined;
+    if (p?.rewrite) {
+      persistent.rewrite = p.rewrite;
     }
   } else if (raw.input != null) {
-    // Legacy: JSON or plain text in `input` string field
     const inputStr = String(raw.input).trim();
-    if (!inputStr) return { epigenetic, phylogenetic, hasWork: false };
+    if (!inputStr) return { session, persistent, hasWork: false };
 
     try {
       const jsonMatch = inputStr.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.store) epigenetic.store = parsed.store;
-        if (parsed.forget) epigenetic.forget = parsed.forget;
-        if (parsed.compress) epigenetic.compress = parsed.compress;
-        if (parsed.consolidate) epigenetic.consolidate = parsed.consolidate;
-        if (parsed.mutate) {
-          phylogenetic.mutate = Array.isArray(parsed.mutate) ? parsed.mutate : [parsed.mutate];
+        if (parsed.store) session.store = parsed.store;
+        if (parsed.forget) session.forget = parsed.forget;
+        if (parsed.compress) session.compress = parsed.compress;
+        if (parsed.consolidate) session.consolidate = parsed.consolidate;
+        if (parsed.rewrite) {
+          persistent.rewrite = Array.isArray(parsed.rewrite) ? parsed.rewrite : [parsed.rewrite];
         }
       } else {
-        // Plain text → semantic memory
-        epigenetic.store = [{ content: inputStr, type: "semantic", importance: 0.5 }];
+        session.store = [{ content: inputStr, type: "semantic", importance: 0.5 }];
       }
     } catch {
-      // JSON parse failed → plain text
-      epigenetic.store = [{ content: inputStr, type: "semantic", importance: 0.5 }];
+      session.store = [{ content: inputStr, type: "semantic", importance: 0.5 }];
     }
   }
 
   const hasWork =
-    !!epigenetic.store?.length ||
-    !!epigenetic.forget?.length ||
-    !!epigenetic.compress?.length ||
-    !!epigenetic.consolidate ||
-    !!phylogenetic.mutate?.length;
+    !!session.store?.length ||
+    !!session.forget?.length ||
+    !!session.compress?.length ||
+    !!session.consolidate ||
+    !!persistent.rewrite?.length;
 
-  return { epigenetic, phylogenetic, hasWork };
+  return { session, persistent, hasWork };
 }
 
 /**
@@ -112,15 +109,15 @@ export function parseMemorizeInput(raw: Record<string, unknown>): ParsedMemorize
 export function applyMemorizeOperations(
   ops: ParsedMemorizeInput,
   memories: MemoryStore,
-  genome: Genome,
+  config: Config,
 ): string[] {
   const results: string[] = [];
 
-  // ── Epigenetic: memory operations ──
-  const epi = ops.epigenetic;
+  // ── Session: memory operations ──
+  const s = ops.session;
 
-  if (epi.store) {
-    for (const m of epi.store) {
+  if (s.store) {
+    for (const m of s.store) {
       if (m.content && m.type && typeof m.importance === "number") {
         const mem = memories.add(m.content, m.type as MemoryType, m.importance);
         results.push(`stored ${mem.type}:${mem.importance.toFixed(1)}`);
@@ -128,15 +125,15 @@ export function applyMemorizeOperations(
     }
   }
 
-  if (epi.forget) {
-    for (const id of epi.forget) {
+  if (s.forget) {
+    for (const id of s.forget) {
       memories.forget(id);
       results.push(`forgot ${id}`);
     }
   }
 
-  if (epi.compress) {
-    for (const c of epi.compress) {
+  if (s.compress) {
+    for (const c of s.compress) {
       if (c.id && c.newContent) {
         memories.compress(c.id, c.newContent);
         results.push(`compressed ${c.id}`);
@@ -144,20 +141,20 @@ export function applyMemorizeOperations(
     }
   }
 
-  if (epi.consolidate) {
-    const { sourceIds, newContent, importance } = epi.consolidate;
+  if (s.consolidate) {
+    const { sourceIds, newContent, importance } = s.consolidate;
     if (sourceIds?.length && newContent) {
       memories.consolidate(sourceIds, newContent, importance ?? 0.5);
       results.push(`consolidated ${sourceIds.length} memories`);
     }
   }
 
-  // ── Phylogenetic: genome mutations ──
-  if (ops.phylogenetic.mutate) {
-    for (const m of ops.phylogenetic.mutate) {
-      if (m.target && m.newPrompt?.trim()) {
-        genome.mutate(m.target, m.newPrompt);
-        results.push(`mutated ${m.target}`);
+  // ── Persistent: prompt rewrites ──
+  if (ops.persistent.rewrite) {
+    for (const r of ops.persistent.rewrite) {
+      if (r.target && r.newPrompt?.trim()) {
+        config.mutate(r.target, r.newPrompt);
+        results.push(`rewrote ${r.target}`);
       }
     }
   }

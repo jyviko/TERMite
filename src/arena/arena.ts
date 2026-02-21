@@ -4,19 +4,20 @@ import { randomUUID } from "node:crypto";
 import type { AgentEvent, TaskResult } from "../types/index.js";
 import { LLM } from "../llm/index.js";
 import { Executor } from "../executor/index.js";
-import { OrganismStateManager } from "../state/organism-state.js";
-import { OrganismStateMachine } from "../loop/state-machine.js";
+import { AgentStateManager } from "../state/agent-state.js";
+import type { MemoryStore } from "../state/memory.js";
+import { AgentStateMachine } from "../loop/state-machine.js";
 import { TaskGenerator, TIER_REWARDS } from "./task-generator.js";
 import { TaskVerifier } from "./task-verifier.js";
-import { GenomeEvolver } from "./evolution.js";
+import { ConfigEvolver } from "./iteration.js";
 import { SharedBudget } from "./shared-budget.js";
 import { TEQPool } from "./teq-pool.js";
 import { OpenDataGenerator } from "./open-data-generator.js";
 import { WorkRater } from "./work-rater.js";
 
-interface OrganismEntry {
-  stateMachine: OrganismStateMachine;
-  state: OrganismStateManager;
+interface AgentEntry {
+  stateMachine: AgentStateMachine;
+  state: AgentStateManager;
   executor: Executor;
   taskTier: number;
   currentTask: import("../types/index.js").Task | null;
@@ -29,19 +30,19 @@ interface OrganismEntry {
 }
 
 export interface ArenaConfig {
-  organismCount: number;
+  agentCount: number;
   totalBudget: number;
   workspaceRoot: string;
   apiKey?: string;
   baseUrl?: string;
-  /** Override thinking model for all organisms. */
   model?: string;
+  seedPaths?: string[];
   poolInitialBalance?: number;
   poolRegenPerCycle?: number;
   poolMaxBalance?: number;
 }
 
-// ANSI color palette for per-organism log coloring
+// ANSI color palette for per-agent log coloring
 const ORG_COLORS = [
   "\x1b[36m",  // cyan
   "\x1b[33m",  // yellow
@@ -60,14 +61,14 @@ const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
 
 export class Arena {
-  private organisms = new Map<string, OrganismEntry>();
-  private organismColors = new Map<string, string>();
+  private agents = new Map<string, AgentEntry>();
+  private agentColors = new Map<string, string>();
   private llm: LLM;
   private sharedBudget: SharedBudget;
   private teqPool: TEQPool;
   private taskGenerator: TaskGenerator;
   private taskVerifier: TaskVerifier;
-  private evolver: GenomeEvolver;
+  private evolver: ConfigEvolver;
   private workRater: WorkRater;
   private openDataGenerator: OpenDataGenerator;
   private config: ArenaConfig;
@@ -84,7 +85,7 @@ export class Arena {
     });
     this.taskGenerator = new TaskGenerator();
     this.taskVerifier = new TaskVerifier();
-    this.evolver = new GenomeEvolver(this.llm);
+    this.evolver = new ConfigEvolver(this.llm);
     this.workRater = new WorkRater(this.llm);
     this.openDataGenerator = new OpenDataGenerator();
   }
@@ -98,8 +99,33 @@ export class Arena {
 
     console.log(`Run directory: ${this.runDir}`);
 
-    for (let i = 0; i < this.config.organismCount; i++) {
-      await this.spawnOrganism();
+    // Seed agents from previous runs — config + memories carry over, fresh energy
+    let seeded = 0;
+    for (const seedPath of this.config.seedPaths ?? []) {
+      if (seeded >= this.config.agentCount) break;
+      try {
+        const ancestor = await AgentStateManager.load(seedPath);
+        await this.spawnAgent(
+          ancestor.id,
+          ancestor.config,
+          undefined,
+          ancestor.memories,
+          ancestor.generation,
+        );
+        console.log(
+          `[ARENA] Seeded from ${seedPath} — gen ${ancestor.generation}, ` +
+          `genome v${ancestor.config.version}, ${ancestor.memories.memories.length} memories`,
+        );
+        seeded++;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[ARENA] Failed to seed from ${seedPath}: ${msg}`);
+      }
+    }
+
+    // Fill remaining slots with fresh agents
+    for (let i = seeded; i < this.config.agentCount; i++) {
+      await this.spawnAgent();
     }
   }
 
@@ -119,8 +145,8 @@ export class Arena {
     this.syncPeerData(); // initial write
 
     try {
-      const promises = Array.from(this.organisms.entries()).map(([id, entry]) =>
-        this.runOrganism(id, entry),
+      const promises = Array.from(this.agents.entries()).map(([id, entry]) =>
+        this.runAgent(id, entry),
       );
       await Promise.allSettled(promises);
     } finally {
@@ -131,15 +157,15 @@ export class Arena {
   }
 
   async stop(): Promise<void> {
-    const stops = Array.from(this.organisms.values()).map((entry) =>
+    const stops = Array.from(this.agents.values()).map((entry) =>
       entry.executor.stop().catch(() => {}),
     );
     await Promise.allSettled(stops);
   }
 
-  /** Graceful shutdown: save all organism state, then stop containers. */
+  /** Graceful shutdown: save all agent state, then stop containers. */
   async shutdown(): Promise<void> {
-    const saves = Array.from(this.organisms.entries()).map(([id, entry]) =>
+    const saves = Array.from(this.agents.entries()).map(([id, entry]) =>
       entry.state.save(join(this.runDir, id, "state.json")).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[ARENA] Failed to save ${id}: ${msg}`);
@@ -149,32 +175,42 @@ export class Arena {
     await this.stop();
   }
 
-  private async spawnOrganism(
+  private async spawnAgent(
     parentId?: string,
-    genome?: import("../state/genome.js").Genome,
+    config?: import("../state/config.js").Config,
     startingReserves?: number,
+    seedMemories?: MemoryStore,
+    ancestorGeneration?: number,
   ): Promise<string> {
     const id = `org-${randomUUID().slice(0, 8)}`;
     const workspacePath = join(this.runDir, id, "workspace");
     mkdirSync(workspacePath, { recursive: true });
 
-    const perOrganismBudget = startingReserves ?? Math.floor(
-      this.sharedBudget.available / Math.max(1, this.config.organismCount),
+    const perAgentBudget = startingReserves ?? Math.floor(
+      this.sharedBudget.available / Math.max(1, this.config.agentCount),
     );
 
-    const state = new OrganismStateManager({
+    const generation = ancestorGeneration != null
+      ? ancestorGeneration + 1
+      : parentId
+        ? (this.agents.get(parentId)?.state.generation ?? 0) + 1
+        : 0;
+
+    const state = new AgentStateManager({
       id,
-      budget: perOrganismBudget,
+      budget: perAgentBudget,
       reserves: startingReserves,
       thinkingModel: this.config.model,
-      generation: parentId
-        ? (this.organisms.get(parentId)?.state.generation ?? 0) + 1
-        : 0,
+      generation,
       parentId: parentId ?? null,
     });
 
-    if (genome) {
-      state.genome = genome;
+    if (config) {
+      state.config = config;
+    }
+
+    if (seedMemories) {
+      state.memories = seedMemories;
     }
 
     const sharedDir = resolve(join(this.runDir, "shared"));
@@ -187,7 +223,7 @@ export class Arena {
     await executor.start();
 
     const savePath = join(this.runDir, id, "state.json");
-    const machine = new OrganismStateMachine(this.llm, executor, state, this.teqPool, savePath);
+    const machine = new AgentStateMachine(this.llm, executor, state, this.teqPool, savePath);
 
     // Drop initial task
     const task = this.taskGenerator.generateTask(1, 0);
@@ -202,7 +238,7 @@ export class Arena {
       }
     }
 
-    const entry: OrganismEntry = {
+    const entry: AgentEntry = {
       stateMachine: machine,
       state,
       executor,
@@ -215,12 +251,12 @@ export class Arena {
       graduated: false,
     };
 
-    this.organisms.set(id, entry);
-    this.organismColors.set(id, ORG_COLORS[(this.organisms.size - 1) % ORG_COLORS.length]!);
+    this.agents.set(id, entry);
+    this.agentColors.set(id, ORG_COLORS[(this.agents.size - 1) % ORG_COLORS.length]!);
     return id;
   }
 
-  private async runOrganism(id: string, entry: OrganismEntry): Promise<void> {
+  private async runAgent(id: string, entry: AgentEntry): Promise<void> {
     try {
       for await (const event of entry.stateMachine.run()) {
         this.logEvent(id, entry.state.mode, event);
@@ -261,7 +297,7 @@ export class Arena {
     }
   }
 
-  private async onTaskComplete(id: string, entry: OrganismEntry): Promise<void> {
+  private async onTaskComplete(id: string, entry: AgentEntry): Promise<void> {
     const workspacePath = join(this.runDir, id, "workspace");
     const task = entry.currentTask;
     if (!task) return;
@@ -313,18 +349,18 @@ export class Arena {
     }
   }
 
-  private async onGraduation(id: string, entry: OrganismEntry): Promise<void> {
+  private async onGraduation(id: string, entry: AgentEntry): Promise<void> {
     const workspacePath = join(this.runDir, id, "workspace");
     console.log(`[ARENA] ${id} GRADUATED from tier 5 — transitioning to open data`);
 
     entry.currentTask = null;
 
-    // Place raw data — organism must figure out what to do
+    // Place raw data — agent must figure out what to do
     const result = this.openDataGenerator.placeData(workspacePath);
     entry.graduationData = { datasetName: result.datasetName, files: result.files };
   }
 
-  private async rateGraduateWork(id: string, entry: OrganismEntry): Promise<void> {
+  private async rateGraduateWork(id: string, entry: AgentEntry): Promise<void> {
     const workspacePath = join(this.runDir, id, "workspace");
     const dataDir = join(workspacePath, "data");
     const outputDir = join(workspacePath, "output");
@@ -353,7 +389,7 @@ export class Arena {
     }
   }
 
-  private async reproduce(parentId: string, parent: OrganismEntry): Promise<void> {
+  private async reproduce(parentId: string, parent: AgentEntry): Promise<void> {
     const INVESTMENT_RATIO = 0.3;
     const MIN_VIABLE_OFFSPRING = 20_000;
 
@@ -369,21 +405,21 @@ export class Arena {
     parent.state.energy.burnFlat(investment);
 
     try {
-      const evolvedGenome = await this.evolver.evolve({
-        parentGenome: parent.state.genome,
+      const evolvedConfig = await this.evolver.evolve({
+        parentConfig: parent.state.config,
         memories: parent.state.memories.memories,
         taskHistory: parent.taskHistory,
         generation: parent.state.generation,
       });
-      const childId = await this.spawnOrganism(parentId, evolvedGenome, investment);
+      const childId = await this.spawnAgent(parentId, evolvedConfig, investment);
       console.log(
         `[ARENA] ${parentId} reproduced → ${childId} (gen ${parent.state.generation + 1}, invested ${investment} TEQ)`,
       );
 
-      // Run the child organism concurrently
-      const childEntry = this.organisms.get(childId);
+      // Run the child agent concurrently
+      const childEntry = this.agents.get(childId);
       if (childEntry) {
-        this.runOrganism(childId, childEntry).catch((err: unknown) => {
+        this.runAgent(childId, childEntry).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(`[ARENA] Child ${childId} run failed: ${msg}`);
         });
@@ -400,32 +436,31 @@ export class Arena {
     const sharedDir = join(this.runDir, "shared");
 
     // Leaderboard
-    const leaderboard = Array.from(this.organisms.entries()).map(([id, entry]) => ({
+    const leaderboard = Array.from(this.agents.entries()).map(([id, entry]) => ({
       id,
-      alive: entry.state.alive,
+      active: entry.state.alive,
       cycleCount: entry.state.cycleCount,
       taskTier: entry.taskTier,
       energyPct: Math.floor(entry.state.energy.ratio * 100),
       reserves: entry.state.energy.reserves,
-      genomeVersion: entry.state.genome.version,
-      model: entry.state.genome.routing.thinking.model,
+      configVersion: entry.state.config.version,
+      model: entry.state.config.routing.thinking.model,
       consecutivePasses: entry.consecutivePasses,
       graduated: entry.graduated,
     }));
     leaderboard.sort((a, b) => b.energyPct - a.energyPct);
     writeFileSync(
       join(sharedDir, "_leaderboard.json"),
-      JSON.stringify({ updated: new Date().toISOString(), organisms: leaderboard }, null, 2),
+      JSON.stringify({ updated: new Date().toISOString(), agents: leaderboard }, null, 2),
     );
 
-    // Peer tools — collect tool names and contents from each organism
-    const peerTools: Record<string, { alive: boolean; tools: Record<string, string> }> = {};
-    for (const [id, entry] of this.organisms) {
+    // Peer tools — collect tool names and contents from each agent
+    const peerTools: Record<string, { active: boolean; tools: Record<string, string> }> = {};
+    for (const [id, entry] of this.agents) {
       const toolsDir = join(this.runDir, id, "workspace", "tools");
       const tools: Record<string, string> = {};
       try {
         for (const file of readdirSync(toolsDir)) {
-          // Skip the standard seeded tools — only share custom ones
           if (["shell", "check", "leaderboard", "peer_tools"].includes(file)) continue;
           try {
             tools[file] = readFileSync(join(toolsDir, file), "utf-8");
@@ -436,26 +471,26 @@ export class Arena {
       } catch {
         // toolsDir doesn't exist yet
       }
-      peerTools[id] = { alive: entry.state.alive, tools };
+      peerTools[id] = { active: entry.state.alive, tools };
     }
     writeFileSync(
       join(sharedDir, "_peer_tools.json"),
-      JSON.stringify({ updated: new Date().toISOString(), organisms: peerTools }, null, 2),
+      JSON.stringify({ updated: new Date().toISOString(), agents: peerTools }, null, 2),
     );
   }
 
   private logEvent(id: string, mode: string, event: AgentEvent): void {
-    const c = this.organismColors.get(id) ?? "";
+    const c = this.agentColors.get(id) ?? "";
     const prefix = `${c}[${id}]${RESET} ${c}[${mode.toUpperCase()}]${RESET}`;
     switch (event.type) {
       case "text":
         console.log(`${prefix} ${DIM}${event.text.slice(0, 200)}${RESET}`);
         break;
       case "tool_start":
-        console.log(`${prefix} ${c}→${RESET} ${event.name}`);
+        console.log(`${prefix} [TOOL] ${c}→${RESET} ${event.name}`);
         break;
       case "tool_result":
-        console.log(`${prefix} ${c}←${RESET} ${event.name}: ${DIM}${event.result.slice(0, 100)}${RESET}`);
+        console.log(`${prefix} [TOOL] ${c}←${RESET} ${event.name}: ${DIM}${event.result.slice(0, 100)}${RESET}`);
         break;
       case "state_change":
         console.log(`${prefix} ${event.from} ${c}→${RESET} ${event.to}`);

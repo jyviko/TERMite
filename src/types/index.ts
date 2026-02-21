@@ -1,11 +1,12 @@
-// Organism modes
-export type OrganismMode = "alive" | "dead";
+// Agent modes
+export type AgentMode = "alive" | "dead";
 
 // Outcome from resolve
 export type Outcome = "success" | "partial" | "failure" | "uncertain";
 
 // Drive names
-export type DriveName = "orient" | "metabolize" | "grow" | "coordinate";
+export const DRIVE_NAMES = ["explore", "acquire", "grow", "coordinate"] as const;
+export type DriveName = (typeof DRIVE_NAMES)[number];
 
 // Memory types
 export type MemoryType = "episodic" | "semantic" | "procedural";
@@ -56,14 +57,14 @@ export interface CycleRecord {
   cacheReadTokens?: number;
 }
 
-export interface Genome {
+export interface Config {
   systemPrompt: string;
   resolvePrompt: string;
   restPrompt: string;
   memorizePrompt: string;
   routing: RoutingConfig;
   version: number;
-  promptHistory: PromptMutation[];
+  promptHistory: PromptRewrite[];
 }
 
 export interface RouteEntry {
@@ -77,7 +78,7 @@ export interface RoutingConfig {
   resolve: RouteEntry;
 }
 
-export interface PromptMutation {
+export interface PromptRewrite {
   phase: string;
   oldPrompt: string;
   newPrompt: string;
@@ -85,7 +86,7 @@ export interface PromptMutation {
   version: number;
 }
 
-export interface OrganismState {
+export interface AgentState {
   id: string;
   generation: number;
   parentId: string | null;
@@ -93,12 +94,12 @@ export interface OrganismState {
   alive: boolean;
   causeOfDeath: string | null;
   cycleCount: number;
-  mode: OrganismMode;
+  mode: AgentMode;
   goal: string | null;
   energy: EnergyLedgerData;
   drives: Record<DriveName, Drive>;
   memories: Memory[];
-  genome: Genome;
+  config: Config;
 }
 
 // Task system
@@ -128,6 +129,6 @@ export type AgentEvent =
   | { type: "tool_result"; name: string; result: string }
   | { type: "usage"; input: number; output: number; cacheCreation: number; cacheRead: number; cumulative: { input: number; output: number; cacheCreation: number; cacheRead: number; iterations: number } }
   | { type: "error"; message: string }
-  | { type: "state_change"; from: OrganismMode; to: OrganismMode }
-  | { type: "phase_change"; phase: "thinking" | "executing" | "resolving" | "memorizing" }
+  | { type: "state_change"; from: AgentMode; to: AgentMode }
+  | { type: "phase_change"; phase: "executing" | "resolving" | "memorizing" }
   | { type: "tools_available"; tools: string[] };

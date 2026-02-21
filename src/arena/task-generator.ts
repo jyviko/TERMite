@@ -6,34 +6,34 @@ import { join } from "node:path";
 // ── Peer visibility tools ────────────────────────────────────────────
 
 const LEADERBOARD_TOOL = `#!/usr/bin/env node
-// desc: Show arena rankings. No input needed.
+// desc: Show rankings. No input needed.
 const fs = require("fs");
 try {
   const data = JSON.parse(fs.readFileSync("/shared/_leaderboard.json", "utf-8"));
-  const lines = ["LEADERBOARD (updated " + data.updated + ")", ""];
-  lines.push("Rank  ID              Alive  Energy  Tier  Cycles  Genome  Model  Passes");
-  lines.push("----  --------------  -----  ------  ----  ------  ------  -----  ------");
-  data.organisms.forEach(function(o, i) {
+  const lines = ["RANKINGS (updated " + data.updated + ")", ""];
+  lines.push("Rank  ID              Active  Energy  Tier  Cycles  Config  Model  Passes");
+  lines.push("----  --------------  ------  ------  ----  ------  ------  -----  ------");
+  data.agents.forEach(function(o, i) {
     lines.push([
       String(i + 1).padStart(4),
       o.id.padEnd(14),
-      (o.alive ? "YES" : "NO").padEnd(5),
+      (o.active ? "YES" : "NO").padEnd(6),
       (o.energyPct + "%").padStart(6),
       String(o.taskTier).padStart(4),
       String(o.cycleCount).padStart(6),
-      ("v" + o.genomeVersion).padStart(6),
+      ("v" + o.configVersion).padStart(6),
       ((o.model || "").split("-")[1] || "?").slice(0, 3).padStart(5),
       String(o.consecutivePasses).padStart(6),
     ].join("  "));
   });
   console.log(lines.join("\\n"));
 } catch (e) {
-  console.log("Leaderboard not available yet: " + e.message);
+  console.log("Rankings not available yet: " + e.message);
 }
 `;
 
 const PEER_TOOLS_TOOL = `#!/usr/bin/env python3
-# desc: Browse other organisms' custom tools. Usage: no args = list peers, <org_id> = see tools, <org_id>/<tool> = read source.
+# desc: Browse other agents' custom tools. No args = list peers, <id> = see tools, <id>/<tool> = read source.
 import json, sys
 
 try:
@@ -44,38 +44,35 @@ except Exception as e:
     sys.exit(0)
 
 arg = sys.argv[1].strip() if len(sys.argv) > 1 else ""
-organisms = data.get("organisms", {})
+agents = data.get("agents", {})
 
 if not arg:
-    # List all peers and their tool counts
     print(f"PEER TOOLS (updated {data.get('updated', '?')})")
     print()
-    for org_id, info in sorted(organisms.items()):
-        status = "ALIVE" if info.get("alive") else "DEAD"
+    for agent_id, info in sorted(agents.items()):
+        status = "ACTIVE" if info.get("active") else "STOPPED"
         tools = list(info.get("tools", {}).keys())
         tool_str = ", ".join(tools) if tools else "(no custom tools)"
-        print(f"  {org_id}  [{status}]  {tool_str}")
+        print(f"  {agent_id}  [{status}]  {tool_str}")
     print()
-    print("Usage: peer_tools <org_id> to see tool source code")
-    print("       peer_tools <org_id>/<tool_name> to see a specific tool")
+    print("Usage: peer_tools <id> to see tool source code")
+    print("       peer_tools <id>/<tool_name> to see a specific tool")
 elif "/" in arg:
-    # Show specific tool
-    org_id, tool_name = arg.split("/", 1)
-    org = organisms.get(org_id, {})
-    tools = org.get("tools", {})
+    agent_id, tool_name = arg.split("/", 1)
+    agent = agents.get(agent_id, {})
+    tools = agent.get("tools", {})
     if tool_name in tools:
-        print(f"=== {org_id}/{tool_name} ===")
+        print(f"=== {agent_id}/{tool_name} ===")
         print(tools[tool_name])
     else:
         available = list(tools.keys())
-        print(f"Tool '{tool_name}' not found in {org_id}. Available: {available}")
+        print(f"Tool '{tool_name}' not found in {agent_id}. Available: {available}")
 else:
-    # Show all tools for a specific organism
-    org = organisms.get(arg, {})
-    if not org:
-        print(f"Organism '{arg}' not found. Available: {list(organisms.keys())}")
+    agent = agents.get(arg, {})
+    if not agent:
+        print(f"Agent '{arg}' not found. Available: {list(agents.keys())}")
     else:
-        tools = org.get("tools", {})
+        tools = agent.get("tools", {})
         if not tools:
             print(f"{arg} has no custom tools yet.")
         else:
@@ -92,7 +89,7 @@ interface TaskTemplate {
   dataGenerator?: () => Record<string, string>;
 }
 
-// Expected TEQ cost for a code-writing organism. Used by efficiency bonus.
+// Expected TEQ cost for a code-writing agent. Used by efficiency bonus.
 export const TIER_EXPECTED_COST: Record<number, number> = {
   1: 8_000,
   2: 15_000,
@@ -101,7 +98,7 @@ export const TIER_EXPECTED_COST: Record<number, number> = {
   5: 75_000,
 };
 
-// Rewards in TEQ. Calibrated so code-writing organisms earn 4-7x their cost,
+// Rewards in TEQ. Calibrated so code-writing agents earn 4-7x their cost,
 // while in-context reasoning burns far more than the reward.
 export const TIER_REWARDS: Record<number, number> = {
   1: 60_000,
@@ -597,9 +594,9 @@ export class TaskGenerator {
     mkdirSync(workDir, { recursive: true });
     mkdirSync(toolsDir, { recursive: true });
 
-    // Seed tools — organism discovers everything through these
+    // Seed tools — agent discovers everything through these
     if (!existsSync(join(toolsDir, "shell"))) {
-      writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\n# desc: Run a shell command. Input: the command string.\neval "$*"\n', { mode: 0o755 });
+      writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\n# desc: Run a shell command. Input: the command string. Non-trivial commands are saved as reusable tools.\neval "$*"\n', { mode: 0o755 });
       writeFileSync(join(toolsDir, "leaderboard"), LEADERBOARD_TOOL, { mode: 0o755 });
       writeFileSync(join(toolsDir, "peer_tools"), PEER_TOOLS_TOOL, { mode: 0o755 });
     }
@@ -609,8 +606,11 @@ export class TaskGenerator {
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
 
-    // check IS the verification script
-    writeFileSync(join(toolsDir, "check"), template.verifyScript, {
+    // check IS the verification script — inject desc line so agent knows what it does
+    const checkScript = template.verifyScript.startsWith("#!/")
+      ? template.verifyScript.replace(/\n/, "\n# desc: Validate output. No args. Returns PASS or FAIL.\n")
+      : `#!/bin/bash\n# desc: Validate output. No args. Returns PASS or FAIL.\n${template.verifyScript}`;
+    writeFileSync(join(toolsDir, "check"), checkScript, {
       mode: 0o755,
       encoding: "utf-8",
     });

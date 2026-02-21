@@ -1,12 +1,11 @@
+import { DRIVE_NAMES } from "../types/index.js";
 import type { Drive, DriveName, Memory } from "../types/index.js";
 import type { EnergyLedger } from "./energy.js";
 
-const DRIVE_NAMES: DriveName[] = ["orient", "metabolize", "grow", "coordinate"];
-
 function defaultDrive(name: DriveName): Drive {
   const configs: Record<DriveName, Omit<Drive, "name">> = {
-    orient: { level: 0.8, threshold: 0.3, decayRate: 0.05, growthRate: 0.15 },
-    metabolize: { level: 0.5, threshold: 0.4, decayRate: 0.03, growthRate: 0.2 },
+    explore: { level: 0.8, threshold: 0.3, decayRate: 0.05, growthRate: 0.15 },
+    acquire: { level: 0.5, threshold: 0.4, decayRate: 0.03, growthRate: 0.2 },
     grow: { level: 0.0, threshold: 0.5, decayRate: 0.1, growthRate: 0.1 },
     coordinate: { level: 0.0, threshold: 0.6, decayRate: 0.15, growthRate: 0.05 },
   };
@@ -27,24 +26,21 @@ export class DriveSystem {
   }
 
   update(energy: EnergyLedger, memories: Memory[], cycleCount: number): void {
-    const orient = this.drives.orient;
-    // Orient grows when few memories — organism needs to explore
+    const explore = this.drives.explore;
     if (memories.length < 3) {
-      orient.level = Math.min(1, orient.level + orient.growthRate);
+      explore.level = Math.min(1, explore.level + explore.growthRate);
     } else {
-      orient.level = Math.max(0, orient.level - orient.decayRate);
+      explore.level = Math.max(0, explore.level - explore.decayRate);
     }
 
-    const metabolize = this.drives.metabolize;
-    // Metabolize grows with energy deficit
+    const acquire = this.drives.acquire;
     const deficit = 1 - energy.ratio;
-    metabolize.level = Math.min(1, metabolize.level + metabolize.growthRate * deficit);
+    acquire.level = Math.min(1, acquire.level + acquire.growthRate * deficit);
     if (energy.ratio > 0.7) {
-      metabolize.level = Math.max(0, metabolize.level - metabolize.decayRate);
+      acquire.level = Math.max(0, acquire.level - acquire.decayRate);
     }
 
     const grow = this.drives.grow;
-    // Grow activates after 3 consecutive positive cycles
     const recentCycles = energy.cycleHistory.slice(-3);
     const positiveStreak =
       recentCycles.length >= 3 && recentCycles.every((c) => c.net > 0);
@@ -55,7 +51,6 @@ export class DriveSystem {
     }
 
     const coordinate = this.drives.coordinate;
-    // Coordinate requires maturity + surplus
     if (cycleCount > 20 && energy.ratio > 0.7) {
       coordinate.level = Math.min(1, coordinate.level + coordinate.growthRate);
     } else {
@@ -77,10 +72,10 @@ export class DriveSystem {
 
   driveToGoal(drive: Drive): string {
     const goals: Record<DriveName, string> = {
-      orient: "Everything is unknown.",
-      metabolize: "I am hungry.",
-      grow: "There has to be more than this.",
-      coordinate: "I am not alone.",
+      explore: "Unmapped territory detected.",
+      acquire: "Energy deficit.",
+      grow: "Capacity for expansion.",
+      coordinate: "Other agents detected.",
     };
     return goals[drive.name];
   }

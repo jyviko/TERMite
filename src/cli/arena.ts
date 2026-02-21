@@ -6,12 +6,13 @@ loadEnv();
 
 const { values } = parseArgs({
   options: {
-    organisms: { type: "string", default: "3" },
+    agents: { type: "string", default: "3" },
     budget: { type: "string", default: "500000" },
     workspace: { type: "string", default: "./arena-workspace" },
     "api-key": { type: "string" },
     "base-url": { type: "string" },
     model: { type: "string" },
+    seed: { type: "string", multiple: true },
     "pool-balance": { type: "string" },
     "pool-regen": { type: "string" },
     "pool-max": { type: "string" },
@@ -19,7 +20,7 @@ const { values } = parseArgs({
 });
 
 async function main() {
-  const organismCount = parseInt(values.organisms ?? "3", 10);
+  const agentCount = parseInt(values.agents ?? "3", 10);
   const totalBudget = parseInt(values.budget ?? "500000", 10);
 
   const MODEL_IDS: Record<string, string> = {
@@ -30,16 +31,19 @@ async function main() {
   const modelArg = values.model;
   const model = modelArg ? MODEL_IDS[modelArg] ?? modelArg : undefined;
 
+  const seedPaths = values.seed ?? [];
+
   console.log(`=== TERM-ITE ARENA ===`);
-  console.log(`Organisms: ${organismCount} | Budget: ${totalBudget}${model ? ` | Model: ${modelArg}` : ""}`);
+  console.log(`Agents: ${agentCount} | Budget: ${totalBudget}${model ? ` | Model: ${modelArg}` : ""}${seedPaths.length ? ` | Seeds: ${seedPaths.length}` : ""}`);
 
   const arena = new Arena({
-    organismCount,
+    agentCount: agentCount,
     totalBudget,
     workspaceRoot: values.workspace ?? "./arena-workspace",
     apiKey: values["api-key"] ?? process.env.ANTHROPIC_API_KEY,
     baseUrl: values["base-url"] ?? process.env.ANTHROPIC_BASE_URL,
     model,
+    seedPaths: seedPaths.length > 0 ? seedPaths : undefined,
     poolInitialBalance: values["pool-balance"] ? parseInt(values["pool-balance"], 10) : undefined,
     poolRegenPerCycle: values["pool-regen"] ? parseInt(values["pool-regen"], 10) : undefined,
     poolMaxBalance: values["pool-max"] ? parseInt(values["pool-max"], 10) : undefined,
@@ -55,7 +59,7 @@ async function main() {
   process.on("SIGTERM", shutdown);
 
   await arena.start();
-  console.log("Arena started. Running organisms...\n");
+  console.log("Arena started. Running agents...\n");
 
   await arena.run();
 
