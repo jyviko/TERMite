@@ -150,9 +150,11 @@ describe("Full Loop Integration", () => {
     );
     expect(resolveToolResults).toHaveLength(0);
 
-    // Verify memory was stored by mandatory memorize phase
+    // Verify auto-stored cycle memory pair
     expect(state.memories.memories.length).toBeGreaterThan(0);
-    expect(state.memories.memories[0]!.content).toBe("Check data directory first");
+    const cycleMem = state.memories.memories[0]!;
+    expect(cycleMem.context).toContain("Cycle 0");
+    expect(cycleMem.content).toContain("Outcome: success");
 
     // Verify income was earned from successful resolve
     expect(state.energy.earned).toBeGreaterThan(0);

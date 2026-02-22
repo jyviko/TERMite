@@ -146,7 +146,7 @@ describe("AgentStateMachine", () => {
     );
     // Phase 3: Memorize — mandatory memory management
     llm.addResponse(
-      [{ type: "text", text: '{"store":[{"content":"Workspace has data files","type":"semantic","importance":0.7}]}', citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
 
@@ -176,10 +176,12 @@ describe("AgentStateMachine", () => {
     expect(state.energy.cycleHistory[0]!.outcome).toBe("success");
     expect(state.energy.cycleHistory[0]!.goalRelevance).toBe(0.8);
 
-    // Verify memorize stored the memory
+    // Verify auto-stored cycle memory pair
     expect(state.memories.memories.length).toBeGreaterThan(0);
-    expect(state.memories.memories[0]!.content).toBe("Workspace has data files");
-    expect(state.memories.memories[0]!.type).toBe("semantic");
+    const cycleMem = state.memories.memories[0]!;
+    expect(cycleMem.context).toContain("Cycle 0");
+    expect(cycleMem.content).toContain("Outcome: success");
+    expect(cycleMem.content).toContain("Explored workspace");
 
     // First cycle: think(tool_use) + think(end_turn) + resolve + memorize = 4 calls minimum
     expect(llm.callIndex).toBeGreaterThanOrEqual(4);
@@ -224,7 +226,7 @@ describe("AgentStateMachine", () => {
     expect(toolNames).not.toContain("memorize");
   });
 
-  it("awareness message is minimal: memories + energy + drives + goal + cycle", async () => {
+  it("awareness message contains energy, drives, cycle — memories are conversation pairs", async () => {
     const llm = new MockLLM();
 
     // Capture messages from the FIRST LLM call only (Think phase)
@@ -264,24 +266,25 @@ describe("AgentStateMachine", () => {
 
     await collectEvents(machine.run(), 20);
 
-    // The first user message of the first call is the awareness message
     expect(firstCallMessages).not.toBeNull();
     expect(firstCallMessages!.length).toBeGreaterThan(0);
-    const awareness = firstCallMessages![0]!;
-    expect(awareness.role).toBe("user");
-    const text = awareness.content as string;
 
-    // Should contain minimal sections
-    expect(text).toContain("Memories:");
+    // First cycle has no memories — only the awareness user message
+    // Find the user message (withMessageCacheBreakpoint may wrap content)
+    const userMessages = firstCallMessages!.filter((m) => m.role === "user");
+    expect(userMessages.length).toBeGreaterThan(0);
+    const awareness = userMessages[0]!;
+    const text = typeof awareness.content === "string"
+      ? awareness.content
+      : (awareness.content as any[]).map((b: any) => b.text ?? "").join("");
+
+    // Should contain status sections
     expect(text).toContain("Energy:");
     expect(text).toContain("Drives:");
     expect(text).toContain("Cycle:");
 
-    // Should NOT contain awareness engineering artifacts
-    expect(text).not.toContain("Base cost:");
-    expect(text).not.toContain("Last cycle:");
-    expect(text).not.toContain("Never tried:");
-    expect(text).not.toContain("Tools:");
+    // Memories are NOT in awareness text — they're injected as conversation pairs
+    expect(text).not.toContain("Memories:");
   });
 
   it("memorize phase supports prompt rewrite via promptRewrite field", async () => {

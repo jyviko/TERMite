@@ -1,6 +1,11 @@
 import type { Memory, MemoryType } from "../types/index.js";
 import { randomUUID } from "node:crypto";
 
+export interface MessagePair {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export class MemoryStore {
   memories: Memory[];
 
@@ -8,10 +13,11 @@ export class MemoryStore {
     this.memories = memories ?? [];
   }
 
-  add(content: string, type: MemoryType, importance: number): Memory {
+  add(content: string, type: MemoryType, importance: number, context = ""): Memory {
     const now = Date.now();
     const mem: Memory = {
       id: `mem_${randomUUID().slice(0, 8)}`,
+      context,
       content,
       type,
       importance: Math.max(0, Math.min(1, importance)),
@@ -19,7 +25,7 @@ export class MemoryStore {
       createdAt: now,
       lastAccessed: now,
       energySaved: 0,
-      tokenCost: this.estimateTokens(content),
+      tokenCost: this.estimateTokens(context + content),
     };
     this.memories.push(mem);
     return mem;
@@ -37,7 +43,7 @@ export class MemoryStore {
     if (!mem) return 0;
     const oldCost = mem.tokenCost;
     mem.content = newContent;
-    mem.tokenCost = this.estimateTokens(newContent);
+    mem.tokenCost = this.estimateTokens(mem.context + newContent);
     const saved = oldCost - mem.tokenCost;
     mem.energySaved += Math.max(0, saved);
     return Math.max(0, saved);
@@ -51,8 +57,12 @@ export class MemoryStore {
     // Remove source memories
     this.memories = this.memories.filter((m) => !ids.includes(m.id));
 
-    // Add consolidated memory
-    const mem = this.add(newContent, "semantic", importance);
+    // Consolidated memory — merge contexts
+    const mergedContext = sources
+      .filter((m) => m.context)
+      .map((m) => m.context)
+      .join(" → ");
+    const mem = this.add(newContent, "semantic", importance, mergedContext);
     mem.energySaved = Math.max(0, totalOldTokens - mem.tokenCost);
 
     return mem.energySaved;
@@ -72,6 +82,37 @@ export class MemoryStore {
     }
   }
 
+  /**
+   * Format memories as user/assistant message pairs for conversation injection.
+   * Chronological order, budget-limited. This IS the agent's persistent history.
+   */
+  formatAsMessages(tokenBudget: number): MessagePair[] {
+    const chronological = [...this.memories]
+      .sort((a, b) => a.createdAt - b.createdAt);
+
+    // Select most recent that fit in budget
+    const selected: Memory[] = [];
+    let totalTokens = 0;
+    for (let i = chronological.length - 1; i >= 0; i--) {
+      const m = chronological[i]!;
+      if (totalTokens + m.tokenCost > tokenBudget) break;
+      selected.unshift(m);
+      totalTokens += m.tokenCost;
+    }
+
+    const messages: MessagePair[] = [];
+    for (const m of selected) {
+      messages.push({ role: "user", content: m.context || `[${m.type}]` });
+      messages.push({ role: "assistant", content: m.content });
+    }
+
+    return messages;
+  }
+
+  /**
+   * Format memories as text for the memorize prompt (management view).
+   * Shows IDs, types, costs so the LLM can decide what to compress/forget.
+   */
   format(tokenBudget: number, maxCount?: number): string {
     const sorted = [...this.memories]
       .sort((a, b) => this.effectiveScore(b) - this.effectiveScore(a));
@@ -83,7 +124,13 @@ export class MemoryStore {
 
     for (const m of limited) {
       if (totalTokens + m.tokenCost > tokenBudget) break;
-      lines.push(`[${m.type}] (${m.importance.toFixed(1)}) ${m.content}`);
+      if (m.context) {
+        lines.push(`[${m.id}] ${m.type} (imp:${m.importance.toFixed(1)}, tokens:${m.tokenCost})`);
+        lines.push(`  User: ${m.context}`);
+        lines.push(`  Agent: ${m.content}`);
+      } else {
+        lines.push(`[${m.id}] ${m.type} (imp:${m.importance.toFixed(1)}, tokens:${m.tokenCost}) ${m.content}`);
+      }
       totalTokens += m.tokenCost;
     }
 
@@ -111,6 +158,6 @@ export class MemoryStore {
   }
 
   static fromJSON(data: Memory[]): MemoryStore {
-    return new MemoryStore(data);
+    return new MemoryStore(data.map((m) => ({ ...m, context: m.context ?? "" })));
   }
 }

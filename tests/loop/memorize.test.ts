@@ -30,29 +30,17 @@ class MockLLM extends LLM {
 // ── runMemorizePhase ────────────────────────────────────────────────
 
 describe("runMemorizePhase", () => {
-  it("calls LLM and parses store operations", async () => {
-    const llm = new MockLLM();
-    llm.response = '{"store":[{"content":"test discovery","type":"semantic","importance":0.8}]}';
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    const result = await runMemorizePhase(llm, config, memories, "learned something", 3000, 2500, 2000);
-
-    expect(llm.callCount).toBe(1);
-    expect(result.ops.store).toHaveLength(1);
-    expect(result.ops.store![0]!.content).toBe("test discovery");
-    expect(result.usage.output).toBe(30);
-  });
-
-  it("parses forget operations", async () => {
+  it("calls LLM and parses forget operations", async () => {
     const llm = new MockLLM();
     llm.response = '{"forget":["mem_abc123","mem_def456"]}';
     const config = new Config();
     const memories = new MemoryStore();
 
-    const result = await runMemorizePhase(llm, config, memories, "cleanup", 2000, 2000, 2000);
+    const result = await runMemorizePhase(llm, config, memories, "cleanup", "partial", 2000);
 
+    expect(llm.callCount).toBe(1);
     expect(result.ops.forget).toEqual(["mem_abc123", "mem_def456"]);
+    expect(result.usage.output).toBe(30);
   });
 
   it("parses compress operations", async () => {
@@ -61,7 +49,7 @@ describe("runMemorizePhase", () => {
     const config = new Config();
     const memories = new MemoryStore();
 
-    const result = await runMemorizePhase(llm, config, memories, "compress", 2000, 2000, 2000);
+    const result = await runMemorizePhase(llm, config, memories, "compress", "partial", 2000);
 
     expect(result.ops.compress).toHaveLength(1);
     expect(result.ops.compress![0]!.newContent).toBe("shorter version");
@@ -73,7 +61,7 @@ describe("runMemorizePhase", () => {
     const config = new Config();
     const memories = new MemoryStore();
 
-    const result = await runMemorizePhase(llm, config, memories, "consolidate", 2000, 2000, 2000);
+    const result = await runMemorizePhase(llm, config, memories, "consolidate", "partial", 2000);
 
     expect(result.ops.consolidate).toBeDefined();
     expect(result.ops.consolidate!.sourceIds).toEqual(["mem_a", "mem_b"]);
@@ -85,7 +73,7 @@ describe("runMemorizePhase", () => {
     const config = new Config();
     const memories = new MemoryStore();
 
-    const result = await runMemorizePhase(llm, config, memories, "rewrite", 2000, 2000, 2000);
+    const result = await runMemorizePhase(llm, config, memories, "rewrite", "success", 2000);
 
     expect(result.ops.promptRewrite).toBe("Be efficient. Use tools.");
   });
@@ -96,7 +84,7 @@ describe("runMemorizePhase", () => {
     const config = new Config();
     const memories = new MemoryStore();
 
-    const result = await runMemorizePhase(llm, config, memories, "rewrite", 2000, 2000, 2000);
+    const result = await runMemorizePhase(llm, config, memories, "rewrite", "success", 2000);
 
     expect(result.ops.promptRewrite).toBe("Be efficient.");
   });
@@ -107,7 +95,7 @@ describe("runMemorizePhase", () => {
     const config = new Config();
     const memories = new MemoryStore();
 
-    const result = await runMemorizePhase(llm, config, memories, "test", 2000, 2000, 2000);
+    const result = await runMemorizePhase(llm, config, memories, "test", "failure", 2000);
 
     expect(result.ops).toEqual({});
     expect(result.usage.output).toBe(0);
@@ -119,12 +107,12 @@ describe("runMemorizePhase", () => {
     const config = new Config();
     const memories = new MemoryStore();
 
-    const result = await runMemorizePhase(llm, config, memories, "test", 2000, 2000, 2000);
+    const result = await runMemorizePhase(llm, config, memories, "test", "failure", 2000);
 
     expect(result.ops).toEqual({});
   });
 
-  it("includes memory details with costs in prompt", async () => {
+  it("includes outcome, lesson, and memory pairs in prompt", async () => {
     const llm = new MockLLM();
     let capturedSystem = "";
     const origChat = llm.chat.bind(llm);
@@ -135,36 +123,20 @@ describe("runMemorizePhase", () => {
 
     const config = new Config();
     const memories = new MemoryStore();
-    memories.add("test fact", "semantic", 0.8);
+    memories.add("ran check, got FAIL", "episodic", 0.8, "Cycle 3. Goal: explore");
 
-    await runMemorizePhase(llm, config, memories, "a lesson", 3000, 2500, 2000);
+    await runMemorizePhase(llm, config, memories, "wrong path", "failure", 2000);
 
-    expect(capturedSystem).toContain("a lesson");
-    expect(capturedSystem).toContain("test fact");
-    expect(capturedSystem).toContain("3000");
-    expect(capturedSystem).toContain("2500");
+    expect(capturedSystem).toContain("failure");
+    expect(capturedSystem).toContain("wrong path");
+    expect(capturedSystem).toContain("Cycle 3");
+    expect(capturedSystem).toContain("ran check");
   });
 });
 
 // ── applyMemorizeOperations ─────────────────────────────────────────
 
 describe("applyMemorizeOperations", () => {
-  it("stores memories", () => {
-    const ops: MemorizeOps = {
-      store: [{ content: "important fact", type: "semantic", importance: 0.9 }],
-    };
-    const memories = new MemoryStore();
-    const config = new Config();
-
-    const results = applyMemorizeOperations(ops, memories, config);
-
-    expect(results).toHaveLength(1);
-    expect(results[0]).toContain("stored");
-    expect(memories.memories).toHaveLength(1);
-    expect(memories.memories[0]!.content).toBe("important fact");
-    expect(memories.memories[0]!.importance).toBe(0.9);
-  });
-
   it("forgets memories", () => {
     const memories = new MemoryStore();
     const mem = memories.add("old fact", "semantic", 0.5);
@@ -180,7 +152,7 @@ describe("applyMemorizeOperations", () => {
 
   it("compresses memories", () => {
     const memories = new MemoryStore();
-    const mem = memories.add("very long verbose description of a fact", "semantic", 0.7);
+    const mem = memories.add("very long verbose description of a fact", "semantic", 0.7, "Cycle 5");
     const ops: MemorizeOps = { compress: [{ id: mem.id, newContent: "short fact" }] };
     const config = new Config();
 
@@ -191,8 +163,8 @@ describe("applyMemorizeOperations", () => {
 
   it("consolidates memories", () => {
     const memories = new MemoryStore();
-    const m1 = memories.add("fact A", "semantic", 0.5);
-    const m2 = memories.add("fact B", "semantic", 0.6);
+    const m1 = memories.add("fact A", "semantic", 0.5, "Cycle 1");
+    const m2 = memories.add("fact B", "semantic", 0.6, "Cycle 2");
     const ops: MemorizeOps = {
       consolidate: { sourceIds: [m1.id, m2.id], newContent: "fact A+B", importance: 0.8 },
     };

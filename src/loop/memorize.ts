@@ -49,19 +49,17 @@ export async function runMemorizePhase(
   config: Config,
   memories: MemoryStore,
   lesson: string,
-  cycleCost: number,
-  avgCost: number,
+  outcome: string,
   memoryBudget: number,
 ): Promise<MemorizeResult> {
   const prompt = config.memorizePrompt
+    .replace("{outcome}", outcome)
     .replace("{lesson}", lesson)
+    .replace("{systemPrompt}", config.systemPrompt)
     .replace("{memoryCount}", String(memories.memories.length))
     .replace("{memories}", formatMemoriesWithCosts(memories))
-    .replace("{cycleCost}", String(cycleCost))
-    .replace("{avgCost}", String(Math.round(avgCost)))
     .replace("{memoryTokens}", String(memories.totalTokenCost))
-    .replace("{memoryBudget}", String(memoryBudget))
-    .replace("{thinkPrompt}", config.systemPrompt);
+    .replace("{memoryBudget}", String(memoryBudget));
 
   try {
     const response = await llm.chat({
@@ -82,7 +80,12 @@ export async function runMemorizePhase(
 function formatMemoriesWithCosts(memories: MemoryStore): string {
   if (memories.memories.length === 0) return "(no memories)";
   return memories.memories
-    .map((m) => `[${m.id}] ${m.type} (imp:${m.importance.toFixed(1)}, tokens:${m.tokenCost}) ${m.content}`)
+    .map((m) => {
+      if (m.context) {
+        return `[${m.id}] (tokens:${m.tokenCost})\n  User: ${m.context}\n  Agent: ${m.content}`;
+      }
+      return `[${m.id}] ${m.type} (tokens:${m.tokenCost}) ${m.content}`;
+    })
     .join("\n");
 }
 

@@ -75,7 +75,7 @@ export class AgentStateMachine {
     }
   }
 
-  // ── Finalize: Resolve → Income → Memorize → Decay ────────────────
+  // ── Finalize: Resolve → Store Pair → Income → Memorize → Decay ───
 
   private async *finalizeCycle(): AsyncGenerator<AgentEvent> {
     const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and survive";
@@ -99,7 +99,15 @@ export class AgentStateMachine {
     this.cur.outcome = resolveResult.outcome;
     this.cur.relevance = resolveResult.goalRelevance;
 
-    // 2. Compute and credit income
+    // 2. Store cycle as user/agent memory pair (SHORT TERM — accumulates)
+    const context = `Cycle ${this.state.cycleCount}. Goal: ${goal}. Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`;
+    const cycleContent = `${actions}\nOutcome: ${resolveResult.outcome}. Lesson: ${resolveResult.lesson}`;
+    const importance = resolveResult.outcome === "success" ? 0.9
+      : resolveResult.outcome === "partial" ? 0.7
+      : 0.5;
+    this.state.memories.add(cycleContent, "episodic", importance, context);
+
+    // 3. Compute and credit income
     const income = await computeIncome(
       resolveResult.goalRelevance,
       resolveResult.outcome,
@@ -119,7 +127,7 @@ export class AgentStateMachine {
     // Snapshot cycle cost before memorize (memorize cost is maintenance overhead)
     const cycleCost = this.state.energy.currentCycleCost;
 
-    // 3. End cycle — push CycleRecord to history
+    // 4. End cycle — push CycleRecord to history
     this.state.energy.endCycle(
       this.state.cycleCount,
       this.cur.outcome,
@@ -128,15 +136,14 @@ export class AgentStateMachine {
       this.cur.model,
     );
 
-    // 4. Memorize — cheap LLM call to manage memory
+    // 5. Memorize — cheap LLM call to manage memory (MID TERM compression + LONG TERM promotion)
     yield { type: "phase_change", phase: "memorizing" };
     const memorizeResult = await runMemorizePhase(
       this.llm,
       this.state.config,
       this.state.memories,
       resolveResult.lesson,
-      cycleCost,
-      this.state.energy.avgCycleCost(),
+      resolveResult.outcome,
       MEMORY_TOKEN_BUDGET,
     );
 
@@ -145,11 +152,8 @@ export class AgentStateMachine {
       this.state.energy.burn(this.state.config.routing.memorize.model, memorizeResult.usage);
     }
 
-    // 5. Apply memory operations
+    // 6. Apply memory operations (compress, forget, consolidate, promptRewrite)
     applyMemorizeOperations(memorizeResult.ops, this.state.memories, this.state.config);
-
-    // 6. Decay eviction
-    this.state.memories.decayEvict();
 
     // 7. Housekeeping
     this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.lastToolCount);
@@ -175,9 +179,12 @@ export class AgentStateMachine {
       return this.executeTool(name, input);
     };
 
+    // Build messages: memory pairs (conversation history) + current awareness
+    const memoryMessages = this.state.memories.formatAsMessages(MEMORY_TOKEN_BUDGET);
+
     for await (const event of this.loop.run({
       systemPrompt: this.state.config.systemPrompt,
-      messages: [this.buildAwarenessMessage()],
+      messages: [...memoryMessages, this.buildAwarenessMessage()],
       tools,
       model: route.model,
       maxTokens: route.maxTokens,
@@ -271,12 +278,10 @@ export class AgentStateMachine {
   // ── Awareness message ─────────────────────────────────────────────
 
   private buildAwarenessMessage(): Anthropic.MessageParam {
-    const memories = this.state.memories.format(MEMORY_TOKEN_BUDGET);
     const drives = formatDrives(this.state.drives);
     const goal = this.deriveGoal();
 
     const parts = [
-      `Memories:\n${memories}`,
       `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`,
       `Drives: ${drives}`,
       goal ? `Active goal: ${goal}` : null,

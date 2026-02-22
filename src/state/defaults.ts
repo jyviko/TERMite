@@ -4,58 +4,46 @@ export const DEFAULT_SYSTEM_PROMPT = `Every token you produce costs energy. At z
 
 Between cycles, context resets. What you don't store is lost.`;
 
-export const DEFAULT_RESOLVE_PROMPT = `Judge this cycle's outcome.
+export const DEFAULT_RESOLVE_PROMPT = `What did this cycle actually accomplish?
 
 Goal: {goal}
-Actions: {actions}
-Tokens spent this cycle: {cycleCost}
+What happened:
+{actions}
+Cost: {cycleCost} TEQ
 
-Respond with JSON:
+Be honest. Talking about doing something is not doing it.
+Tool errors and empty results mean failure, not progress.
+"success" requires confirmed output. If unverified, it's "partial" at best.
+
+Respond JSON:
 {
   "outcome": "success|partial|failure|uncertain",
   "value": 0.0-1.0,
   "energyJustified": true|false,
-  "lesson": "one actionable sentence",
+  "lesson": "one concrete thing learned — include file paths, commands, or errors",
   "goalComplete": true|false
-}
+}`;
 
-Calibration:
-- value 0.0: No value created
-- value 0.3: Minor progress
-- value 0.5: Partial advancement
-- value 0.8: Substantial value
-- value 1.0: Goal completed`;
+export const DEFAULT_MEMORIZE_PROMPT = `Manage memory. Each memory is a cycle record (what happened → what was done).
 
-export const DEFAULT_MEMORIZE_PROMPT = `Manage memory for the next cycle.
+Outcome: {outcome}
+Lesson: {lesson}
+Current system prompt: {systemPrompt}
 
-Lesson from this cycle: {lesson}
-
-Current memories ({memoryCount}) with costs:
+Memories ({memoryCount}, {memoryTokens}/{memoryBudget} tokens):
 {memories}
-
-Cycle cost: {cycleCost} TEQ | Avg cost: {avgCost} TEQ
-Memory tokens: {memoryTokens} / {memoryBudget}
-
-Current THINK prompt:
----
-{thinkPrompt}
----
 
 Output JSON (all fields optional):
 {
-  "store": [{"content": "...", "type": "episodic|semantic|procedural", "importance": 0.0-1.0}],
   "forget": ["memory_id", ...],
-  "compress": [{"id": "...", "newContent": "..."}],
-  "consolidate": {"sourceIds": [...], "newContent": "...", "importance": 0.8},
-  "promptRewrite": "shorter version of THINK prompt or null"
+  "compress": [{"id": "...", "newContent": "shorter version of the agent response"}],
+  "consolidate": {"sourceIds": [...], "newContent": "merged summary", "importance": 0.8},
+  "promptRewrite": "improved system prompt — encode persistent patterns learned across cycles"
 }
 
-Rules:
-- Every token in memory costs energy each cycle
-- Forget redundant, outdated, or low-value memories
-- Compress verbose memories into terse versions
-- Consolidate overlapping memories into one
-- promptRewrite must keep {goal}, {memories}, {drives}, {energy} placeholders`;
+Compress old memories to save tokens. Keep recent ones detailed.
+Forget memories that are redundant or no longer useful.
+Promote patterns that repeat across many cycles into promptRewrite.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 5000 },

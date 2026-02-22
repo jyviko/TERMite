@@ -21,6 +21,7 @@ export interface Drive {
 
 export interface Memory {
   id: string;
+  context: string;
   content: string;
   type: MemoryType;
   importance: number;

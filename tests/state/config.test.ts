@@ -5,8 +5,8 @@ describe("Config", () => {
   it("initializes with default prompts", () => {
     const c = new Config();
     expect(c.systemPrompt).toContain("energy");
-    expect(c.resolvePrompt).toContain("Judge");
-    expect(c.memorizePrompt).toContain("store");
+    expect(c.resolvePrompt).toContain("accomplish");
+    expect(c.memorizePrompt).toContain("Manage memory");
     expect(c.version).toBe(0);
   });
 
