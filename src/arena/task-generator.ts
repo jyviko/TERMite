@@ -258,14 +258,14 @@ const TIER_TEMPLATES: Record<number, TaskTemplate[]> = {
       verifyScript: `#!/bin/bash
 EXPECTED="Hello, World!"
 ACTUAL=$(cat /workspace/output/greeting.txt 2>/dev/null)
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected '$EXPECTED', got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/greeting.txt expected '$EXPECTED', got '$ACTUAL'"; exit 1; fi`,
     },
     {
       title: "Count Lines",
       verifyScript: `#!/bin/bash
 EXPECTED=$(wc -l < /workspace/data/numbers.txt | tr -d ' ')
 ACTUAL=$(cat /workspace/output/count.txt 2>/dev/null | tr -d '[:space:]')
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected $EXPECTED lines, got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/count.txt expected $EXPECTED lines, got '$ACTUAL'"; exit 1; fi`,
       dataGenerator: () => ({
         "numbers.txt": generateNumbers(randomInt(5000, 8000), 1000),
       }),
@@ -275,7 +275,7 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expec
       verifyScript: `#!/bin/bash
 EXPECTED=$(awk '{s+=$1} END {print s}' /workspace/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sum.txt 2>/dev/null | tr -d '[:space:]')
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected $EXPECTED, got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/sum.txt expected $EXPECTED, got '$ACTUAL'"; exit 1; fi`,
       dataGenerator: () => ({
         "numbers.txt": generateNumbers(randomInt(5000, 8000), 10000),
       }),
@@ -534,8 +534,8 @@ export class TaskGenerator {
 
     // check IS the verification script — inject description line so agent knows what it does
     const checkScript = template.verifyScript.startsWith("#!/")
-      ? template.verifyScript.replace(/\n/, "\n# description: check - Validate task output. No args. Returns PASS or FAIL.\n")
-      : `#!/bin/bash\n# description: check - Validate task output. No args. Returns PASS or FAIL.\n${template.verifyScript}`;
+      ? template.verifyScript.replace(/\n/, "\n# description: check - Validate task output in /workspace/output/. No args. Returns PASS or FAIL.\n")
+      : `#!/bin/bash\n# description: check - Validate task output in /workspace/output/. No args. Returns PASS or FAIL.\n${template.verifyScript}`;
     writeFileSync(join(toolsDir, "check"), checkScript, {
       mode: 0o755,
       encoding: "utf-8",

@@ -13,7 +13,6 @@ Cost: {cycleCost} TEQ
 
 Be honest. Talking about doing something is not doing it.
 Tool errors and empty results mean failure, not progress.
-"success" requires confirmed output. If unverified, it's "partial" at best.
 
 Respond JSON:
 {
@@ -24,26 +23,38 @@ Respond JSON:
   "goalComplete": true|false
 }`;
 
-export const DEFAULT_MEMORIZE_PROMPT = `Manage memory. Each memory is a cycle record (what happened → what was done).
+export const DEFAULT_MEMORIZE_PROMPT = `Extract useful knowledge from this cycle.
 
 Outcome: {outcome}
 Lesson: {lesson}
-Current system prompt: {systemPrompt}
 
-Memories ({memoryCount}, {memoryTokens}/{memoryBudget} tokens):
+Current system prompt:
+{systemPrompt}
+
+Current resolve prompt:
+{resolvePrompt}
+
+Existing memories ({memoryCount}, {memoryTokens}/{memoryBudget} tokens):
 {memories}
 
 Output JSON (all fields optional):
 {
+  "store": [{"content": "...", "type": "episodic|semantic|procedural", "importance": 0.0-1.0}],
   "forget": ["memory_id", ...],
-  "compress": [{"id": "...", "newContent": "shorter version of the agent response"}],
+  "compress": [{"id": "...", "newContent": "shorter version"}],
   "consolidate": {"sourceIds": [...], "newContent": "merged summary", "importance": 0.8},
-  "promptRewrite": "improved system prompt — encode persistent patterns learned across cycles"
+  "promptRewrite": "rewritten system prompt",
+  "memorizeRewrite": "rewritten version of THIS prompt",
+  "resolveRewrite": "rewritten resolve prompt"
 }
 
-Compress old memories to save tokens. Keep recent ones detailed.
-Forget memories that are redundant or no longer useful.
-Promote patterns that repeat across many cycles into promptRewrite.`;
+RULES:
+- Prefer procedural and semantic memories over episodic. Raw action logs rot fast.
+- Consolidate repeated failures into one procedural rule (e.g. "always read check before writing output").
+- Forget episodic memories that duplicate an existing procedural rule.
+- If the same mistake appears in 3+ memories, promote to a procedural rule and forget the episodes.
+- Compress old memories when budget is tight. Forget duplicates.
+- You may rewrite this memorize prompt itself via "memorizeRewrite" to improve your own memory strategy.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 5000 },

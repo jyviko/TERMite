@@ -6,7 +6,7 @@ describe("Config", () => {
     const c = new Config();
     expect(c.systemPrompt).toContain("energy");
     expect(c.resolvePrompt).toContain("accomplish");
-    expect(c.memorizePrompt).toContain("Manage memory");
+    expect(c.memorizePrompt).toContain("Extract useful knowledge");
     expect(c.version).toBe(0);
   });
 

@@ -210,7 +210,7 @@ function drawCard(buf: string[], org: AgentData, r0: number, c0: number, colW: n
   if (active) {
     safe(buf, r, c0, " \u25cf ACTIVE", `${GREEN}${BOLD}`);
   } else {
-    const cause = gs(org, "stopReason", "stop_reason") || "?";
+    const cause = gs(org, "stopReason", "stop_reason") || "stopped";
     safe(buf, r, c0, ` \u2717 ${cause}`.slice(0, colW - 1), RED);
   }
   r++;

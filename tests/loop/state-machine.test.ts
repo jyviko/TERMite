@@ -281,6 +281,7 @@ describe("AgentStateMachine", () => {
     // Should contain status sections
     expect(text).toContain("Energy:");
     expect(text).toContain("Drives:");
+    expect(text).toContain("Tools:");
     expect(text).toContain("Cycle:");
 
     // Memories are NOT in awareness text — they're injected as conversation pairs

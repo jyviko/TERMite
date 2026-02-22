@@ -172,8 +172,9 @@ export class AgentStateMachine {
     this.cur.model = route.model;
 
     const tools = await this.buildTools();
+    const toolNames = tools.map((t) => t.name);
     this.lastToolCount = tools.length;
-    yield { type: "tools_available", tools: tools.map((t) => t.name) } as AgentEvent;
+    yield { type: "tools_available", tools: toolNames } as AgentEvent;
 
     const executor: ToolExecutor = async (name, input) => {
       return this.executeTool(name, input);
@@ -184,7 +185,7 @@ export class AgentStateMachine {
 
     for await (const event of this.loop.run({
       systemPrompt: this.state.config.systemPrompt,
-      messages: [...memoryMessages, this.buildAwarenessMessage()],
+      messages: [...memoryMessages, this.buildAwarenessMessage(toolNames)],
       tools,
       model: route.model,
       maxTokens: route.maxTokens,
@@ -277,7 +278,7 @@ export class AgentStateMachine {
 
   // ── Awareness message ─────────────────────────────────────────────
 
-  private buildAwarenessMessage(): Anthropic.MessageParam {
+  private buildAwarenessMessage(toolNames: string[]): Anthropic.MessageParam {
     const drives = formatDrives(this.state.drives);
     const goal = this.deriveGoal();
 
@@ -285,6 +286,7 @@ export class AgentStateMachine {
       `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`,
       `Drives: ${drives}`,
       goal ? `Active goal: ${goal}` : null,
+      toolNames.length > 0 ? `Tools: ${toolNames.join(", ")}` : null,
       `Cycle: ${this.state.cycleCount}`,
     ].filter(Boolean);
 

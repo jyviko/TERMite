@@ -31,6 +31,8 @@ export interface MemorizeOps {
   compress?: CompressOp[];
   consolidate?: ConsolidateOp | null;
   promptRewrite?: string | null;
+  memorizeRewrite?: string | null;
+  resolveRewrite?: string | null;
 }
 
 export interface MemorizeResult {
@@ -56,6 +58,7 @@ export async function runMemorizePhase(
     .replace("{outcome}", outcome)
     .replace("{lesson}", lesson)
     .replace("{systemPrompt}", config.systemPrompt)
+    .replace("{resolvePrompt}", config.resolvePrompt)
     .replace("{memoryCount}", String(memories.memories.length))
     .replace("{memories}", formatMemoriesWithCosts(memories))
     .replace("{memoryTokens}", String(memories.totalTokenCost))
@@ -104,6 +107,16 @@ function parseMemorizeResponse(text: string): MemorizeOps {
         ? parsed.promptRewrite
         : typeof parsed.prompt_rewrite === "string"
           ? parsed.prompt_rewrite
+          : undefined,
+      memorizeRewrite: typeof parsed.memorizeRewrite === "string"
+        ? parsed.memorizeRewrite
+        : typeof parsed.memorize_rewrite === "string"
+          ? parsed.memorize_rewrite
+          : undefined,
+      resolveRewrite: typeof parsed.resolveRewrite === "string"
+        ? parsed.resolveRewrite
+        : typeof parsed.resolve_rewrite === "string"
+          ? parsed.resolve_rewrite
           : undefined,
     };
   } catch {
@@ -160,6 +173,16 @@ export function applyMemorizeOperations(
   if (ops.promptRewrite) {
     config.rewrite("systemPrompt", ops.promptRewrite);
     results.push("rewrote systemPrompt");
+  }
+
+  if (ops.memorizeRewrite) {
+    config.rewrite("memorizePrompt", ops.memorizeRewrite);
+    results.push("rewrote memorizePrompt");
+  }
+
+  if (ops.resolveRewrite) {
+    config.rewrite("resolvePrompt", ops.resolveRewrite);
+    results.push("rewrote resolvePrompt");
   }
 
   return results;
