@@ -5,8 +5,7 @@ describe("Config", () => {
   it("initializes with default prompts", () => {
     const c = new Config();
     expect(c.systemPrompt).toContain("energy");
-    expect(c.resolvePrompt).toContain("Evaluate");
-    expect(c.restPrompt).toContain("Compact");
+    expect(c.resolvePrompt).toContain("Judge");
     expect(c.memorizePrompt).toContain("store");
     expect(c.version).toBe(0);
   });
@@ -40,12 +39,10 @@ describe("Config", () => {
   it("can rewrite all prompt types", () => {
     const c = new Config();
     c.rewrite("resolvePrompt", "new resolve");
-    c.rewrite("restPrompt", "new rest");
     c.rewrite("memorizePrompt", "new memorize");
     expect(c.resolvePrompt).toBe("new resolve");
-    expect(c.restPrompt).toBe("new rest");
     expect(c.memorizePrompt).toBe("new memorize");
-    expect(c.version).toBe(3);
+    expect(c.version).toBe(2);
   });
 
   it("serializes and deserializes", () => {

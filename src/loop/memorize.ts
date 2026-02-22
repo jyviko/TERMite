@@ -1,8 +1,12 @@
 import type { MemoryType } from "../types/index.js";
+import type { LLM, TokenUsage } from "../llm/index.js";
+import { extractText } from "../llm/util.js";
 import type { Config } from "../state/config.js";
 import type { MemoryStore } from "../state/memory.js";
 
-// ── Session operations (cycle-scoped memories) ─────────────────────
+const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
+
+// ── Operation types ─────────────────────────────────────────────────
 
 interface StoreOp {
   content: string;
@@ -21,103 +25,104 @@ interface ConsolidateOp {
   importance?: number;
 }
 
-interface SessionOps {
+export interface MemorizeOps {
   store?: StoreOp[];
   forget?: string[];
   compress?: CompressOp[];
-  consolidate?: ConsolidateOp;
+  consolidate?: ConsolidateOp | null;
+  promptRewrite?: string | null;
 }
 
-// ── Persistent operations (prompt rewrites) ─────────────────────────
-
-interface RewriteOp {
-  target: string;
-  newPrompt: string;
+export interface MemorizeResult {
+  ops: MemorizeOps;
+  usage: TokenUsage;
 }
 
-interface PersistentOps {
-  rewrite?: RewriteOp[];
-}
-
-// ── Parsed result ───────────────────────────────────────────────────
-
-export interface ParsedMemorizeInput {
-  session: SessionOps;
-  persistent: PersistentOps;
-  hasWork: boolean;
-}
+// ── Mandatory memorize phase ────────────────────────────────────────
 
 /**
- * Parse structured memorize input from tool_use.
- * Accepts the structured schema (session/persistent) or
- * flat JSON in `input` string field.
+ * Run the Memorize phase — an LLM call that decides what to remember,
+ * forget, compress, consolidate, and whether to rewrite the system prompt.
  */
-export function parseMemorizeInput(raw: Record<string, unknown>): ParsedMemorizeInput {
-  const session: SessionOps = {};
-  const persistent: PersistentOps = {};
+export async function runMemorizePhase(
+  llm: LLM,
+  config: Config,
+  memories: MemoryStore,
+  lesson: string,
+  cycleCost: number,
+  avgCost: number,
+  memoryBudget: number,
+): Promise<MemorizeResult> {
+  const prompt = config.memorizePrompt
+    .replace("{lesson}", lesson)
+    .replace("{memoryCount}", String(memories.memories.length))
+    .replace("{memories}", formatMemoriesWithCosts(memories))
+    .replace("{cycleCost}", String(cycleCost))
+    .replace("{avgCost}", String(Math.round(avgCost)))
+    .replace("{memoryTokens}", String(memories.totalTokenCost))
+    .replace("{memoryBudget}", String(memoryBudget))
+    .replace("{thinkPrompt}", config.systemPrompt);
 
-  // Structured input — session/persistent fields
-  if (raw.session || raw.persistent) {
-    const s = raw.session as SessionOps | undefined;
-    if (s) {
-      if (s.store) session.store = s.store;
-      if (s.forget) session.forget = s.forget;
-      if (s.compress) session.compress = s.compress;
-      if (s.consolidate) session.consolidate = s.consolidate;
-    }
-    const p = raw.persistent as PersistentOps | undefined;
-    if (p?.rewrite) {
-      persistent.rewrite = p.rewrite;
-    }
-  } else if (raw.input != null) {
-    const inputStr = String(raw.input).trim();
-    if (!inputStr) return { session, persistent, hasWork: false };
+  try {
+    const response = await llm.chat({
+      model: config.routing.memorize.model,
+      system: prompt,
+      messages: [{ role: "user", content: "Manage memory." }],
+      maxTokens: config.routing.memorize.maxTokens,
+    });
 
-    try {
-      const jsonMatch = inputStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.store) session.store = parsed.store;
-        if (parsed.forget) session.forget = parsed.forget;
-        if (parsed.compress) session.compress = parsed.compress;
-        if (parsed.consolidate) session.consolidate = parsed.consolidate;
-        if (parsed.rewrite) {
-          persistent.rewrite = Array.isArray(parsed.rewrite) ? parsed.rewrite : [parsed.rewrite];
-        }
-      } else {
-        session.store = [{ content: inputStr, type: "semantic", importance: 0.5 }];
-      }
-    } catch {
-      session.store = [{ content: inputStr, type: "semantic", importance: 0.5 }];
-    }
+    const text = extractText(response.content);
+    const ops = parseMemorizeResponse(text);
+    return { ops, usage: response.usage };
+  } catch {
+    return { ops: {}, usage: ZERO_USAGE };
   }
-
-  const hasWork =
-    !!session.store?.length ||
-    !!session.forget?.length ||
-    !!session.compress?.length ||
-    !!session.consolidate ||
-    !!persistent.rewrite?.length;
-
-  return { session, persistent, hasWork };
 }
 
+function formatMemoriesWithCosts(memories: MemoryStore): string {
+  if (memories.memories.length === 0) return "(no memories)";
+  return memories.memories
+    .map((m) => `[${m.id}] ${m.type} (imp:${m.importance.toFixed(1)}, tokens:${m.tokenCost}) ${m.content}`)
+    .join("\n");
+}
+
+function parseMemorizeResponse(text: string): MemorizeOps {
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return {};
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      store: Array.isArray(parsed.store) ? parsed.store : undefined,
+      forget: Array.isArray(parsed.forget) ? parsed.forget : undefined,
+      compress: Array.isArray(parsed.compress) ? parsed.compress : undefined,
+      consolidate: parsed.consolidate ?? undefined,
+      promptRewrite: typeof parsed.promptRewrite === "string"
+        ? parsed.promptRewrite
+        : typeof parsed.prompt_rewrite === "string"
+          ? parsed.prompt_rewrite
+          : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+// ── Apply operations ────────────────────────────────────────────────
+
 /**
- * Apply parsed memorize operations.
+ * Apply parsed memorize operations to the memory store and config.
  * Returns a human-readable summary of what was done.
  */
 export function applyMemorizeOperations(
-  ops: ParsedMemorizeInput,
+  ops: MemorizeOps,
   memories: MemoryStore,
   config: Config,
 ): string[] {
   const results: string[] = [];
 
-  // ── Session: memory operations ──
-  const s = ops.session;
-
-  if (s.store) {
-    for (const m of s.store) {
+  if (ops.store) {
+    for (const m of ops.store) {
       if (m.content && m.type && typeof m.importance === "number") {
         const mem = memories.add(m.content, m.type as MemoryType, m.importance);
         results.push(`stored ${mem.type}:${mem.importance.toFixed(1)}`);
@@ -125,15 +130,15 @@ export function applyMemorizeOperations(
     }
   }
 
-  if (s.forget) {
-    for (const id of s.forget) {
+  if (ops.forget) {
+    for (const id of ops.forget) {
       memories.forget(id);
       results.push(`forgot ${id}`);
     }
   }
 
-  if (s.compress) {
-    for (const c of s.compress) {
+  if (ops.compress) {
+    for (const c of ops.compress) {
       if (c.id && c.newContent) {
         memories.compress(c.id, c.newContent);
         results.push(`compressed ${c.id}`);
@@ -141,22 +146,17 @@ export function applyMemorizeOperations(
     }
   }
 
-  if (s.consolidate) {
-    const { sourceIds, newContent, importance } = s.consolidate;
+  if (ops.consolidate) {
+    const { sourceIds, newContent, importance } = ops.consolidate;
     if (sourceIds?.length && newContent) {
       memories.consolidate(sourceIds, newContent, importance ?? 0.5);
       results.push(`consolidated ${sourceIds.length} memories`);
     }
   }
 
-  // ── Persistent: prompt rewrites ──
-  if (ops.persistent.rewrite) {
-    for (const r of ops.persistent.rewrite) {
-      if (r.target && r.newPrompt?.trim()) {
-        config.rewrite(r.target, r.newPrompt);
-        results.push(`rewrote ${r.target}`);
-      }
-    }
+  if (ops.promptRewrite) {
+    config.rewrite("systemPrompt", ops.promptRewrite);
+    results.push("rewrote systemPrompt");
   }
 
   return results;

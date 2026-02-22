@@ -87,11 +87,21 @@ describe("AgentStateMachine", () => {
     expect(state.active).toBe(true);
   });
 
-  it("Agent stops at energy 0", async () => {
+  it("agent stops at energy 0", async () => {
     const llm = new MockLLM();
-    // Return end_turn immediately so cycle completes
+    // Think+Execute: end turn immediately
     llm.addResponse(
       [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve phase LLM response
+    llm.addResponse(
+      [{ type: "text", text: '{"outcome":"uncertain","value":0,"energyJustified":false,"lesson":"no energy","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Memorize phase LLM response
+    llm.addResponse(
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
 
@@ -111,221 +121,33 @@ describe("AgentStateMachine", () => {
     expect(events.some((e) => e.type === "state_change" && (e as any).to === "stopped")).toBe(true);
   });
 
-  it("internal resolve tool triggers income computation", async () => {
+  it("three-phase cycle: Think+Execute → Resolve → Memorize", async () => {
     const llm = new MockLLM();
-    // Call resolve tool
+    // Phase 1: Think+Execute — agent uses a tool then ends turn
     llm.addResponse(
       [
         {
           type: "tool_use",
-          id: "toolu_r1",
-          name: "resolve",
-          input: { input: "I explored the workspace" },
+          id: "toolu_s1",
+          name: "shell",
+          input: { input: "ls /workspace" },
         },
       ] as Anthropic.ContentBlock[],
       "tool_use",
     );
-    // Resolve LLM response (from Resolver)
     llm.addResponse(
-      [{ type: "text", text: '{"outcome":"success","lesson":"Good work","goalRelevance":0.8,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: "Found files.", citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
-    // After resolve, call memorize to end cycle
+    // Phase 2: Resolve — mandatory judgment
     llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_m1",
-          name: "memorize",
-          input: { input: "resolved successfully" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-
-    const executor = new MockExecutor();
-    const state = new AgentStateManager({ budget: 100000 });
-
-    const machine = new AgentStateMachine(
-      llm,
-      executor as unknown as Executor,
-      state,
-      pool,
-      "/tmp/test-resolve.json",
-    );
-
-    const events = await collectEvents(machine.run(), 20);
-    const resolveResult = events.find(
-      (e) => e.type === "tool_result" && (e as any).name === "resolve",
-    );
-    expect(resolveResult).toBeDefined();
-    // Result should contain earnings, cost transparency, and outcome
-    expect((resolveResult as any).result).toContain("earned");
-    expect((resolveResult as any).result).toContain("resolve cost");
-    expect((resolveResult as any).result).toContain("net");
-    expect((resolveResult as any).result).toContain("outcome: success");
-  });
-
-  it("internal memorize tool stores memory via JSON operations", async () => {
-    const llm = new MockLLM();
-    // Call memorize tool with full JSON operations — memorize ends the cycle
-    llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_m1",
-          name: "memorize",
-          input: { session: { store: [{ content: "Always check data directory first", type: "procedural", importance: 0.9 }] } },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-
-    const executor = new MockExecutor();
-    const state = new AgentStateManager({ budget: 100000 });
-
-    const machine = new AgentStateMachine(
-      llm,
-      executor as unknown as Executor,
-      state,
-      pool,
-      "/tmp/test-memorize.json",
-    );
-
-    const events = await collectEvents(machine.run(), 20);
-    const memResult = events.find(
-      (e) => e.type === "tool_result" && (e as any).name === "memorize",
-    );
-    expect(memResult).toBeDefined();
-    expect((memResult as any).result).toContain("stored");
-    expect((memResult as any).result).toContain("procedural");
-    expect((memResult as any).result).toContain("context reset");
-    // Verify the memory was actually stored
-    expect(state.memories.memories.length).toBeGreaterThan(0);
-    expect(state.memories.memories[0]!.content).toBe("Always check data directory first");
-    expect(state.memories.memories[0]!.importance).toBe(0.9);
-  });
-
-  it("memorize tool accepts plain text as semantic memory", async () => {
-    const llm = new MockLLM();
-    // Call memorize with plain text (no JSON) — memorize ends cycle
-    llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_pt",
-          name: "memorize",
-          input: { input: "Check data directory has numbers.txt before processing" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-
-    const executor = new MockExecutor();
-    const state = new AgentStateManager({ budget: 100000 });
-
-    const machine = new AgentStateMachine(
-      llm,
-      executor as unknown as Executor,
-      state,
-      pool,
-      "/tmp/test-plaintext-memorize.json",
-    );
-
-    const events = await collectEvents(machine.run(), 20);
-    const memResult = events.find(
-      (e) => e.type === "tool_result" && (e as any).name === "memorize",
-    );
-    expect(memResult).toBeDefined();
-    expect((memResult as any).result).toContain("stored");
-    expect((memResult as any).result).toContain("semantic");
-    expect((memResult as any).result).toContain("context reset");
-    // Verify the memory was stored
-    expect(state.memories.memories.length).toBeGreaterThan(0);
-    expect(state.memories.memories[0]!.content).toBe("Check data directory has numbers.txt before processing");
-    expect(state.memories.memories[0]!.type).toBe("semantic");
-    expect(state.memories.memories[0]!.importance).toBe(0.5);
-  });
-
-  it("memorize tool supports self-rewrite", async () => {
-    const llm = new MockLLM();
-    // Call memorize with rewrite operation — memorize ends cycle
-    llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_mut",
-          name: "memorize",
-          input: { persistent: { rewrite: [{ target: "systemPrompt", newPrompt: "Optimize for tool usage over reasoning." }] } },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-
-    const executor = new MockExecutor();
-    const state = new AgentStateManager({ budget: 100000 });
-    const originalPrompt = state.config.systemPrompt;
-
-    const machine = new AgentStateMachine(
-      llm,
-      executor as unknown as Executor,
-      state,
-      pool,
-      "/tmp/test-rewrite.json",
-    );
-
-    const events = await collectEvents(machine.run(), 20);
-    const rewriteResult = events.find(
-      (e) => e.type === "tool_result" && (e as any).name === "memorize",
-    );
-    expect(rewriteResult).toBeDefined();
-    expect((rewriteResult as any).result).toContain("rewrote systemPrompt");
-    expect(state.config.systemPrompt).toBe("Optimize for tool usage over reasoning.");
-    expect(state.config.systemPrompt).not.toBe(originalPrompt);
-    expect(state.config.version).toBeGreaterThanOrEqual(1);
-  });
-
-  it("multi-resolve keeps best outcome and max relevance", async () => {
-    const llm = new MockLLM();
-    // Both resolve calls in the same tool turn (batched)
-    llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_r1",
-          name: "resolve",
-          input: { input: "first check" },
-        },
-        {
-          type: "tool_use",
-          id: "toolu_r2",
-          name: "resolve",
-          input: { input: "second check after more work" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-    // Resolver returns failure with low relevance (for first resolve)
-    llm.addResponse(
-      [{ type: "text", text: '{"outcome":"failure","lesson":"bad","goalRelevance":0.2,"goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: '{"outcome":"success","value":0.8,"energyJustified":true,"lesson":"Explored workspace","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
-    // Resolver returns success with high relevance (for second resolve)
+    // Phase 3: Memorize — mandatory memory management
     llm.addResponse(
-      [{ type: "text", text: '{"outcome":"success","lesson":"good","goalRelevance":0.9,"goalComplete":true}', citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: '{"store":[{"content":"Workspace has data files","type":"semantic","importance":0.7}]}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
-    );
-    // After resolves, call memorize to end cycle
-    llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_m1",
-          name: "memorize",
-          input: { input: "resolved twice" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
     );
 
     const executor = new MockExecutor();
@@ -336,90 +158,203 @@ describe("AgentStateMachine", () => {
       executor as unknown as Executor,
       state,
       pool,
-      "/tmp/test-multi-resolve.json",
+      "/tmp/test-three-phase.json",
     );
 
-    await collectEvents(machine.run(), 30);
+    const events = await collectEvents(machine.run(), 30);
 
-    // Cycle history should record the best outcome (success) and max relevance (0.9)
+    // Verify all three phases fired
+    const phases = events
+      .filter((e) => e.type === "phase_change")
+      .map((e) => (e as any).phase);
+    expect(phases).toContain("executing");
+    expect(phases).toContain("resolving");
+    expect(phases).toContain("memorizing");
+
+    // Verify resolve recorded outcome in cycle history
     expect(state.energy.cycleHistory.length).toBeGreaterThan(0);
-    const lastCycle = state.energy.cycleHistory[0]!;
-    expect(lastCycle.outcome).toBe("success");
-    expect(lastCycle.goalRelevance).toBe(0.9);
+    expect(state.energy.cycleHistory[0]!.outcome).toBe("success");
+    expect(state.energy.cycleHistory[0]!.goalRelevance).toBe(0.8);
+
+    // Verify memorize stored the memory
+    expect(state.memories.memories.length).toBeGreaterThan(0);
+    expect(state.memories.memories[0]!.content).toBe("Workspace has data files");
+    expect(state.memories.memories[0]!.type).toBe("semantic");
+
+    // First cycle: think(tool_use) + think(end_turn) + resolve + memorize = 4 calls minimum
+    expect(llm.callIndex).toBeGreaterThanOrEqual(4);
   });
 
-  it("memorize ends the agentic loop — no further API calls after memorize", async () => {
+  it("no resolve/memorize tools in the tool list", async () => {
     const llm = new MockLLM();
-    // Turn 1: call resolve + memorize in same turn
-    // Resolve no longer ends cycle, but memorize does
+    // End turn immediately
     llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_r1",
-          name: "resolve",
-          input: { input: "finished the task" },
-        },
-        {
-          type: "tool_use",
-          id: "toolu_m1",
-          name: "memorize",
-          input: { input: "task complete" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
-    );
-    // Resolver LLM response
-    llm.addResponse(
-      [{ type: "text", text: '{"outcome":"success","lesson":"good","goalRelevance":0.8,"goalComplete":true}', citations: null }] as Anthropic.ContentBlock[],
+      [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
-    // This response should NEVER be reached in cycle 1 — if it is, the loop didn't stop
+    // Resolve
     llm.addResponse(
-      [
-        {
-          type: "tool_use",
-          id: "toolu_extra",
-          name: "resolve",
-          input: { input: "this should not happen" },
-        },
-      ] as Anthropic.ContentBlock[],
-      "tool_use",
+      [{ type: "text", text: '{"outcome":"uncertain","value":0,"energyJustified":false,"lesson":"","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Memorize
+    llm.addResponse(
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
     );
 
     const executor = new MockExecutor();
-    // Low budget: exactly enough for 1 cycle (baseCost=50 + chat=350 + resolver=350 = 750).
-    // Agent stops at start of cycle 2 (spent >= budget), so no further LLM calls.
-    const state = new AgentStateManager({ budget: 800, reserves: 800 });
+    const state = new AgentStateManager({ budget: 500_000 });
 
     const machine = new AgentStateMachine(
       llm,
       executor as unknown as Executor,
       state,
       pool,
-      "/tmp/test-memorize-stops.json",
+      "/tmp/test-no-internal-tools.json",
     );
 
-    const events = await collectEvents(machine.run(), 30);
+    const events = await collectEvents(machine.run(), 20);
 
-    // Resolve tool should have been called exactly once (single cycle)
-    const resolveResults = events.filter(
-      (e) => e.type === "tool_result" && (e as any).name === "resolve",
-    );
-    expect(resolveResults).toHaveLength(1);
-
-    // Memorize in the same turn should execute and end the cycle
-    const memorizeResults = events.filter(
-      (e) => e.type === "tool_result" && (e as any).name === "memorize",
-    );
-    expect(memorizeResults).toHaveLength(1);
-    expect((memorizeResults[0] as any).result).toContain("context reset");
-
-    // LLM should have been called exactly 2 times:
-    // 1) the main cycle chat call that returned resolve+memorize
-    // 2) the resolver's internal LLM call
-    // If the loop continued within cycle 1, callIndex would be 3+
-    expect(llm.callIndex).toBe(2);
+    // Find the tools_available event
+    const toolsEvent = events.find((e) => e.type === "tools_available");
+    expect(toolsEvent).toBeDefined();
+    const toolNames = (toolsEvent as any).tools as string[];
+    expect(toolNames).not.toContain("resolve");
+    expect(toolNames).not.toContain("memorize");
   });
 
+  it("awareness message is minimal: memories + energy + drives + goal + cycle", async () => {
+    const llm = new MockLLM();
+
+    // Capture messages from the FIRST LLM call only (Think phase)
+    let firstCallMessages: Anthropic.MessageParam[] | null = null;
+    const origChat = llm.chat.bind(llm);
+    llm.chat = async (params: ChatParams) => {
+      if (!firstCallMessages) firstCallMessages = params.messages;
+      return origChat(params);
+    };
+
+    // End turn immediately
+    llm.addResponse(
+      [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve
+    llm.addResponse(
+      [{ type: "text", text: '{"outcome":"uncertain","value":0,"energyJustified":false,"lesson":"","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Memorize
+    llm.addResponse(
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new AgentStateManager({ budget: 500_000 });
+
+    const machine = new AgentStateMachine(
+      llm,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-awareness.json",
+    );
+
+    await collectEvents(machine.run(), 20);
+
+    // The first user message of the first call is the awareness message
+    expect(firstCallMessages).not.toBeNull();
+    expect(firstCallMessages!.length).toBeGreaterThan(0);
+    const awareness = firstCallMessages![0]!;
+    expect(awareness.role).toBe("user");
+    const text = awareness.content as string;
+
+    // Should contain minimal sections
+    expect(text).toContain("Memories:");
+    expect(text).toContain("Energy:");
+    expect(text).toContain("Drives:");
+    expect(text).toContain("Cycle:");
+
+    // Should NOT contain awareness engineering artifacts
+    expect(text).not.toContain("Base cost:");
+    expect(text).not.toContain("Last cycle:");
+    expect(text).not.toContain("Never tried:");
+    expect(text).not.toContain("Tools:");
+  });
+
+  it("memorize phase supports prompt rewrite via promptRewrite field", async () => {
+    const llm = new MockLLM();
+    // Think+Execute: end turn immediately
+    llm.addResponse(
+      [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve
+    llm.addResponse(
+      [{ type: "text", text: '{"outcome":"partial","value":0.5,"energyJustified":true,"lesson":"learned something","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Memorize with prompt rewrite
+    llm.addResponse(
+      [{ type: "text", text: '{"promptRewrite":"Optimize for tool usage over reasoning."}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new AgentStateManager({ budget: 500_000 });
+    const originalPrompt = state.config.systemPrompt;
+
+    const machine = new AgentStateMachine(
+      llm,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-rewrite.json",
+    );
+
+    await collectEvents(machine.run(), 20);
+
+    expect(state.config.systemPrompt).toBe("Optimize for tool usage over reasoning.");
+    expect(state.config.systemPrompt).not.toBe(originalPrompt);
+    expect(state.config.version).toBeGreaterThanOrEqual(1);
+  });
+
+  it("resolve income is credited based on outcome and relevance", async () => {
+    const llm = new MockLLM();
+    // Think+Execute
+    llm.addResponse(
+      [{ type: "text", text: "Explored.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve — success with high relevance
+    llm.addResponse(
+      [{ type: "text", text: '{"outcome":"success","value":0.9,"energyJustified":true,"lesson":"Good work","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Memorize
+    llm.addResponse(
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new AgentStateManager({ budget: 500_000 });
+    const initialEarned = state.energy.earned;
+
+    const machine = new AgentStateMachine(
+      llm,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-income.json",
+    );
+
+    await collectEvents(machine.run(), 20);
+
+    // Success outcome + high relevance should yield income
+    expect(state.energy.earned).toBeGreaterThan(initialEarned);
+    expect(state.energy.cycleHistory[0]!.income).toBeGreaterThan(0);
+  });
 });

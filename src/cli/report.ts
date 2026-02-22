@@ -542,6 +542,9 @@ function renderDetailConfig(org: AgentState): string[] {
   lines.push(`  Version:   ${MAG}v${g.version}${RST}  (${g.promptHistory.length} rewrites)`);
   lines.push(`  Routing:   thinking=${g.routing.thinking.model} (${g.routing.thinking.maxTokens})`);
   lines.push(`             resolve=${g.routing.resolve.model} (${g.routing.resolve.maxTokens})`);
+  if ((g.routing as any).memorize) {
+    lines.push(`             memorize=${(g.routing as any).memorize.model} (${(g.routing as any).memorize.maxTokens})`);
+  }
 
   const termWidth = process.stdout.columns ?? 120;
   const promptWidth = Math.max(40, termWidth - 4);

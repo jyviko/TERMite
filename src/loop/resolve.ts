@@ -2,7 +2,6 @@ import type { Outcome } from "../types/index.js";
 import type { LLM, TokenUsage } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
 import type { Config } from "../state/config.js";
-import type { EnergyLedger } from "../state/energy.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 import { TIER_EXPECTED_COST } from "../arena/task-generator.js";
 
@@ -12,6 +11,8 @@ export interface ResolveResult {
   outcome: Outcome;
   lesson: string;
   goalRelevance: number;
+  energyJustified: boolean;
+  goalComplete: boolean;
   usage: TokenUsage;
 }
 
@@ -19,6 +20,8 @@ const FALLBACK_RESULT: ResolveResult = {
   outcome: "uncertain",
   lesson: "",
   goalRelevance: 0,
+  energyJustified: false,
+  goalComplete: false,
   usage: ZERO_USAGE,
 };
 
@@ -29,13 +32,12 @@ export class Resolver {
     config: Config;
     goal: string;
     actions: string;
-    energy: EnergyLedger;
+    cycleCost: number;
   }): Promise<ResolveResult> {
     const prompt = params.config.resolvePrompt
       .replace("{goal}", params.goal)
       .replace("{actions}", params.actions)
-      .replace("{remaining}", String(params.energy.remaining))
-      .replace("{capacity}", String(params.energy.capacity));
+      .replace("{cycleCost}", String(params.cycleCost));
 
     try {
       const response = await this.llm.chat({
@@ -56,7 +58,6 @@ export class Resolver {
 
 function parseResolveResponse(text: string): Omit<ResolveResult, "usage"> {
   try {
-    // Extract JSON from response (may be wrapped in markdown)
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return FALLBACK_RESULT;
 
@@ -64,7 +65,9 @@ function parseResolveResponse(text: string): Omit<ResolveResult, "usage"> {
     return {
       outcome: validateOutcome(parsed.outcome),
       lesson: typeof parsed.lesson === "string" ? parsed.lesson : "",
-      goalRelevance: clamp(Number(parsed.goalRelevance) || 0, 0, 1),
+      goalRelevance: clamp(Number(parsed.value ?? parsed.goalRelevance) || 0, 0, 1),
+      energyJustified: parsed.energyJustified === true || parsed.energy_justified === true,
+      goalComplete: parsed.goalComplete === true || parsed.goal_complete === true,
     };
   } catch {
     return FALLBACK_RESULT;

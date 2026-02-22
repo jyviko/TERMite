@@ -62,9 +62,9 @@ describe("Full Loop Integration", () => {
     TEQPool.reset();
   });
 
-  it("Agent explores → solves task → earns energy", async () => {
+  it("Agent explores → resolve judges → memorize stores", async () => {
     const llm = new ScriptedLLM([
-      // Explore workspace
+      // Think+Execute phase: explore workspace
       {
         content: [
           { type: "text", text: "Exploring workspace.", citations: null },
@@ -73,54 +73,37 @@ describe("Full Loop Integration", () => {
         stopReason: "tool_use",
         usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
       },
-      // Look at data
+      // Think+Execute phase: check task
       {
         content: [
-          { type: "tool_use", id: "t2", name: "shell", input: { input: "ls /workspace/data/" } },
+          { type: "tool_use", id: "t2", name: "check", input: {} },
         ] as Anthropic.ContentBlock[],
         stopReason: "tool_use",
         usage: { input: 300, output: 40, cacheCreation: 0, cacheRead: 0 },
       },
-      // Write solution
+      // Think+Execute phase: end turn
       {
         content: [
-          { type: "text", text: "Writing solution.", citations: null },
-          { type: "tool_use", id: "t3", name: "shell", input: { input: "echo 'Hello, World!' > /workspace/output/greeting.txt" } },
+          { type: "text", text: "Done exploring.", citations: null },
         ] as Anthropic.ContentBlock[],
-        stopReason: "tool_use",
-        usage: { input: 350, output: 60, cacheCreation: 0, cacheRead: 0 },
+        stopReason: "end_turn",
+        usage: { input: 350, output: 30, cacheCreation: 0, cacheRead: 0 },
       },
-      // Verify via check tool
+      // Resolve phase: mandatory judgment
       {
         content: [
-          { type: "tool_use", id: "t4", name: "check", input: {} },
-        ] as Anthropic.ContentBlock[],
-        stopReason: "tool_use",
-        usage: { input: 400, output: 30, cacheCreation: 0, cacheRead: 0 },
-      },
-      // Call resolve (internal tool) to evaluate work
-      {
-        content: [
-          { type: "tool_use", id: "t5", name: "resolve", input: { input: "Completed greeting task" } },
-        ] as Anthropic.ContentBlock[],
-        stopReason: "tool_use",
-        usage: { input: 450, output: 30, cacheCreation: 0, cacheRead: 0 },
-      },
-      // Resolver LLM response
-      {
-        content: [
-          { type: "text", text: '{"outcome":"success","lesson":"Check data first","goalRelevance":0.9,"goalComplete":true}', citations: null },
+          { type: "text", text: '{"outcome":"success","value":0.9,"energyJustified":true,"lesson":"Check data first","goalComplete":false}', citations: null },
         ] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
         usage: { input: 200, output: 50, cacheCreation: 0, cacheRead: 0 },
       },
-      // Call memorize (internal tool) — memorize ends the cycle (context resets)
+      // Memorize phase: mandatory memory management
       {
         content: [
-          { type: "tool_use", id: "t6", name: "memorize", input: { session: { store: [{ content: "Check data directory first", type: "procedural", importance: 0.8 }] } } },
+          { type: "text", text: '{"store":[{"content":"Check data directory first","type":"procedural","importance":0.8}]}', citations: null },
         ] as Anthropic.ContentBlock[],
-        stopReason: "tool_use",
-        usage: { input: 500, output: 30, cacheCreation: 0, cacheRead: 0 },
+        stopReason: "end_turn",
+        usage: { input: 200, output: 40, cacheCreation: 0, cacheRead: 0 },
       },
     ]);
 
@@ -140,7 +123,7 @@ describe("Full Loop Integration", () => {
     for await (const event of machine.run()) {
       events.push(event);
       count++;
-      if (count > 60) break; // Safety limit
+      if (count > 60) break;
     }
 
     // Verify energy was consumed
@@ -149,17 +132,29 @@ describe("Full Loop Integration", () => {
     // Verify cycle progressed
     expect(state.cycleCount).toBeGreaterThanOrEqual(1);
 
-    // Verify events include tool interactions
+    // Verify events include tool interactions (from Think+Execute phase)
     expect(events.some((e) => e.type === "tool_start")).toBe(true);
     expect(events.some((e) => e.type === "tool_result")).toBe(true);
 
-    // Verify internal tools were used
-    const resolveResults = events.filter(
+    // Verify three phases fired
+    const phases = events
+      .filter((e) => e.type === "phase_change")
+      .map((e) => (e as any).phase);
+    expect(phases).toContain("executing");
+    expect(phases).toContain("resolving");
+    expect(phases).toContain("memorizing");
+
+    // Verify no resolve/memorize tool calls in the event stream (they're phases now)
+    const resolveToolResults = events.filter(
       (e) => e.type === "tool_result" && (e as any).name === "resolve",
     );
-    expect(resolveResults.length).toBeGreaterThan(0);
+    expect(resolveToolResults).toHaveLength(0);
 
-    // Verify memory was stored via memorize tool
+    // Verify memory was stored by mandatory memorize phase
     expect(state.memories.memories.length).toBeGreaterThan(0);
+    expect(state.memories.memories[0]!.content).toBe("Check data directory first");
+
+    // Verify income was earned from successful resolve
+    expect(state.energy.earned).toBeGreaterThan(0);
   });
 });

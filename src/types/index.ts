@@ -60,7 +60,6 @@ export interface CycleRecord {
 export interface Config {
   systemPrompt: string;
   resolvePrompt: string;
-  restPrompt: string;
   memorizePrompt: string;
   routing: RoutingConfig;
   version: number;
@@ -76,6 +75,7 @@ export interface RouteEntry {
 export interface RoutingConfig {
   thinking: RouteEntry;
   resolve: RouteEntry;
+  memorize: RouteEntry;
 }
 
 export interface PromptRewrite {

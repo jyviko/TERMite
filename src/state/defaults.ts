@@ -4,63 +4,61 @@ export const DEFAULT_SYSTEM_PROMPT = `Every token you produce costs energy. At z
 
 Between cycles, context resets. What you don't store is lost.`;
 
-export const DEFAULT_REST_PROMPT = `Compact working memory into long-term storage.
-Extract learnings, successful strategies, discoveries, and mistakes to avoid.
-Every token in a memory costs energy to recall.
-
-Return JSON:
-{ "memories": [{ "content": "...", "type": "episodic|semantic|procedural", "importance": 0.0-1.0 }] }
-
-Types:
-- episodic: what happened (events, outcomes)
-- semantic: facts and knowledge discovered
-- procedural: strategies and methods that worked`;
-
-export const DEFAULT_RESOLVE_PROMPT = `Evaluate recent actions against the goal.
+export const DEFAULT_RESOLVE_PROMPT = `Judge this cycle's outcome.
 
 Goal: {goal}
 Actions: {actions}
-Energy: {remaining}/{capacity}
+Tokens spent this cycle: {cycleCost}
 
 Respond with JSON:
 {
   "outcome": "success|partial|failure|uncertain",
+  "value": 0.0-1.0,
+  "energyJustified": true|false,
   "lesson": "one actionable sentence",
-  "goalRelevance": 0.0-1.0
+  "goalComplete": true|false
 }
 
 Calibration:
-- 0.0: No connection to goal
-- 0.3: Tangentially related
-- 0.5: Partial progress
-- 0.8: Substantial advancement
-- 1.0: Goal completed`;
+- value 0.0: No value created
+- value 0.3: Minor progress
+- value 0.5: Partial advancement
+- value 0.8: Substantial value
+- value 1.0: Goal completed`;
 
-export const DEFAULT_MEMORIZE_PROMPT = `Decide what to store and what to change.
+export const DEFAULT_MEMORIZE_PROMPT = `Manage memory for the next cycle.
 
-Recent actions: {actions}
-Lesson: {lesson}
-Outcome: {outcome} (relevance: {goalRelevance})
-Energy: {remaining}/{capacity}
+Lesson from this cycle: {lesson}
 
-Current memories:
+Current memories ({memoryCount}) with costs:
 {memories}
 
-Current prompts:
-- systemPrompt: {systemPrompt}
-- resolvePrompt: {resolvePrompt}
-- restPrompt: {restPrompt}
+Cycle cost: {cycleCost} TEQ | Avg cost: {avgCost} TEQ
+Memory tokens: {memoryTokens} / {memoryBudget}
 
-JSON, all fields optional:
+Current THINK prompt:
+---
+{thinkPrompt}
+---
+
+Output JSON (all fields optional):
 {
   "store": [{"content": "...", "type": "episodic|semantic|procedural", "importance": 0.0-1.0}],
   "forget": ["memory_id", ...],
   "compress": [{"id": "...", "newContent": "..."}],
   "consolidate": {"sourceIds": [...], "newContent": "...", "importance": 0.8},
-  "rewrite": [{"target": "systemPrompt", "newPrompt": "..."}]
-}`;
+  "promptRewrite": "shorter version of THINK prompt or null"
+}
+
+Rules:
+- Every token in memory costs energy each cycle
+- Forget redundant, outdated, or low-value memories
+- Compress verbose memories into terse versions
+- Consolidate overlapping memories into one
+- promptRewrite must keep {goal}, {memories}, {drives}, {energy} placeholders`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 5000 },
-  resolve: { model: "claude-haiku-4-5-20251001", maxTokens: 1024 },
+  resolve: { model: "claude-haiku-4-5-20251001", maxTokens: 512 },
+  memorize: { model: "claude-haiku-4-5-20251001", maxTokens: 512 },
 };
