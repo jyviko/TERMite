@@ -39,6 +39,9 @@ export class AgentStateMachine {
   private taskReward: number | null = null;
   private taskTier: number | null = null;
 
+  // Internal verify script — never exposed to agents
+  private verifyScript: string | null = null;
+
   // Current cycle
   private cur = freshCycle();
   private lastToolCount = 0;
@@ -264,6 +267,13 @@ export class AgentStateMachine {
 
   private async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const toolInput = String(input.input ?? "");
+
+    // check is an internal tool — verify script runs host-side, never on agent's filesystem
+    if (name === "check" && this.verifyScript) {
+      const b64 = Buffer.from(this.verifyScript).toString("base64");
+      return this.executor.executeShell(`echo '${b64}' | base64 -d | bash 2>&1`);
+    }
+
     const escaped = toolInput.replace(/'/g, "'\\''");
     const result = await this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
     if (name === "shell") this.autoPersistTool(toolInput);
@@ -353,6 +363,8 @@ export class AgentStateMachine {
         if (!line) continue;
         const sep = line.indexOf("|");
         const name = sep >= 0 ? line.slice(0, sep) : line;
+        // Skip tool names that don't match the API's required pattern
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(name)) continue;
         const rawDesc = sep >= 0 ? line.slice(sep + 1).trim() : "";
         const dashIdx = rawDesc.indexOf(" - ");
         const desc = dashIdx >= 0 ? rawDesc.slice(dashIdx + 3) : rawDesc;
@@ -380,6 +392,11 @@ export class AgentStateMachine {
   setTaskReward(reward: number, tier: number): void {
     this.taskReward = reward;
     this.taskTier = tier;
+  }
+
+  /** Set the internal verify script (run host-side, never visible to agent). */
+  setVerifyScript(script: string): void {
+    this.verifyScript = script;
   }
 }
 

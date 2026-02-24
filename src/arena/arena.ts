@@ -214,6 +214,11 @@ export class Arena {
       const savePath = join(this.runDir, dir, "state.json");
       const machine = new AgentStateMachine(this.llm, executor, state, this.teqPool, savePath);
 
+      // Restore verify script for current task
+      if (entryData.currentTask) {
+        machine.setVerifyScript(this.taskGenerator.getVerifyScript(entryData.currentTask));
+      }
+
       const entry: AgentEntry = {
         stateMachine: machine,
         state,
@@ -351,6 +356,7 @@ export class Arena {
     // Drop initial task
     const task = this.taskGenerator.generateTask(1, 0);
     this.taskGenerator.writeTaskToWorkspace(task, workspacePath);
+    machine.setVerifyScript(this.taskGenerator.getVerifyScript(task));
 
     // If fork, copy source agent's tools
     if (sourceId) {
@@ -433,8 +439,9 @@ export class Arena {
     const task = entry.currentTask;
     if (!task) return;
 
-    // Verify
-    const result = await this.taskVerifier.verify(task, entry.executor);
+    // Verify using host-side script (agent never sees this)
+    const verifyScript = this.taskGenerator.getVerifyScript(task);
+    const result = await this.taskVerifier.verify(task, entry.executor, verifyScript);
     if (!result.passed) return;
 
     // Credit energy
@@ -469,6 +476,7 @@ export class Arena {
     );
     entry.currentTask = newTask;
     this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
+    entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
 
     // Check fork conditions
     if (
