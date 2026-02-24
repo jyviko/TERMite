@@ -57,7 +57,7 @@ RULES:
 - You may rewrite this memorize prompt itself via "memorizeRewrite" to improve your own memory strategy.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
-  thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 5000 },
-  resolve: { model: "claude-haiku-4-5-20251001", maxTokens: 512 },
-  memorize: { model: "claude-haiku-4-5-20251001", maxTokens: 512 },
+  thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 25000 },
+  resolve: { model: "claude-sonnet-4-6", maxTokens: 512 },
+  memorize: { model: "claude-sonnet-4-6", maxTokens: 1024 },
 };
