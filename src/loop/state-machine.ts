@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent, Outcome } from "../types/index.js";
 import type { LLM } from "../llm/index.js";
@@ -11,7 +10,6 @@ import { runMemorizePhase, applyMemorizeOperations } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const BASE_MEMORY_TOKEN_BUDGET = 4000;
-const MAX_AUTO_TOOLS = 10;
 
 // ── Per-cycle mutable state ─────────────────────────────────────────
 
@@ -283,55 +281,7 @@ export class AgentStateMachine {
     }
 
     const escaped = toolInput.replace(/'/g, "'\\''");
-    const result = await this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
-    if (name === "shell") this.autoPersistTool(toolInput);
-    return result;
-  }
-
-  // ── Auto-persist shell scripts ────────────────────────────────────
-
-  private persistedToolKeys = new Set<string>();
-
-  private autoPersistTool(command: string): void {
-    if (this.persistedToolKeys.size >= MAX_AUTO_TOOLS) return;
-
-    const trimmed = command.trim();
-    if (trimmed.length <= 120) return;
-
-    const trivialPrefixes = [
-      "ls", "cat", "echo", "mkdir", "cd", "pwd", "rm", "cp", "mv",
-      "find", "head", "tail", "chmod", "touch", "env", "printenv", "set",
-      "wc", "sort", "uniq", "grep", "cut", "tr",
-    ];
-    const firstWord = trimmed.split(/\s/)[0] ?? "";
-    if (trivialPrefixes.includes(firstWord)) return;
-
-    if (/^\s*(env|printenv|set)\s*\|/.test(trimmed)) return;
-
-    const computationPatterns = [
-      "python3 -c", "python -c", "node -e", "awk '", "sed '", "|",
-    ];
-    const isSubstantial = computationPatterns.some((p) => trimmed.includes(p));
-    if (!isSubstantial) return;
-
-    const normalized = trimmed.replace(/\s+/g, " ");
-    const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 6);
-    if (this.persistedToolKeys.has(hash)) return;
-    this.persistedToolKeys.add(hash);
-
-    const desc = trimmed.slice(0, 80).replace(/'/g, "'\\''");
-    const persistCmd =
-      `cat > /workspace/tools/auto_${hash} << 'TERMSCRIPT'\n` +
-      `#!/bin/bash\n` +
-      `# description: auto_${hash} - ${desc}\n` +
-      `${trimmed} "$@"\n` +
-      `TERMSCRIPT\n` +
-      `chmod +x /workspace/tools/auto_${hash}`;
-
-    this.executor.executeShell(persistCmd).then(() => {
-      this.state.energy.credit(10_000);
-      this.cur.sources.push("tool_creation:10000");
-    }).catch(() => {});
+    return this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
   }
 
   // ── Awareness message ─────────────────────────────────────────────

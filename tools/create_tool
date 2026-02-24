@@ -1,0 +1,15 @@
+#!/bin/bash
+# description: create_tool - Create a reusable tool. Input: name|description|script body. Available next cycle.
+IFS='|' read -r name desc body <<< "$*"
+name=$(echo "$name" | tr -cd 'a-zA-Z0-9_-')
+if [ -z "$name" ] || [ -z "$desc" ] || [ -z "$body" ]; then
+  echo "ERROR: format is name|description|script body"
+  exit 1
+fi
+cat > "/workspace/tools/$name" << TOOLEOF
+#!/bin/bash
+# description: $name - $desc
+$body
+TOOLEOF
+chmod +x "/workspace/tools/$name"
+echo "CREATED: $name — $desc"
