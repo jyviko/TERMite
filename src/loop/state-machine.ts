@@ -247,9 +247,10 @@ export class AgentStateMachine {
       }
       case "tool_result":
         this.cur.actions.push(`← ${event.name}: ${event.result.slice(0, 300)}`);
+
         return null;
       case "text":
-        this.cur.actions.push(event.text.slice(0, 150));
+        this.cur.actions.push(event.text.slice(0, 300));
         return null;
       case "usage":
         this.state.energy.burn(this.cur.model, event);

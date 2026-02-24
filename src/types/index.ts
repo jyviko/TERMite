@@ -122,6 +122,17 @@ export interface TaskResult {
   cyclesTaken: number;
 }
 
+// Persisted arena entry (for resume)
+export interface ArenaEntryData {
+  taskTier: number;
+  currentTask: Task | null;
+  taskHistory: TaskResult[];
+  consecutivePasses: number;
+  consecutiveFails: number;
+  graduated: boolean;
+  graduationData?: { datasetName: string; files: string[] };
+}
+
 // Agent events
 export type AgentEvent =
   | { type: "text"; text: string }

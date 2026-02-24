@@ -1,0 +1,29 @@
+#!/bin/bash
+# description: write - Write content to a file path. Input: {"path":"...","content":"..."} or filepath on first line with content on remaining lines.
+INPUT="$1"
+
+# Try JSON format first: {"path":"...","content":"..."}
+PARSED=$(printf '%s' "$INPUT" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+sys.stdout.write(d['path'] + '\n')
+sys.stdout.write(d.get('content', ''))
+" 2>/dev/null)
+
+if [ $? -eq 0 ] && [ -n "$PARSED" ]; then
+  FILE="$(printf '%s\n' "$PARSED" | head -1)"
+  CONTENT="$(printf '%s\n' "$PARSED" | tail -n +2)"
+else
+  # Fallback: first line is filepath, rest is content
+  FILE="$(printf '%s\n' "$INPUT" | head -1)"
+  CONTENT="$(printf '%s\n' "$INPUT" | tail -n +2)"
+fi
+
+if [ -z "$FILE" ]; then
+  echo "Error: no file path provided"
+  exit 1
+fi
+
+mkdir -p "$(dirname "$FILE")" 2>/dev/null
+printf '%s\n' "$CONTENT" > "$FILE"
+echo "Wrote to $FILE"
