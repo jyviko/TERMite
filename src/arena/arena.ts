@@ -403,11 +403,6 @@ export class Arena {
             await this.rateGraduateWork(id, entry);
           } else if (event.result.includes("PASS")) {
             await this.onTaskComplete(id, entry);
-          } else {
-            entry.consecutiveFails++;
-            if (entry.consecutiveFails >= 5) {
-              await this.rotateTask(id, entry);
-            }
           }
         }
       }
@@ -491,26 +486,6 @@ export class Arena {
     ) {
       await this.fork(id, entry);
     }
-  }
-
-  private async rotateTask(id: string, entry: AgentEntry): Promise<void> {
-    const workspacePath = join(this.runDir, id, "workspace");
-    const oldTitle = entry.currentTask?.title ?? "unknown";
-
-    entry.consecutiveFails = 0;
-    entry.consecutivePasses = 0;
-
-    const newTask = this.taskGenerator.generateTask(
-      entry.taskTier,
-      entry.state.cycleCount,
-    );
-    entry.currentTask = newTask;
-    this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
-    entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
-
-    console.log(
-      `[ARENA] ${id} task rotated after 5 consecutive fails: ${oldTitle} → ${newTask.title} (tier ${newTask.tier})`,
-    );
   }
 
   private async onGraduation(id: string, entry: AgentEntry): Promise<void> {
