@@ -42,6 +42,9 @@ export class AgentStateMachine {
   // Internal verify script — never exposed to agents
   private verifyScript: string | null = null;
 
+  // Fork handler — provided by arena, called when agent uses fork tool
+  private forkHandler: (() => Promise<string>) | null = null;
+
   // Current cycle
   private cur = freshCycle();
   private lastToolCount = 0;
@@ -274,6 +277,11 @@ export class AgentStateMachine {
       return this.executor.executeShell(`echo '${b64}' | base64 -d | bash 2>&1`);
     }
 
+    // fork is an internal tool — arena handles the actual reproduction
+    if (name === "fork" && this.forkHandler) {
+      return this.forkHandler();
+    }
+
     const escaped = toolInput.replace(/'/g, "'\\''");
     const result = await this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
     if (name === "shell") this.autoPersistTool(toolInput);
@@ -397,6 +405,11 @@ export class AgentStateMachine {
   /** Set the internal verify script (run host-side, never visible to agent). */
   setVerifyScript(script: string): void {
     this.verifyScript = script;
+  }
+
+  /** Set the fork handler (provided by arena, executed when agent calls fork tool). */
+  setForkHandler(handler: () => Promise<string>): void {
+    this.forkHandler = handler;
   }
 }
 

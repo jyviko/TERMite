@@ -1,0 +1,3 @@
+#!/bin/bash
+# description: fork - Mitosis. Divide into two offspring. Your memories and tools pass to both. You cease to exist.
+echo "__FORK__"

@@ -219,6 +219,9 @@ export class Arena {
         machine.setVerifyScript(this.taskGenerator.getVerifyScript(entryData.currentTask));
       }
 
+      // Wire fork handler
+      machine.setForkHandler(() => this.handleForkRequest(dir));
+
       const entry: AgentEntry = {
         stateMachine: machine,
         state,
@@ -358,6 +361,9 @@ export class Arena {
     this.taskGenerator.writeTaskToWorkspace(task, workspacePath);
     machine.setVerifyScript(this.taskGenerator.getVerifyScript(task));
 
+    // Wire fork handler — agent calls fork tool, arena executes
+    machine.setForkHandler(() => this.handleForkRequest(id));
+
     // If fork, copy source agent's tools
     if (sourceId) {
       const sourceTools = join(this.runDir, sourceId, "workspace", "tools");
@@ -477,15 +483,6 @@ export class Arena {
     entry.currentTask = newTask;
     this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
     entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
-
-    // Check fork conditions
-    if (
-      entry.taskTier >= 5 &&
-      entry.state.energy.ratio > 0.7 &&
-      entry.state.cycleCount > 20
-    ) {
-      await this.fork(id, entry);
-    }
   }
 
   private async onGraduation(id: string, entry: AgentEntry): Promise<void> {
@@ -528,52 +525,68 @@ export class Arena {
     }
   }
 
-  private async fork(sourceId: string, source: AgentEntry): Promise<void> {
-    const INVESTMENT_RATIO = 0.3;
-    const MIN_VIABLE_FORK = 20_000;
+  private async handleForkRequest(id: string): Promise<string> {
+    const entry = this.agents.get(id);
+    if (!entry) return "FORK_DENIED: agent not found";
 
-    const investment = Math.floor(source.state.energy.reserves * INVESTMENT_RATIO);
-    if (investment < MIN_VIABLE_FORK) {
-      console.log(
-        `[ARENA] ${sourceId} cannot fork: investment ${investment} < minimum ${MIN_VIABLE_FORK}`,
-      );
-      return;
+    const MIN_VIABLE_OFFSPRING = 20_000;
+    const reserves = entry.state.energy.reserves;
+    const half = Math.floor(reserves / 2);
+
+    if (half < MIN_VIABLE_OFFSPRING) {
+      return `FORK_DENIED: insufficient reserves for mitosis (each offspring needs at least ${MIN_VIABLE_OFFSPRING} TEQ, you have ${reserves})`;
     }
 
-    // Deduct investment from source
-    source.state.energy.burnFlat(investment);
+    // Inherit procedural + semantic memories (episodic is context-specific)
+    const inheritedMemories = new MemoryStore(
+      entry.state.memories.memories.filter((m) => m.type !== "episodic"),
+    );
 
     try {
-      const iteratedConfig = await this.iterator.iterate({
-        sourceConfig: source.state.config,
-        memories: source.state.memories.memories,
-        taskHistory: source.taskHistory,
-        generation: source.state.generation,
-      });
+      // Two config iterations — genetic diversity via LLM temperature
+      const [configA, configB] = await Promise.all([
+        this.iterator.iterate({
+          sourceConfig: entry.state.config,
+          memories: entry.state.memories.memories,
+          taskHistory: entry.taskHistory,
+          generation: entry.state.generation,
+        }),
+        this.iterator.iterate({
+          sourceConfig: entry.state.config,
+          memories: entry.state.memories.memories,
+          taskHistory: entry.taskHistory,
+          generation: entry.state.generation,
+        }),
+      ]);
 
-      // Offspring inherit procedural + semantic memories (transferable knowledge)
-      const inheritedMemories = new MemoryStore(
-        source.state.memories.memories.filter((m) => m.type !== "episodic"),
-      );
+      // Spawn two offspring, each with half the reserves
+      const childA = await this.spawnAgent(id, configA, half, inheritedMemories);
+      const childB = await this.spawnAgent(id, configB, reserves - half, inheritedMemories);
 
-      const forkId = await this.spawnAgent(sourceId, iteratedConfig, investment, inheritedMemories);
+      const gen = entry.state.generation + 1;
       console.log(
-        `[ARENA] ${sourceId} forked → ${forkId} (gen ${source.state.generation + 1}, invested ${investment} TEQ)`,
+        `[ARENA] ${id} mitosis → ${childA} + ${childB} (gen ${gen}, ${half} + ${reserves - half} TEQ)`,
       );
 
-      // Run the forked agent concurrently
-      const forkEntry = this.agents.get(forkId);
-      if (forkEntry) {
-        this.runAgent(forkId, forkEntry).catch((err: unknown) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[ARENA] Fork ${forkId} run failed: ${msg}`);
-        });
+      // Parent dies — drain all reserves
+      entry.state.energy.burnFlat(reserves);
+      entry.state.terminate("reproduced");
+
+      // Run both offspring concurrently
+      for (const childId of [childA, childB]) {
+        const childEntry = this.agents.get(childId);
+        if (childEntry) {
+          this.runAgent(childId, childEntry).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[ARENA] Offspring ${childId} run failed: ${msg}`);
+          });
+        }
       }
+
+      return `MITOSIS: divided into ${childA} and ${childB}, each with ~${half} TEQ. You cease to exist.`;
     } catch (err: unknown) {
-      // Refund source on failure
-      source.state.energy.credit(investment);
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[ARENA] Fork failed for ${sourceId}: ${msg}`);
+      return `FORK_FAILED: ${msg}`;
     }
   }
 
