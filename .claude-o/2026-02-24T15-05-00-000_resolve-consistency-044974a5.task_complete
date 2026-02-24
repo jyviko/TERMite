@@ -1,0 +1,31 @@
+# Task Completion Summary
+
+## Task: resolve-consistency
+**Status**: Completed
+**Date**: 2026-02-24
+
+## Changes Made
+- `src/loop/agentic-loop.ts`: Yield `tool_use` events with input data after `tool_start`
+- `src/loop/state-machine.ts`: Add `tool_use` case in `trackEvent()` to enrich action entries with tool inputs
+- `src/loop/state-machine.ts`: Increase `tool_result` truncation from 100 to 300 chars
+- `src/loop/state-machine.ts`: Increase `summarizeRecentActions()` window from -20 to -30 entries
+
+## Tests Run
+- `npx tsc --noEmit` — zero errors after `npm install`
+- Pre-existing errors (missing `@anthropic-ai/sdk` before install) confirmed unrelated to changes
+
+## Files Changed
+```
+M	src/loop/agentic-loop.ts
+M	src/loop/state-machine.ts
+```
+
+## Commit Summary
+```
+4332d7d feat: capture tool inputs in action summaries for resolve quality
+```
+
+## Notes
+- The `tool_use` event type already existed in `AgentEvent` but was never yielded by `AgenticLoop` — added the yield so `trackEvent` can actually receive and process it
+- Resolve now sees `-> shell(awk '{s+=$1} END {print s}' /workspace/data/numbers.txt)` instead of just `-> shell`
+- No breaking changes — `tool_use` events were already part of the type union
