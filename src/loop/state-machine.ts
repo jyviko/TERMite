@@ -11,7 +11,7 @@ import { runMemorizePhase, applyMemorizeOperations } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const MEMORY_TOKEN_BUDGET = 2000;
-const MAX_AUTO_TOOLS = 3;
+const MAX_AUTO_TOOLS = 10;
 
 // ── Per-cycle mutable state ─────────────────────────────────────────
 
@@ -154,7 +154,15 @@ export class AgentStateMachine {
     }
 
     // 6. Apply memory operations (compress, forget, consolidate, promptRewrite)
+    const oldTokens = this.state.memories.totalTokenCost;
     applyMemorizeOperations(memorizeResult.ops, this.state.memories, this.state.config);
+    const newTokens = this.state.memories.totalTokenCost;
+    const tokensSaved = oldTokens - newTokens;
+    if (tokensSaved > 0) {
+      const bonus = Math.floor(tokensSaved * 2);
+      this.state.energy.credit(bonus);
+      this.cur.sources.push(`consolidation:${bonus}`);
+    }
 
     // 7. Housekeeping
     this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.lastToolCount);
@@ -298,7 +306,10 @@ export class AgentStateMachine {
       `TERMSCRIPT\n` +
       `chmod +x /workspace/tools/auto_${hash}`;
 
-    this.executor.executeShell(persistCmd).catch(() => {});
+    this.executor.executeShell(persistCmd).then(() => {
+      this.state.energy.credit(10_000);
+      this.cur.sources.push("tool_creation:10000");
+    }).catch(() => {});
   }
 
   // ── Awareness message ─────────────────────────────────────────────
