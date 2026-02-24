@@ -10,7 +10,7 @@ import { Resolver, computeIncome } from "./resolve.js";
 import { runMemorizePhase, applyMemorizeOperations } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
-const MEMORY_TOKEN_BUDGET = 2000;
+const BASE_MEMORY_TOKEN_BUDGET = 4000;
 const MAX_AUTO_TOOLS = 10;
 
 // ── Per-cycle mutable state ─────────────────────────────────────────
@@ -139,13 +139,14 @@ export class AgentStateMachine {
 
     // 5. Memorize — cheap LLM call to manage memory (MID TERM compression + LONG TERM promotion)
     yield { type: "phase_change", phase: "memorizing" };
+    const memorizeBudget = BASE_MEMORY_TOKEN_BUDGET + Math.floor(this.state.energy.earned / 200);
     const memorizeResult = await runMemorizePhase(
       this.llm,
       this.state.config,
       this.state.memories,
       resolveResult.lesson,
       resolveResult.outcome,
-      MEMORY_TOKEN_BUDGET,
+      memorizeBudget,
     );
 
     // Burn memorize cost (maintenance overhead, tracked in next cycle)
@@ -190,7 +191,9 @@ export class AgentStateMachine {
     };
 
     // Build messages: memory pairs (conversation history) + current awareness
-    const memoryMessages: Anthropic.MessageParam[] = this.state.memories.formatAsMessages(MEMORY_TOKEN_BUDGET);
+    // Agents that earn more get bigger memory budgets — compound interest
+    const memoryBudget = BASE_MEMORY_TOKEN_BUDGET + Math.floor(this.state.energy.earned / 200);
+    const memoryMessages: Anthropic.MessageParam[] = this.state.memories.formatAsMessages(memoryBudget);
 
     // Mark last memory message for caching so system+memories prefix is a cache hit
     // on subsequent agentic loop iterations (tool use rounds)

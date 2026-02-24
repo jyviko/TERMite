@@ -2,8 +2,8 @@
 # Helper script to create task completion file with proper naming
 # Usage: ./complete_task.sh
 
-TASK_NAME="reward-emergent-behavior"
-TASK_ID="f362b03e"
+TASK_NAME="memory-growth"
+TASK_ID="b5885463"
 BASE_BRANCH="feature/TERM_tools"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%S-%3N)
 COMPLETION_FILE=".claude-o/${TIMESTAMP}_${TASK_NAME}-${TASK_ID}.task_complete"

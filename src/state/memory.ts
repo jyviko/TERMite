@@ -70,7 +70,11 @@ export class MemoryStore {
 
   decayEvict(threshold = 0.05): number {
     const before = this.memories.length;
-    this.memories = this.memories.filter((m) => this.effectiveScore(m) >= threshold);
+    this.memories = this.memories.filter((m) => {
+      // Never auto-evict procedural memories above minimum importance
+      if (m.type === "procedural" && m.importance >= 0.3) return true;
+      return this.effectiveScore(m) >= threshold;
+    });
     return before - this.memories.length;
   }
 
@@ -84,28 +88,31 @@ export class MemoryStore {
 
   /**
    * Format memories as user/assistant message pairs for conversation injection.
-   * Chronological order, budget-limited. This IS the agent's persistent history.
+   * Score-ranked selection, chronological output. This IS the agent's persistent history.
    */
   formatAsMessages(tokenBudget: number): MessagePair[] {
-    const chronological = [...this.memories]
-      .sort((a, b) => a.createdAt - b.createdAt);
+    // Select highest-scored memories that fit budget (not most recent)
+    const ranked = [...this.memories]
+      .sort((a, b) => this.effectiveScore(b) - this.effectiveScore(a));
 
-    // Select most recent that fit in budget
     const selected: Memory[] = [];
     let totalTokens = 0;
-    for (let i = chronological.length - 1; i >= 0; i--) {
-      const m = chronological[i]!;
-      if (totalTokens + m.tokenCost > tokenBudget) break;
-      selected.unshift(m);
+    for (const m of ranked) {
+      if (totalTokens + m.tokenCost > tokenBudget) continue;  // skip if too large, try next
+      selected.push(m);
       totalTokens += m.tokenCost;
+      m.accessCount++;  // track access for scoring boost
+      m.lastAccessed = Date.now();
     }
+
+    // Sort selected by creation time for conversation coherence
+    selected.sort((a, b) => a.createdAt - b.createdAt);
 
     const messages: MessagePair[] = [];
     for (const m of selected) {
       messages.push({ role: "user", content: m.context || `[${m.type}]` });
       messages.push({ role: "assistant", content: m.content });
     }
-
     return messages;
   }
 
@@ -139,9 +146,13 @@ export class MemoryStore {
 
   effectiveScore(m: Memory): number {
     const ageHours = (Date.now() - m.createdAt) / (1000 * 60 * 60);
-    const decay = Math.pow(0.5, ageHours / 24);
-    const accessBoost = Math.log(1 + m.accessCount) * 0.1;
-    return m.importance * decay + accessBoost;
+    // Only episodic memories decay — procedural/semantic knowledge persists
+    const decay = m.type === "episodic"
+      ? Math.pow(0.5, ageHours / 24)
+      : 1.0;
+    const typeWeight = m.type === "procedural" ? 1.0 : m.type === "semantic" ? 0.85 : 0.5;
+    const accessBoost = Math.log(1 + m.accessCount) * 0.15;
+    return m.importance * typeWeight * decay + accessBoost;
   }
 
   get totalTokenCost(): number {
