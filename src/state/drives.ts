@@ -6,7 +6,7 @@ function defaultDrive(name: DriveName): Drive {
   const configs: Record<DriveName, Omit<Drive, "name">> = {
     explore: { level: 0.8, threshold: 0.3, decayRate: 0.05, growthRate: 0.15 },
     acquire: { level: 0.5, threshold: 0.4, decayRate: 0.03, growthRate: 0.2 },
-    grow: { level: 0.0, threshold: 0.5, decayRate: 0.1, growthRate: 0.1 },
+    grow: { level: 0.0, threshold: 0.5, decayRate: 0.05, growthRate: 0.15 },
     coordinate: { level: 0.0, threshold: 0.6, decayRate: 0.15, growthRate: 0.05 },
   };
   return { name, ...configs[name] };
@@ -41,10 +41,11 @@ export class DriveSystem {
     }
 
     const grow = this.drives.grow;
-    const recentCycles = energy.cycleHistory.slice(-3);
-    const positiveStreak =
-      recentCycles.length >= 3 && recentCycles.every((c) => c.net > 0);
-    if (positiveStreak) {
+    const window = energy.cycleHistory.slice(-10);
+    const windowNet = window.length >= 3
+      ? window.reduce((sum, c) => sum + c.net, 0)
+      : -1;
+    if (windowNet > 0) {
       grow.level = Math.min(1, grow.level + grow.growthRate);
     } else {
       grow.level = Math.max(0, grow.level - grow.decayRate);
