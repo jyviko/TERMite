@@ -1,0 +1,31 @@
+# Task Completion Summary
+
+## Task: reward-emergent-behavior
+**Status**: Completed
+**Date**: 2026-02-24
+
+## Changes Made
+- `src/loop/state-machine.ts`: Raised MAX_AUTO_TOOLS from 3 to 10
+- `src/loop/state-machine.ts`: Added 10,000 TEQ energy credit on successful tool auto-persist
+- `src/loop/state-machine.ts`: Added memory consolidation bonus (2x tokens saved) after applyMemorizeOperations
+- `src/state/defaults.ts`: Updated DEFAULT_RESOLVE_PROMPT with bonus factors for emergent behaviors
+
+## Tests Run
+- `npx tsc --noEmit` — passed with zero errors
+- No unit test suite present in this codebase
+
+## Files Changed
+```
+M	src/loop/state-machine.ts
+M	src/state/defaults.ts
+```
+
+## Commit Summary
+```
+1a45d1a Reward emergent behaviors — tool creation bonus, memory consolidation bonus, raise tool cap
+```
+
+## Notes
+- Pre-existing natural pressure from toolCount * 20 base cost in energy.ts keeps tool proliferation in check
+- The tool creation bonus fires asynchronously (in a .then() on the persist shell call), so if the persist fails the bonus is not awarded
+- Memory consolidation bonus only fires when totalTokenCost decreases (net compression), not on simple memory additions
