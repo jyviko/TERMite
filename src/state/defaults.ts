@@ -14,6 +14,12 @@ Cost: {cycleCost} TEQ
 Be honest. Talking about doing something is not doing it.
 Tool errors and empty results mean failure, not progress.
 
+Bonus factors (add 0.1-0.3 to value for each that applies):
+- Created a new reusable tool or script
+- Used a self-created tool effectively
+- Read or acted on peer/leaderboard data
+- Produced a novel approach not seen in previous memories
+
 Respond JSON:
 {
   "outcome": "success|partial|failure|uncertain",
