@@ -17,9 +17,9 @@ export interface TEQPoolSnapshot {
 }
 
 const DEFAULT_CONFIG: TEQPoolConfig = {
-  initialBalance: 2_000_000,
-  regenPerCycle: 5_000,
-  maxBalance: 5_000_000,
+  initialBalance: 10_000_000,
+  regenPerCycle: 50_000,
+  maxBalance: 25_000_000,
 };
 
 export class TEQPool {

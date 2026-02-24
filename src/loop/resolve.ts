@@ -83,6 +83,28 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+// Model-dependent bounty multiplier: costlier models earn proportionally more
+// to offset their higher per-token energy burn.
+const MODEL_BOUNTY_MULTIPLIER: Record<string, number> = {
+  "claude-haiku-4-5-20251001": 1.0,
+  "claude-haiku-3-5": 1.0,
+  "claude-sonnet-4-6": 3.0,
+  "claude-sonnet-4-5": 3.0,
+  "claude-sonnet-4": 3.0,
+  "claude-opus-4-6": 5.0,
+  "claude-opus-4-5": 5.0,
+};
+
+function lookupBountyMultiplier(model: string): number {
+  // Exact match first
+  if (MODEL_BOUNTY_MULTIPLIER[model] !== undefined) return MODEL_BOUNTY_MULTIPLIER[model];
+  // Prefix match (handles version suffixes like -20251001)
+  for (const [key, multiplier] of Object.entries(MODEL_BOUNTY_MULTIPLIER)) {
+    if (model.startsWith(key) || key.startsWith(model)) return multiplier;
+  }
+  return 1.0;
+}
+
 export async function computeIncome(
   goalRelevance: number,
   outcome: Outcome,
@@ -90,6 +112,7 @@ export async function computeIncome(
   pool: TEQPool,
   cycleCost?: number,
   taskTier?: number,
+  model?: string,
 ): Promise<{ bounty: number; base: number; requested: number; sources: string[] }> {
   const sources: string[] = [];
 
@@ -113,6 +136,15 @@ export async function computeIncome(
   if (taskReward) {
     bountyRequested = taskReward;
     sources.push(`task:${taskReward}`);
+
+    // Model-dependent multiplier: costlier models get proportionally higher bounties
+    if (model) {
+      const modelMultiplier = lookupBountyMultiplier(model);
+      bountyRequested = Math.floor(bountyRequested * modelMultiplier);
+      if (modelMultiplier !== 1.0) {
+        sources.push(`model:${modelMultiplier.toFixed(1)}x`);
+      }
+    }
 
     // Efficiency bonus: amplify bounty for agents that use tools over in-context reasoning
     // Floor at 1.0 — never reduces bounty, only amplifies for efficient agents
