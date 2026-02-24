@@ -1,5 +1,5 @@
 // Body agent — runs INSIDE an isolated Docker container.
-// execSync is intentional: the organism's shell access IS the feature.
+// execSync is intentional: the agent's shell access IS the feature.
 // The container is the sandbox boundary.
 
 import { execSync } from "node:child_process";
@@ -44,7 +44,7 @@ function handleExecuteShell(cmd: Command): Response {
     return { id: cmd.id, ok: false, error: "Missing command" };
   }
   // Intentional: execSync runs inside Docker container sandbox.
-  // The organism needs shell access to solve tasks.
+  // The agent needs shell access to solve tasks.
   try {
     const output = execSync(cmd.command, {
       cwd: WORKSPACE,

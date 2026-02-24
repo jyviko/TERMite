@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent } from "../types/index.js";
-import type { Brain, BrainResponse } from "../brain/index.js";
+import type { LLM, LLMResponse } from "../llm/index.js";
 
 export type ToolExecutor = (
   name: string,
@@ -16,17 +16,22 @@ export interface LoopConfig {
   maxIterations?: number;
   executor: ToolExecutor;
   signal?: AbortSignal;
+  shouldStop?: () => boolean;
+  statusNote?: () => string;
 }
 
 const DEFAULT_MAX_ITERATIONS = 99;
 const MICRO_COMPACT_KEEP_LAST = 6;
 
 export class AgenticLoop {
-  constructor(private brain: Brain) {}
+  constructor(private llm: LLM) {}
 
   async *run(config: LoopConfig): AsyncGenerator<AgentEvent> {
     const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     const messages: Anthropic.MessageParam[] = [...config.messages];
+
+    // Cumulative token tracking across all iterations in this burst
+    const cumulative = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, iterations: 0 };
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (config.signal?.aborted) {
@@ -34,12 +39,15 @@ export class AgenticLoop {
         break;
       }
 
+      // Pre-flight budget check: avoid wasted LLM call if cost already exceeded
+      if (iteration > 0 && config.shouldStop?.()) break;
+
       // Micro-compact old tool results to manage context
       microCompact(messages, MICRO_COMPACT_KEEP_LAST);
 
-      let response: BrainResponse;
+      let response: LLMResponse;
       try {
-        response = await this.brain.chat({
+        response = await this.llm.chat({
           model: config.model,
           system: config.systemPrompt,
           messages,
@@ -52,13 +60,20 @@ export class AgenticLoop {
         break;
       }
 
-      // Report token usage
+      // Accumulate and report token usage
+      cumulative.input += response.usage.input;
+      cumulative.output += response.usage.output;
+      cumulative.cacheCreation += response.usage.cacheCreation;
+      cumulative.cacheRead += response.usage.cacheRead;
+      cumulative.iterations++;
+
       yield {
         type: "usage",
         input: response.usage.input,
         output: response.usage.output,
         cacheCreation: response.usage.cacheCreation,
         cacheRead: response.usage.cacheRead,
+        cumulative: { ...cumulative },
       };
 
       // Extract text blocks
@@ -106,6 +121,7 @@ export class AgenticLoop {
 
       for (const toolBlock of toolUseBlocks) {
         yield { type: "tool_start", name: toolBlock.name };
+        yield { type: "tool_use", name: toolBlock.name, input: toolBlock.input as Record<string, unknown> };
 
         let result: string;
         try {
@@ -127,8 +143,16 @@ export class AgenticLoop {
         });
       }
 
-      // Push ONE user message with all tool results
-      messages.push({ role: "user", content: toolResults });
+      // Push ONE user message with all tool results + status awareness
+      const status = config.statusNote?.() ?? "";
+      const usageNote: Anthropic.TextBlockParam = {
+        type: "text",
+        text: `[Burst: ${cumulative.output.toLocaleString()} out, ${cumulative.input.toLocaleString()} in, ${cumulative.iterations} iter${status ? ` | ${status}` : ""}]`,
+      };
+      messages.push({ role: "user", content: [...toolResults, usageNote] });
+
+      // Check if a tool signaled the loop should stop (e.g. resolve)
+      if (config.shouldStop?.()) break;
     }
   }
 }

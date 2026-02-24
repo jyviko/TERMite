@@ -53,7 +53,7 @@ describe("EnergyLedger", () => {
     expect(e.budget).toBe(10000);
     expect(e.reserves).toBe(10000);
     expect(e.spent).toBe(0);
-    expect(e.alive).toBe(true);
+    expect(e.active).toBe(true);
   });
 
   it("burn reduces reserves by weighted cost", () => {
@@ -73,52 +73,53 @@ describe("EnergyLedger", () => {
     expect(e.spent).toBe(500);
   });
 
-  it("feed caps at capacity", () => {
+  it("credit grows capacity when reserves exceed it", () => {
     const e = new EnergyLedger({ budget: 1000 });
-    const added = e.feed(500);
-    expect(added).toBe(0); // already at capacity
-    expect(e.reserves).toBe(1000);
+    const added = e.credit(500);
+    expect(added).toBe(500); // no cap — agents accumulate wealth
+    expect(e.reserves).toBe(1500);
+    expect(e.capacity).toBe(1500); // capacity grew
   });
 
-  it("feed adds up to remaining capacity", () => {
+  it("credit adds up to remaining capacity", () => {
     const e = new EnergyLedger({ budget: 10000 });
     e.burn(HAIKU, usage(100)); // costs 500
-    const added = e.feed(300);
+    const added = e.credit(300);
     expect(added).toBe(300);
     expect(e.reserves).toBe(9800); // 10000 - 500 + 300
   });
 
-  it("alive is false when reserves <= 0", () => {
+  it("active is false when reserves <= 0", () => {
     const e = new EnergyLedger({ budget: 100 });
     e.burn(HAIKU, usage(100)); // costs 500, reserves → 0
     expect(e.reserves).toBe(0);
-    expect(e.alive).toBe(false);
+    expect(e.active).toBe(false);
   });
 
-  it("alive is false when spent >= budget", () => {
+  it("active is false when spent >= budget", () => {
     const e = new EnergyLedger({ budget: 100, reserves: 10000, capacity: 10000 });
     e.burn(HAIKU, usage(100)); // costs 500, spent=500 >= budget=100
-    expect(e.alive).toBe(false);
+    expect(e.active).toBe(false);
   });
 
-  it("BMR computation matches formula", () => {
+  it("baseCost computation matches formula", () => {
     const e = new EnergyLedger({ budget: 10000 });
-    const bmr = e.computeBmr(500);
-    expect(bmr).toBe(100); // 50 + 500/10
+    const baseCost = e.computeBaseCost(500);
+    expect(baseCost).toBe(100); // 50 + 500/10
   });
 
-  it("burnBmr uses current BMR", () => {
+  it("burnBaseCost uses current base cost", () => {
     const e = new EnergyLedger({ budget: 10000 });
-    e.computeBmr(100); // bmr = 60
-    e.burnBmr();
+    e.computeBaseCost(100); // baseCost = 60
+    e.burnBaseCost();
     expect(e.reserves).toBe(10000 - 60);
   });
 
   it("endCycle records cycle history with token breakdown", () => {
     const e = new EnergyLedger({ budget: 100000 });
     e.burn(HAIKU, usage(200, 1000, 0, 500));
-    e.feed(100);
-    e.endCycle(0, "success", 100, "task:100");
+    e.credit(100);
+    e.endCycle(0, "success", "task:100");
     expect(e.cycleHistory).toHaveLength(1);
     const record = e.cycleHistory[0]!;
     expect(record.income).toBe(100);
@@ -131,9 +132,9 @@ describe("EnergyLedger", () => {
   it("avgCycleCost computes correctly", () => {
     const e = new EnergyLedger({ budget: 100000 });
     e.burn(HAIKU, usage(100)); // 500
-    e.endCycle(0, null, 0, "");
+    e.endCycle(0, null, "");
     e.burn(HAIKU, usage(200)); // 1000
-    e.endCycle(1, null, 0, "");
+    e.endCycle(1, null, "");
     expect(e.avgCycleCost()).toBe(750); // (500 + 1000) / 2
     expect(e.avgCycleCost(1)).toBe(1000);
   });
@@ -147,8 +148,8 @@ describe("EnergyLedger", () => {
   it("serializes and deserializes correctly", () => {
     const e = new EnergyLedger({ budget: 100000 });
     e.burn(HAIKU, usage(200));
-    e.feed(200);
-    e.endCycle(0, "partial", 200, "relevance:200");
+    e.credit(200);
+    e.endCycle(0, "partial", "relevance:200");
 
     const json = e.toJSON();
     const restored = EnergyLedger.fromJSON(json);

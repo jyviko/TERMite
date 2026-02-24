@@ -1,5 +1,4 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AgentEvent } from "../types/index.js";
 
 export interface TokenUsage {
   input: number;
@@ -8,13 +7,13 @@ export interface TokenUsage {
   cacheRead: number;
 }
 
-export interface BrainResponse {
+export interface LLMResponse {
   content: Anthropic.ContentBlock[];
   stopReason: "end_turn" | "tool_use" | "max_tokens";
   usage: TokenUsage;
 }
 
-export interface BrainConfig {
+export interface LLMConfig {
   apiKey?: string;
   baseUrl?: string;
   timeout?: number;
@@ -29,15 +28,6 @@ export interface ChatParams {
   temperature?: number;
 }
 
-export interface StreamParams {
-  model: string;
-  system?: string;
-  messages: Anthropic.MessageParam[];
-  tools?: Anthropic.Tool[];
-  maxTokens: number;
-  signal?: AbortSignal;
-}
-
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [1000, 2000, 4000];
 
@@ -45,20 +35,20 @@ function isRetryable(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-export class Brain {
+export class LLM {
   private client: Anthropic;
 
-  constructor(config: BrainConfig = {}) {
+  constructor(config: LLMConfig = {}) {
     const baseURL = config.baseUrl ?? process.env.ANTHROPIC_BASE_URL;
-    console.log(`[Brain] baseURL=${baseURL ?? "(default)"}`);
+    console.log(`[LLM] baseURL=${baseURL ?? "(default)"}`);
     this.client = new Anthropic({
-      defaultHeaders: { 'X-Api-Key': null },  
+      defaultHeaders: { 'X-Api-Key': null },
       baseURL,
       timeout: config.timeout ?? 120_000,
     });
   }
 
-  async chat(params: ChatParams): Promise<BrainResponse> {
+  async chat(params: ChatParams): Promise<LLMResponse> {
     const systemBlocks: Anthropic.TextBlockParam[] = params.system
       ? [{ type: "text" as const, text: params.system, cache_control: { type: "ephemeral" as const } }]
       : [];
@@ -80,7 +70,7 @@ export class Brain {
         const cacheUsage = response.usage as unknown as Record<string, unknown>;
         return {
           content: response.content,
-          stopReason: response.stop_reason as BrainResponse["stopReason"],
+          stopReason: response.stop_reason as LLMResponse["stopReason"],
           usage: {
             input: response.usage.input_tokens,
             output: response.usage.output_tokens,
@@ -99,64 +89,7 @@ export class Brain {
         throw err;
       }
     }
-    throw new Error("Brain: max retries exhausted");
-  }
-
-  async *stream(params: StreamParams): AsyncGenerator<AgentEvent> {
-    const systemBlocks: Anthropic.TextBlockParam[] = params.system
-      ? [{ type: "text" as const, text: params.system, cache_control: { type: "ephemeral" as const } }]
-      : [];
-
-    const tools = params.tools ? this.withCacheControl(params.tools) : undefined;
-
-    const stream = this.client.messages.stream({
-      model: params.model,
-      max_tokens: params.maxTokens,
-      system: systemBlocks.length > 0 ? systemBlocks : undefined,
-      messages: params.messages,
-      tools: tools && tools.length > 0 ? tools : undefined,
-    });
-
-    if (params.signal) {
-      params.signal.addEventListener("abort", () => stream.abort(), { once: true });
-    }
-
-    let currentToolName: string | null = null;
-    let toolInputJson = "";
-
-    for await (const event of stream) {
-      switch (event.type) {
-        case "content_block_start":
-          if (event.content_block.type === "tool_use") {
-            currentToolName = event.content_block.name;
-            toolInputJson = "";
-            yield { type: "tool_start", name: currentToolName };
-          }
-          break;
-
-        case "content_block_delta":
-          if (event.delta.type === "text_delta") {
-            yield { type: "text", text: event.delta.text };
-          } else if (event.delta.type === "input_json_delta") {
-            toolInputJson += event.delta.partial_json;
-          }
-          break;
-
-        case "content_block_stop":
-          if (currentToolName) {
-            let input: Record<string, unknown> = {};
-            try {
-              input = toolInputJson ? JSON.parse(toolInputJson) : {};
-            } catch {
-              // degrade to empty object
-            }
-            yield { type: "tool_use", name: currentToolName, input };
-            currentToolName = null;
-            toolInputJson = "";
-          }
-          break;
-      }
-    }
+    throw new Error("LLM: max retries exhausted");
   }
 
   /**

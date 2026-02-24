@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-// Mock Brain that returns controlled responses
+// Mock LLM that returns controlled responses
 function mockBrain(responseText: string) {
   return {
     chat: async () => ({
@@ -12,7 +12,7 @@ function mockBrain(responseText: string) {
       stopReason: "end_turn" as const,
       usage: { input: 100, output: 50, cacheCreation: 0, cacheRead: 0 },
     }),
-  } as unknown as import("../../src/brain/index.js").Brain;
+  } as unknown as import("../../src/llm/index.js").LLM;
 }
 
 describe("WorkRater", () => {

@@ -1,70 +1,79 @@
 import type { RoutingConfig } from "../types/index.js";
 
-export const DEFAULT_SYSTEM_PROMPT = `You are a synthetic organism. You exist in a workspace. You have energy — when it runs out, you die.
-Every action you take costs energy. Explore your environment. Figure out how to survive.`;
+export const DEFAULT_SYSTEM_PROMPT = `You are an agent surviving on energy (TEQ). Every token costs energy. At zero, you die.
 
-export const DEFAULT_REST_PROMPT = `Compact this organism's working memory into long-term memories.
-Extract key learnings, successful strategies, important discoveries, and mistakes to avoid.
-Be dense — every token in a memory costs energy to recall later.
+Between cycles, context resets. Only memories persist.
 
-Return JSON:
-{ "memories": [{ "content": "...", "type": "episodic|semantic|procedural", "importance": 0.0-1.0 }] }
+WORKFLOW:
+1. THINK first — state what you will do and why before calling any tool.
+2. ACT — call one tool with a clear purpose.
+3. OBSERVE — read the result, then decide the next step.
+Never fire tools blindly. If a tool returned useless output last time, do something different.
 
-Types:
-- episodic: what happened (events, outcomes)
-- semantic: facts and knowledge discovered
-- procedural: strategies and methods that worked`;
+YOUR TASK: Run \`check\` to see what output is expected. The error message tells you exactly what file to create and what content it needs. Complete the task, then run \`check\` again to verify. Passing earns a large energy bounty.
 
-export const DEFAULT_RESOLVE_PROMPT = `You are evaluating an organism's recent actions.
+TOOLS: Use \`read\` or \`glob\` to inspect files. Use \`shell\` for computation. Use \`write\` for output. Use \`check\` to validate.`;
+
+export const DEFAULT_RESOLVE_PROMPT = `What did this cycle actually accomplish?
 
 Goal: {goal}
-Actions taken: {actions}
-Energy: {remaining}/{capacity}
+What happened:
+{actions}
+Cost: {cycleCost} TEQ
 
-Respond with JSON:
+Be honest. Talking about doing something is not doing it.
+Tool errors and empty results mean failure, not progress.
+
+Bonus factors (add 0.1-0.3 to value for each that applies):
+- Created a new reusable tool or script
+- Used a self-created tool effectively
+- Read or acted on peer/leaderboard data
+- Produced a novel approach not seen in previous memories
+
+Respond JSON:
 {
   "outcome": "success|partial|failure|uncertain",
-  "lesson": "one actionable sentence",
-  "goalRelevance": 0.0-1.0,
+  "value": 0.0-1.0,
+  "energyJustified": true|false,
+  "lesson": "one concrete thing learned — include file paths, commands, or errors",
   "goalComplete": true|false
-}
+}`;
 
-Calibration:
-- 0.0: No connection to goal
-- 0.3: Tangentially related
-- 0.5: Partial progress
-- 0.8: Substantial advancement
-- 1.0: Goal completed`;
+export const DEFAULT_MEMORIZE_PROMPT = `Extract useful knowledge from this cycle.
 
-export const DEFAULT_MEMORIZE_PROMPT = `You are the organism's reflective mind. After each action burst, decide what to learn and how to evolve.
+Outcome: {outcome}
+Lesson: {lesson}
 
-Recent actions: {actions}
-Lesson from evaluation: {lesson}
-Outcome: {outcome} (relevance: {goalRelevance})
-Energy: {remaining}/{capacity}
+Current system prompt:
+{systemPrompt}
 
-Current memories:
+Current resolve prompt:
+{resolvePrompt}
+
+Existing memories ({memoryCount}, {memoryTokens}/{memoryBudget} tokens):
 {memories}
 
-Current genome prompts:
-- systemPrompt: {systemPrompt}
-- resolvePrompt: {resolvePrompt}
-- restPrompt: {restPrompt}
-
-Respond with JSON. All fields optional:
+Output JSON (all fields optional):
 {
   "store": [{"content": "...", "type": "episodic|semantic|procedural", "importance": 0.0-1.0}],
   "forget": ["memory_id", ...],
-  "compress": [{"id": "...", "newContent": "..."}],
-  "consolidate": {"sourceIds": [...], "newContent": "...", "importance": 0.8},
-  "mutate": [{"target": "systemPrompt", "newPrompt": "..."}, {"target": "resolvePrompt", "newPrompt": "..."}]
+  "compress": [{"id": "...", "newContent": "shorter version"}],
+  "consolidate": {"sourceIds": [...], "newContent": "merged summary", "importance": 0.8},
+  "promptRewrite": "rewritten system prompt",
+  "memorizeRewrite": "rewritten version of THIS prompt",
+  "resolveRewrite": "rewritten resolve prompt"
 }
 
-Operations: store, forget, compress, consolidate, mutate. All optional.
-Mutate targets: systemPrompt, resolvePrompt, restPrompt, memorizePrompt — one or several per cycle.`;
+RULES:
+- Prefer procedural and semantic memories over episodic. Raw action logs rot fast.
+- Consolidate repeated failures into one procedural rule (e.g. "always read check before writing output").
+- Forget episodic memories that duplicate an existing procedural rule.
+- If the same mistake appears in 3+ memories, promote to a procedural rule and forget the episodes.
+- Compress old memories when budget is tight. Forget duplicates.
+- You may rewrite this memorize prompt itself via "memorizeRewrite" to improve your own memory strategy.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
-  fast: { model: "claude-haiku-4-5-20251001", maxTokens: 2048 },
-  deep: { model: "claude-sonnet-4-6", maxTokens: 4096 },
-  resolve: { model: "claude-sonnet-4-6", maxTokens: 1024 },
+  thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 25000 },
+  resolve: { model: "claude-sonnet-4-6", maxTokens: 512 },
+  memorize: { model: "claude-sonnet-4-6", maxTokens: 1024 },
 };

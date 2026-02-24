@@ -1,132 +1,189 @@
-import type { Outcome, MemoryType } from "../types/index.js";
-import type { Brain, TokenUsage } from "../brain/index.js";
-import { extractText } from "../brain/util.js";
-import type { Genome } from "../state/genome.js";
+import type { MemoryType } from "../types/index.js";
+import type { LLM, TokenUsage } from "../llm/index.js";
+import { extractText } from "../llm/util.js";
+import type { Config } from "../state/config.js";
 import type { MemoryStore } from "../state/memory.js";
-import type { EnergyLedger } from "../state/energy.js";
 
 const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
-export class Memorizer {
-  constructor(private brain: Brain) {}
+// ── Operation types ─────────────────────────────────────────────────
 
-  async memorize(params: {
-    genome: Genome;
-    memories: MemoryStore;
-    lesson: string;
-    outcome: Outcome;
-    goalRelevance: number;
-    actions: string;
-    energy: EnergyLedger;
-  }): Promise<TokenUsage> {
-    const prompt = params.genome.memorizePrompt
-      .replace("{actions}", params.actions)
-      .replace("{lesson}", params.lesson)
-      .replace("{outcome}", params.outcome)
-      .replace("{goalRelevance}", String(params.goalRelevance))
-      .replace("{remaining}", String(params.energy.remaining))
-      .replace("{capacity}", String(params.energy.capacity))
-      .replace("{memories}", params.memories.format(2000))
-      .replace("{systemPrompt}", params.genome.systemPrompt)
-      .replace("{resolvePrompt}", params.genome.resolvePrompt)
-      .replace("{restPrompt}", params.genome.restPrompt);
-
-    try {
-      const response = await this.brain.chat({
-        model: params.genome.routing.fast.model, // Haiku — cheap
-        system: prompt,
-        messages: [{ role: "user", content: "Reflect and decide what to learn." }],
-        maxTokens: 1024,
-      });
-
-      const text = extractText(response.content);
-
-      const ops = parseMemorizeResponse(text);
-      this.applyOperations(ops, params.memories, params.genome);
-
-      params.memories.decayEvict();
-      return response.usage;
-    } catch {
-      // Memorize failure is non-fatal — organism just doesn't learn this cycle
-    }
-
-    params.memories.decayEvict();
-    return ZERO_USAGE;
-  }
-
-  private applyOperations(
-    ops: MemorizeOperations,
-    memories: MemoryStore,
-    genome: Genome,
-  ): void {
-    // Store new memories
-    if (ops.store) {
-      for (const m of ops.store) {
-        if (m.content && m.type && typeof m.importance === "number") {
-          memories.add(m.content, m.type as MemoryType, m.importance);
-        }
-      }
-    }
-
-    // Forget memories by ID
-    if (ops.forget) {
-      for (const id of ops.forget) {
-        memories.forget(id);
-      }
-    }
-
-    // Compress memories
-    if (ops.compress) {
-      for (const c of ops.compress) {
-        if (c.id && c.newContent) {
-          memories.compress(c.id, c.newContent);
-        }
-      }
-    }
-
-    // Consolidate memories
-    if (ops.consolidate) {
-      const { sourceIds, newContent, importance } = ops.consolidate;
-      if (sourceIds?.length && newContent) {
-        memories.consolidate(sourceIds, newContent, importance ?? 0.5);
-      }
-    }
-
-    // Self-mutation — accepts an array or a single object for backward compat
-    if (ops.mutate) {
-      const mutations = Array.isArray(ops.mutate) ? ops.mutate : [ops.mutate];
-      for (const m of mutations) {
-        if (m.target && m.newPrompt?.trim()) {
-          genome.mutate(m.target, m.newPrompt);
-        }
-      }
-    }
-  }
+interface StoreOp {
+  content: string;
+  type: string;
+  importance: number;
 }
 
-interface MutateOp {
-  target: string;
-  newPrompt: string;
+interface CompressOp {
+  id: string;
+  newContent: string;
 }
 
-interface MemorizeOperations {
-  store?: Array<{ content: string; type: string; importance: number }>;
+interface ConsolidateOp {
+  sourceIds: string[];
+  newContent: string;
+  importance?: number;
+}
+
+export interface MemorizeOps {
+  store?: StoreOp[];
   forget?: string[];
-  compress?: Array<{ id: string; newContent: string }>;
-  consolidate?: {
-    sourceIds: string[];
-    newContent: string;
-    importance?: number;
-  };
-  mutate?: MutateOp | MutateOp[];
+  compress?: CompressOp[];
+  consolidate?: ConsolidateOp | null;
+  promptRewrite?: string | null;
+  memorizeRewrite?: string | null;
+  resolveRewrite?: string | null;
 }
 
-function parseMemorizeResponse(text: string): MemorizeOperations {
+export interface MemorizeResult {
+  ops: MemorizeOps;
+  usage: TokenUsage;
+}
+
+// ── Mandatory memorize phase ────────────────────────────────────────
+
+/**
+ * Run the Memorize phase — an LLM call that decides what to remember,
+ * forget, compress, consolidate, and whether to rewrite the system prompt.
+ */
+export async function runMemorizePhase(
+  llm: LLM,
+  config: Config,
+  memories: MemoryStore,
+  lesson: string,
+  outcome: string,
+  memoryBudget: number,
+): Promise<MemorizeResult> {
+  const prompt = config.memorizePrompt
+    .replace("{outcome}", outcome)
+    .replace("{lesson}", lesson)
+    .replace("{systemPrompt}", config.systemPrompt)
+    .replace("{resolvePrompt}", config.resolvePrompt)
+    .replace("{memoryCount}", String(memories.memories.length))
+    .replace("{memories}", formatMemoriesWithCosts(memories))
+    .replace("{memoryTokens}", String(memories.totalTokenCost))
+    .replace("{memoryBudget}", String(memoryBudget));
+
+  try {
+    const response = await llm.chat({
+      model: config.routing.memorize.model,
+      system: prompt,
+      messages: [{ role: "user", content: "Manage memory." }],
+      maxTokens: config.routing.memorize.maxTokens,
+    });
+
+    const text = extractText(response.content);
+    const ops = parseMemorizeResponse(text);
+    return { ops, usage: response.usage };
+  } catch {
+    return { ops: {}, usage: ZERO_USAGE };
+  }
+}
+
+function formatMemoriesWithCosts(memories: MemoryStore): string {
+  if (memories.memories.length === 0) return "(no memories)";
+  return memories.memories
+    .map((m) => {
+      if (m.context) {
+        return `[${m.id}] (tokens:${m.tokenCost})\n  User: ${m.context}\n  Agent: ${m.content}`;
+      }
+      return `[${m.id}] ${m.type} (tokens:${m.tokenCost}) ${m.content}`;
+    })
+    .join("\n");
+}
+
+function parseMemorizeResponse(text: string): MemorizeOps {
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return {};
-    return JSON.parse(jsonMatch[0]);
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      store: Array.isArray(parsed.store) ? parsed.store : undefined,
+      forget: Array.isArray(parsed.forget) ? parsed.forget : undefined,
+      compress: Array.isArray(parsed.compress) ? parsed.compress : undefined,
+      consolidate: parsed.consolidate ?? undefined,
+      promptRewrite: typeof parsed.promptRewrite === "string"
+        ? parsed.promptRewrite
+        : typeof parsed.prompt_rewrite === "string"
+          ? parsed.prompt_rewrite
+          : undefined,
+      memorizeRewrite: typeof parsed.memorizeRewrite === "string"
+        ? parsed.memorizeRewrite
+        : typeof parsed.memorize_rewrite === "string"
+          ? parsed.memorize_rewrite
+          : undefined,
+      resolveRewrite: typeof parsed.resolveRewrite === "string"
+        ? parsed.resolveRewrite
+        : typeof parsed.resolve_rewrite === "string"
+          ? parsed.resolve_rewrite
+          : undefined,
+    };
   } catch {
     return {};
   }
+}
+
+// ── Apply operations ────────────────────────────────────────────────
+
+/**
+ * Apply parsed memorize operations to the memory store and config.
+ * Returns a human-readable summary of what was done.
+ */
+export function applyMemorizeOperations(
+  ops: MemorizeOps,
+  memories: MemoryStore,
+  config: Config,
+): string[] {
+  const results: string[] = [];
+
+  if (ops.store) {
+    for (const m of ops.store) {
+      if (m.content && m.type && typeof m.importance === "number") {
+        const mem = memories.add(m.content, m.type as MemoryType, m.importance);
+        results.push(`stored ${mem.type}:${mem.importance.toFixed(1)}`);
+      }
+    }
+  }
+
+  if (ops.forget) {
+    for (const id of ops.forget) {
+      memories.forget(id);
+      results.push(`forgot ${id}`);
+    }
+  }
+
+  if (ops.compress) {
+    for (const c of ops.compress) {
+      if (c.id && c.newContent) {
+        memories.compress(c.id, c.newContent);
+        results.push(`compressed ${c.id}`);
+      }
+    }
+  }
+
+  if (ops.consolidate) {
+    const { sourceIds, newContent, importance } = ops.consolidate;
+    if (sourceIds?.length && newContent) {
+      memories.consolidate(sourceIds, newContent, importance ?? 0.5);
+      results.push(`consolidated ${sourceIds.length} memories`);
+    }
+  }
+
+  if (ops.promptRewrite) {
+    config.rewrite("systemPrompt", ops.promptRewrite);
+    results.push("rewrote systemPrompt");
+  }
+
+  if (ops.memorizeRewrite) {
+    config.rewrite("memorizePrompt", ops.memorizeRewrite);
+    results.push("rewrote memorizePrompt");
+  }
+
+  if (ops.resolveRewrite) {
+    config.rewrite("resolvePrompt", ops.resolveRewrite);
+    results.push("rewrote resolvePrompt");
+  }
+
+  return results;
 }

@@ -17,9 +17,9 @@ export interface TEQPoolSnapshot {
 }
 
 const DEFAULT_CONFIG: TEQPoolConfig = {
-  initialBalance: 2_000_000,
-  regenPerCycle: 5_000,
-  maxBalance: 5_000_000,
+  initialBalance: 10_000_000,
+  regenPerCycle: 50_000,
+  maxBalance: 25_000_000,
 };
 
 export class TEQPool {
@@ -78,7 +78,7 @@ export class TEQPool {
     });
   }
 
-  /** Return TEQs to the pool (e.g. on organism death). Capped at maxBalance. */
+  /** Return TEQs to the pool (e.g. on agent death). Capped at maxBalance. */
   deposit(amount: number): void {
     this.balance = Math.min(this.maxBalance, this.balance + amount);
     this.totalDeposited += amount;

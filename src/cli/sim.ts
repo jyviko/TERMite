@@ -1,9 +1,9 @@
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent } from "../types/index.js";
-import { Brain, type BrainResponse, type ChatParams } from "../brain/index.js";
-import { OrganismStateManager } from "../state/organism-state.js";
-import { OrganismStateMachine } from "../loop/state-machine.js";
+import { LLM, type LLMResponse, type ChatParams } from "../llm/index.js";
+import { AgentStateManager } from "../state/agent-state.js";
+import { AgentStateMachine } from "../loop/state-machine.js";
 import { TEQPool } from "../arena/teq-pool.js";
 
 const { values } = parseArgs({
@@ -36,7 +36,7 @@ class MockExecutor {
   async executeShell(command: string): Promise<string> {
     // Tool discovery
     if (command.includes("find /workspace/tools")) {
-      return "/workspace/tools/shell\n/workspace/tools/check\n/workspace/tools/count";
+      return "shell|shell - Run a shell command\ncheck|check - Validate task output";
     }
     // Tool execution
     if (command.startsWith("/workspace/tools/shell")) {
@@ -46,9 +46,6 @@ class MockExecutor {
       const greeting = this.files.get("/workspace/output/greeting.txt");
       if (greeting?.includes("Hello, World!")) return "PASS";
       return "FAIL: file not found or wrong content";
-    }
-    if (command.startsWith("/workspace/tools/count")) {
-      return "";
     }
     return `(simulated) ${command}`;
   }
@@ -60,15 +57,15 @@ class MockExecutor {
   }
 }
 
-// Mock brain that returns simple scripted responses
-class MockBrain extends Brain {
+// Mock LLM that returns simple scripted responses
+class MockLLM extends LLM {
   private callIndex = 0;
 
   constructor() {
     super({});
   }
 
-  async chat(_params: ChatParams): Promise<BrainResponse> {
+  async chat(_params: ChatParams): Promise<LLMResponse> {
     this.callIndex++;
 
     // First few calls: explore and solve
@@ -132,29 +129,29 @@ class MockBrain extends Brain {
 }
 
 async function main() {
-  console.log(`=== TERMITE SIMULATION ===`);
+  console.log(`=== TERM SIMULATION ===`);
   console.log(`Budget: ${budget} | Max cycles: ${maxCycles}`);
 
-  const brain = new MockBrain();
+  const llm = new MockLLM();
   const executor = new MockExecutor();
-  const state = new OrganismStateManager({ budget });
+  const state = new AgentStateManager({ budget });
 
   const teqPool = TEQPool.initialize();
-  const machine = new OrganismStateMachine(
-    brain,
+  const machine = new AgentStateMachine(
+    llm,
     executor as unknown as import("../executor/index.js").Executor,
     state,
     teqPool,
     `saves/${state.id}-sim.json`,
   );
 
-  console.log(`Organism ${state.id} born\n`);
+  console.log(`Agent ${state.id} started\n`);
 
   let cycles = 0;
   for await (const event of machine.run()) {
     logEvent(state.id, state.mode, event);
-    if (event.type === "state_change" && event.to === "forage") {
-      cycles++;
+    if (state.cycleCount > cycles) {
+      cycles = state.cycleCount;
       if (cycles >= maxCycles) {
         console.log(`\nReached max cycles (${maxCycles})`);
         break;
@@ -163,12 +160,12 @@ async function main() {
   }
 
   console.log(`\n=== FINAL STATE ===`);
-  console.log(`Alive: ${state.alive}`);
+  console.log(`Active: ${state.active}`);
   console.log(`Energy: ${state.energy.remaining}/${state.energy.capacity}`);
   console.log(`Cycles: ${state.cycleCount}`);
   console.log(`Memories: ${state.memories.memories.length}`);
-  console.log(`Genome version: ${state.genome.version}`);
-  if (state.causeOfDeath) console.log(`Cause of death: ${state.causeOfDeath}`);
+  console.log(`Config version: ${state.config.version}`);
+  if (state.stopReason) console.log(`Stop reason: ${state.stopReason}`);
 }
 
 function logEvent(id: string, mode: string, event: AgentEvent): void {

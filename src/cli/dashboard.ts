@@ -1,10 +1,10 @@
 /**
- * TERMITE Arena Dashboard — live terminal monitor.
+ * TERM Arena Dashboard — live terminal monitor.
  *
- * Reads organism state files and displays real-time status.
+ * Reads agent state files and displays real-time status.
  * Run alongside the arena:
  *
- *     yarn arena --organisms 3 --budget 300000 &
+ *     yarn arena --agents 3 --budget 300000 &
  *     yarn dash
  *
  * 1:1 port of the Python curses dashboard.
@@ -122,31 +122,31 @@ function safe(buf: string[], row: number, col: number, text: string, color = "")
 }
 
 // ── Data loading ───────────────────────────────────────────────────
-interface OrgData {
+interface AgentData {
   // camelCase (TS state) with fallbacks to snake_case (Python state)
   [key: string]: unknown;
 }
 
-function loadOrganisms(): OrgData[] {
+function loadAgents(): AgentData[] {
   if (!existsSync(SAVES_DIR)) return [];
-  const organisms: OrgData[] = [];
+  const agents: AgentData[] = [];
   for (const entry of readdirSync(SAVES_DIR, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "shared") continue;
     const statePath = join(SAVES_DIR, entry.name, "state.json");
     try {
-      organisms.push(JSON.parse(readFileSync(statePath, "utf-8")));
+      agents.push(JSON.parse(readFileSync(statePath, "utf-8")));
     } catch {
       // Not written yet
     }
   }
-  return organisms.sort((a, b) => {
-    const aid = String(a.id ?? a.organism_id ?? "");
-    const bid = String(b.id ?? b.organism_id ?? "");
+  return agents.sort((a, b) => {
+    const aid = String(a.id ?? a.agent_id ?? "");
+    const bid = String(b.id ?? b.agent_id ?? "");
     return aid.localeCompare(bid);
   });
 }
 
-function loadGoalBoard(): OrgData[] {
+function loadGoalBoard(): AgentData[] {
   const boardPath = join(SAVES_DIR, "shared", "_goal_board.json");
   try {
     const data = JSON.parse(readFileSync(boardPath, "utf-8"));
@@ -174,29 +174,30 @@ function loadPool(): PoolData | null {
 }
 
 // Field accessors — handle both camelCase and snake_case
-function g(obj: OrgData, ...keys: string[]): unknown {
+function g(obj: AgentData, ...keys: string[]): unknown {
   for (const k of keys) {
     if (obj[k] !== undefined) return obj[k];
   }
   return undefined;
 }
 
-function gn(obj: OrgData, ...keys: string[]): number {
+function gn(obj: AgentData, ...keys: string[]): number {
   const v = g(obj, ...keys);
   return typeof v === "number" ? v : 0;
 }
 
-function gs(obj: OrgData, ...keys: string[]): string {
+function gs(obj: AgentData, ...keys: string[]): string {
   const v = g(obj, ...keys);
   return typeof v === "string" ? v : "";
 }
 
 // ── Card renderer (matches Python draw_card exactly) ───────────────
-function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: number): void {
+function drawCard(buf: string[], org: AgentData, r0: number, c0: number, colW: number): void {
   let r = r0;
 
-  // Row 0: organism ID (8 chars, like Python)
-  const oid = gs(org, "id", "organism_id").slice(0, 8) || "?";
+  // Row 0: agent ID (strip prefix, show UUID only)
+  const rawId = gs(org, "id", "agent_id");
+  const oid = rawId.replace(/^(agent|org)-/, "").slice(0, 8) || "?";
   safe(buf, r, c0, ` [${oid}]`, BOLD);
   r++;
 
@@ -204,25 +205,25 @@ function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: num
   safe(buf, r, c0, "─".repeat(colW - 1), CYAN);
   r++;
 
-  // Row 2: alive / dead
-  const alive = Boolean(g(org, "alive"));
-  if (alive) {
-    safe(buf, r, c0, " \u25cf ALIVE", `${GREEN}${BOLD}`);
+  // Row 2: active / stopped
+  const active = Boolean(g(org, "active"));
+  if (active) {
+    safe(buf, r, c0, " \u25cf ACTIVE", `${GREEN}${BOLD}`);
   } else {
-    const cause = gs(org, "causeOfDeath", "cause_of_death") || "?";
+    const cause = gs(org, "stopReason", "stop_reason") || "stopped";
     safe(buf, r, c0, ` \u2717 ${cause}`.slice(0, colW - 1), RED);
   }
   r++;
 
-  // Row 3: cycle + genome version
+  // Row 3: cycle + config version
   const cyc = gn(org, "cycleCount", "cycle_count");
-  const genome = (g(org, "genome") ?? {}) as OrgData;
-  const gv = gn(genome, "version");
+  const cfg = (g(org, "config") ?? {}) as AgentData;
+  const gv = gn(cfg, "version");
   safe(buf, r, c0, ` Cyc ${cyc}  v${gv}`);
   r++;
 
   // Row 4: energy bar + reserves
-  const e = (g(org, "energy") ?? {}) as OrgData;
+  const e = (g(org, "energy") ?? {}) as AgentData;
   const res = gn(e, "reserves");
   const cap = gn(e, "capacity") || 1;
   const pct = Math.floor((res / cap) * 100);
@@ -231,13 +232,13 @@ function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: num
   safe(buf, r, c0 + 17, `${fmt(res)}`.slice(0, colW - 18), ec);
   r++;
 
-  // Row 5: capacity + BMR
-  safe(buf, r, c0, ` Cap=${fmt(cap)} BMR=${gn(e, "bmr")}`);
+  // Row 5: capacity + base cost
+  safe(buf, r, c0, ` Cap=${fmt(cap)} Base=${gn(e, "baseCost", "bmr")}`);
   r++;
 
   // Row 6-7: last cycle cost/income/net/yield
-  const ch = (g(org, "energy") as OrgData)?.cycleHistory ?? (g(org, "energy") as OrgData)?.cycle_history;
-  const history = Array.isArray(ch) ? ch as OrgData[] : [];
+  const ch = (g(org, "energy") as AgentData)?.cycleHistory ?? (g(org, "energy") as AgentData)?.cycle_history;
+  const history = Array.isArray(ch) ? ch as AgentData[] : [];
   if (history.length > 0) {
     const last = history[history.length - 1]!;
     const ln = gn(last, "net");
@@ -280,7 +281,7 @@ function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: num
   // Row 11: tool registry
   const tools = g(org, "tool_registry", "toolRegistry");
   if (Array.isArray(tools) && tools.length > 0) {
-    const names = tools.map((t: OrgData) => gs(t, "name")).join(", ");
+    const names = tools.map((t: AgentData) => gs(t, "name")).join(", ");
     safe(buf, r, c0, ` T: ${names}`.slice(0, colW - 1), MAG);
   } else {
     safe(buf, r, c0, " T: none");
@@ -290,11 +291,11 @@ function drawCard(buf: string[], org: OrgData, r0: number, c0: number, colW: num
   // Row 12: memories + drives
   const mems = g(org, "memories");
   const memCount = Array.isArray(mems) ? mems.length : 0;
-  const drives = (g(org, "drives") ?? {}) as OrgData;
+  const drives = (g(org, "drives") ?? {}) as AgentData;
   const parts: string[] = [];
   for (const [name, d] of Object.entries(drives)) {
     if (d && typeof d === "object" && d !== null) {
-      const lv = (d as OrgData).level;
+      const lv = (d as AgentData).level;
       if (typeof lv === "number") {
         parts.push(`${name[0]!.toUpperCase()}${lv.toFixed(1)}`);
       }
@@ -315,12 +316,12 @@ function render(): string {
   // Clear
   buf.push("\x1b[2J\x1b[H");
 
-  const orgs = loadOrganisms();
+  const orgs = loadAgents();
 
   // Global stats
-  const totalSpent = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as OrgData, "spent"), 0);
-  const totalEarned = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as OrgData, "earned"), 0);
-  const nAlive = orgs.filter((o) => Boolean(g(o, "alive"))).length;
+  const totalSpent = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as AgentData, "spent"), 0);
+  const totalEarned = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as AgentData, "earned"), 0);
+  const nActive = orgs.filter((o) => Boolean(g(o, "active"))).length;
 
   // Goal board
   const goals = loadGoalBoard();
@@ -338,7 +339,7 @@ function render(): string {
   safe(buf, 0, 0, " TERM ARENA ", `${BOLD}${CYAN}`);
   safe(buf, 0, 13, `Spent:${fmt(totalSpent)}  Earned:${fmt(totalEarned)}  Net:${fmtSigned(totalEarned - totalSpent)}`);
   const timeStr = new Date().toTimeString().slice(0, 8);
-  safe(buf, 0, width - 20, `${nAlive}/${orgs.length} alive  ${timeStr}`, CYAN);
+  safe(buf, 0, width - 20, `${nActive}/${orgs.length} active  ${timeStr}`, CYAN);
 
   // Row 1: TEQ pool status
   if (pool) {
@@ -358,7 +359,7 @@ function render(): string {
 
   // Empty state
   if (orgs.length === 0) {
-    safe(buf, 4, 2, `Waiting for organisms... (${SAVES_DIR})`, YELLOW);
+    safe(buf, 4, 2, `Waiting for agents... (${SAVES_DIR})`, YELLOW);
     safe(buf, height - 1, 0, ` [q] quit`, CYAN);
     return buf.join("");
   }
@@ -376,7 +377,7 @@ function render(): string {
     const c0 = gridC * colW;
 
     if (r0 + CARD_ROWS > height - 1) {
-      safe(buf, height - 2, 0, ` +${n - idx} more organisms (resize terminal)`, YELLOW);
+      safe(buf, height - 2, 0, ` +${n - idx} more agents (resize terminal)`, YELLOW);
       break;
     }
 
@@ -384,7 +385,7 @@ function render(): string {
   }
 
   // Footer
-  safe(buf, height - 1, 0, ` [q] quit  ${n} organisms  ${nCols}x${nGridRows} grid`, CYAN);
+  safe(buf, height - 1, 0, ` [q] quit  ${n} agents  ${nCols}x${nGridRows} grid`, CYAN);
 
   return buf.join("");
 }

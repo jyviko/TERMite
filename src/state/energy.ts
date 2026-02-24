@@ -83,7 +83,7 @@ export class EnergyLedger {
   capacity: number;
   earned: number;
   earnedFromPrizes: number;
-  bmr: number;
+  baseCost: number;
   cycleHistory: CycleRecord[];
 
   private cycleCost = 0;
@@ -100,7 +100,7 @@ export class EnergyLedger {
     this.capacity = data.capacity ?? data.budget;
     this.earned = data.earned ?? 0;
     this.earnedFromPrizes = data.earnedFromPrizes ?? 0;
-    this.bmr = data.bmr ?? 50;
+    this.baseCost = data.baseCost ?? 50;
     this.cycleHistory = data.cycleHistory ?? [];
   }
 
@@ -118,32 +118,34 @@ export class EnergyLedger {
     this.cycleCacheRead += usage.cacheRead;
   }
 
-  feed(tokens: number): number {
-    const space = this.capacity - this.reserves;
-    const added = Math.min(tokens, space);
-    this.reserves += added;
-    this.earned += added;
-    this.cycleIncome += added;
-    return added;
+  credit(tokens: number): number {
+    this.reserves += tokens;
+    this.earned += tokens;
+    this.cycleIncome += tokens;
+    // Capacity grows with reserves — agents can accumulate wealth
+    if (this.reserves > this.capacity) {
+      this.capacity = this.reserves;
+    }
+    return tokens;
   }
 
-  /** Feed TEQs sourced from the shared pool. Tracks pool-sourced income separately. */
-  feedFromPool(tokens: number): number {
-    const added = this.feed(tokens);
+  /** Credit TEQs sourced from the shared pool. Tracks pool-sourced income separately. */
+  creditFromPool(tokens: number): number {
+    const added = this.credit(tokens);
     this.earnedFromPrizes += added;
     return added;
   }
 
-  computeBmr(memoryTokens: number): number {
-    this.bmr = 50 + Math.floor(memoryTokens / 10);
-    return this.bmr;
+  computeBaseCost(memoryTokens: number, toolCount = 0): number {
+    this.baseCost = 50 + Math.floor(memoryTokens / 10) + toolCount * 20;
+    return this.baseCost;
   }
 
-  burnBmr(): void {
-    // BMR is a flat metabolic cost, not an API call — deduct directly
-    this.reserves -= this.bmr;
-    this.spent += this.bmr;
-    this.cycleCost += this.bmr;
+  burnBaseCost(): void {
+    // Base cost is a flat overhead, not an API call — deduct directly
+    this.reserves -= this.baseCost;
+    this.spent += this.baseCost;
+    this.cycleCost += this.baseCost;
     if (this.reserves < 0) this.reserves = 0;
   }
 
@@ -154,12 +156,14 @@ export class EnergyLedger {
     if (this.reserves < 0) this.reserves = 0;
   }
 
-  endCycle(cycle: number, outcome: Outcome | null, income: number, sources: string, goalRelevance = 0, model?: string): void {
+  endCycle(cycle: number, outcome: Outcome | null, sources: string, goalRelevance = 0, model?: string): void {
+    // Use actual credited income (from credit/creditFromPool), not requested amount
+    const actualIncome = this.cycleIncome;
     this.cycleHistory.push({
       cycle,
       cost: this.cycleCost,
-      income,
-      net: income - this.cycleCost,
+      income: actualIncome,
+      net: actualIncome - this.cycleCost,
       outcome,
       incomeSources: sources,
       goalRelevance,
@@ -191,7 +195,7 @@ export class EnergyLedger {
     return this.budget - this.spent;
   }
 
-  get alive(): boolean {
+  get active(): boolean {
     return this.reserves > 0 && this.spent < this.budget;
   }
 
@@ -211,7 +215,7 @@ export class EnergyLedger {
       capacity: this.capacity,
       earned: this.earned,
       earnedFromPrizes: this.earnedFromPrizes,
-      bmr: this.bmr,
+      baseCost: this.baseCost,
       cycleHistory: this.cycleHistory,
     };
   }

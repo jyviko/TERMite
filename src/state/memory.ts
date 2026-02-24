@@ -1,6 +1,11 @@
 import type { Memory, MemoryType } from "../types/index.js";
 import { randomUUID } from "node:crypto";
 
+export interface MessagePair {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export class MemoryStore {
   memories: Memory[];
 
@@ -8,10 +13,11 @@ export class MemoryStore {
     this.memories = memories ?? [];
   }
 
-  add(content: string, type: MemoryType, importance: number): Memory {
+  add(content: string, type: MemoryType, importance: number, context = ""): Memory {
     const now = Date.now();
     const mem: Memory = {
       id: `mem_${randomUUID().slice(0, 8)}`,
+      context,
       content,
       type,
       importance: Math.max(0, Math.min(1, importance)),
@@ -19,7 +25,7 @@ export class MemoryStore {
       createdAt: now,
       lastAccessed: now,
       energySaved: 0,
-      tokenCost: this.estimateTokens(content),
+      tokenCost: this.estimateTokens(context + content),
     };
     this.memories.push(mem);
     return mem;
@@ -37,7 +43,7 @@ export class MemoryStore {
     if (!mem) return 0;
     const oldCost = mem.tokenCost;
     mem.content = newContent;
-    mem.tokenCost = this.estimateTokens(newContent);
+    mem.tokenCost = this.estimateTokens(mem.context + newContent);
     const saved = oldCost - mem.tokenCost;
     mem.energySaved += Math.max(0, saved);
     return Math.max(0, saved);
@@ -51,8 +57,12 @@ export class MemoryStore {
     // Remove source memories
     this.memories = this.memories.filter((m) => !ids.includes(m.id));
 
-    // Add consolidated memory
-    const mem = this.add(newContent, "semantic", importance);
+    // Consolidated memory — merge contexts
+    const mergedContext = sources
+      .filter((m) => m.context)
+      .map((m) => m.context)
+      .join(" → ");
+    const mem = this.add(newContent, "semantic", importance, mergedContext);
     mem.energySaved = Math.max(0, totalOldTokens - mem.tokenCost);
 
     return mem.energySaved;
@@ -60,7 +70,11 @@ export class MemoryStore {
 
   decayEvict(threshold = 0.05): number {
     const before = this.memories.length;
-    this.memories = this.memories.filter((m) => this.effectiveScore(m) >= threshold);
+    this.memories = this.memories.filter((m) => {
+      // Never auto-evict procedural memories above minimum importance
+      if (m.type === "procedural" && m.importance >= 0.3) return true;
+      return this.effectiveScore(m) >= threshold;
+    });
     return before - this.memories.length;
   }
 
@@ -72,6 +86,40 @@ export class MemoryStore {
     }
   }
 
+  /**
+   * Format memories as user/assistant message pairs for conversation injection.
+   * Score-ranked selection, chronological output. This IS the agent's persistent history.
+   */
+  formatAsMessages(tokenBudget: number): MessagePair[] {
+    // Select highest-scored memories that fit budget (not most recent)
+    const ranked = [...this.memories]
+      .sort((a, b) => this.effectiveScore(b) - this.effectiveScore(a));
+
+    const selected: Memory[] = [];
+    let totalTokens = 0;
+    for (const m of ranked) {
+      if (totalTokens + m.tokenCost > tokenBudget) continue;  // skip if too large, try next
+      selected.push(m);
+      totalTokens += m.tokenCost;
+      m.accessCount++;  // track access for scoring boost
+      m.lastAccessed = Date.now();
+    }
+
+    // Sort selected by creation time for conversation coherence
+    selected.sort((a, b) => a.createdAt - b.createdAt);
+
+    const messages: MessagePair[] = [];
+    for (const m of selected) {
+      messages.push({ role: "user", content: m.context || `[${m.type}]` });
+      messages.push({ role: "assistant", content: m.content });
+    }
+    return messages;
+  }
+
+  /**
+   * Format memories as text for the memorize prompt (management view).
+   * Shows IDs, types, costs so the LLM can decide what to compress/forget.
+   */
   format(tokenBudget: number, maxCount?: number): string {
     const sorted = [...this.memories]
       .sort((a, b) => this.effectiveScore(b) - this.effectiveScore(a));
@@ -83,7 +131,13 @@ export class MemoryStore {
 
     for (const m of limited) {
       if (totalTokens + m.tokenCost > tokenBudget) break;
-      lines.push(`[${m.type}] (${m.importance.toFixed(1)}) ${m.content}`);
+      if (m.context) {
+        lines.push(`[${m.id}] ${m.type} (imp:${m.importance.toFixed(1)}, tokens:${m.tokenCost})`);
+        lines.push(`  User: ${m.context}`);
+        lines.push(`  Agent: ${m.content}`);
+      } else {
+        lines.push(`[${m.id}] ${m.type} (imp:${m.importance.toFixed(1)}, tokens:${m.tokenCost}) ${m.content}`);
+      }
       totalTokens += m.tokenCost;
     }
 
@@ -92,9 +146,13 @@ export class MemoryStore {
 
   effectiveScore(m: Memory): number {
     const ageHours = (Date.now() - m.createdAt) / (1000 * 60 * 60);
-    const decay = Math.pow(0.5, ageHours / 24);
-    const accessBoost = Math.log(1 + m.accessCount) * 0.1;
-    return m.importance * decay + accessBoost;
+    // Only episodic memories decay — procedural/semantic knowledge persists
+    const decay = m.type === "episodic"
+      ? Math.pow(0.5, ageHours / 24)
+      : 1.0;
+    const typeWeight = m.type === "procedural" ? 1.0 : m.type === "semantic" ? 0.85 : 0.5;
+    const accessBoost = Math.log(1 + m.accessCount) * 0.15;
+    return m.importance * typeWeight * decay + accessBoost;
   }
 
   get totalTokenCost(): number {
@@ -111,6 +169,6 @@ export class MemoryStore {
   }
 
   static fromJSON(data: Memory[]): MemoryStore {
-    return new MemoryStore(data);
+    return new MemoryStore(data.map((m) => ({ ...m, context: m.context ?? "" })));
   }
 }

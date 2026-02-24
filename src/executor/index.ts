@@ -33,7 +33,6 @@ export class Executor {
     timer: NodeJS.Timeout;
   }>();
   private mutex = Promise.resolve();
-  private started = false;
 
   private extraVolumes: string[];
 
@@ -98,7 +97,6 @@ export class Executor {
     });
 
     this.process.on("exit", (code) => {
-      this.started = false;
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
         p.reject(new Error(`Body agent exited with code ${code}`));
@@ -115,7 +113,6 @@ export class Executor {
       throw new Error("Body agent ping failed");
     }
 
-    this.started = true;
   }
 
   async stop(): Promise<void> {
@@ -144,7 +141,6 @@ export class Executor {
       // Already removed
     }
 
-    this.started = false;
   }
 
   async executeShell(command: string): Promise<string> {

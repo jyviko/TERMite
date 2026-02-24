@@ -1,0 +1,17 @@
+#!/bin/bash
+# description: read - Read a file or list a directory. Input: file or directory path. Returns contents or listing.
+TARGET="$1"
+
+if [ -z "$TARGET" ]; then
+  echo "Error: no path provided"
+  exit 1
+fi
+
+if [ -d "$TARGET" ]; then
+  ls -1 "$TARGET"
+elif [ -f "$TARGET" ]; then
+  cat "$TARGET"
+else
+  echo "Error: $TARGET not found"
+  exit 1
+fi

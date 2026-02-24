@@ -7,7 +7,7 @@ export interface VerifyResult {
 }
 
 export class TaskVerifier {
-  async verify(task: Task, executor: Executor): Promise<VerifyResult> {
+  async verify(_task: Task, executor: Executor): Promise<VerifyResult> {
     try {
       const output = await executor.executeShell("bash /workspace/tools/check 2>&1");
       return { passed: true, output };

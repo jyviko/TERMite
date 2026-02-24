@@ -1,13 +1,12 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-// Organism modes
-export type OrganismMode = "forage" | "dead";
+// Agent modes
+export type AgentMode = "active" | "stopped";
 
 // Outcome from resolve
 export type Outcome = "success" | "partial" | "failure" | "uncertain";
 
 // Drive names
-export type DriveName = "orient" | "metabolize" | "grow" | "coordinate";
+export const DRIVE_NAMES = ["explore", "acquire", "grow", "coordinate"] as const;
+export type DriveName = (typeof DRIVE_NAMES)[number];
 
 // Memory types
 export type MemoryType = "episodic" | "semantic" | "procedural";
@@ -22,6 +21,7 @@ export interface Drive {
 
 export interface Memory {
   id: string;
+  context: string;
   content: string;
   type: MemoryType;
   importance: number;
@@ -39,7 +39,7 @@ export interface EnergyLedgerData {
   capacity: number;
   earned: number;
   earnedFromPrizes: number;
-  bmr: number;
+  baseCost: number;
   cycleHistory: CycleRecord[];
 }
 
@@ -58,23 +58,28 @@ export interface CycleRecord {
   cacheReadTokens?: number;
 }
 
-export interface Genome {
+export interface Config {
   systemPrompt: string;
   resolvePrompt: string;
-  restPrompt: string;
   memorizePrompt: string;
   routing: RoutingConfig;
   version: number;
-  promptHistory: PromptMutation[];
+  promptHistory: PromptRewrite[];
+}
+
+export interface RouteEntry {
+  model: string;
+  maxTokens: number;
+  maxCycleCost?: number;
 }
 
 export interface RoutingConfig {
-  fast: { model: string; maxTokens: number };
-  deep: { model: string; maxTokens: number };
-  resolve: { model: string; maxTokens: number };
+  thinking: RouteEntry;
+  resolve: RouteEntry;
+  memorize: RouteEntry;
 }
 
-export interface PromptMutation {
+export interface PromptRewrite {
   phase: string;
   oldPrompt: string;
   newPrompt: string;
@@ -82,38 +87,20 @@ export interface PromptMutation {
   version: number;
 }
 
-export type ForageRouting = "fast" | "deep";
-
-export interface OrganismState {
+export interface AgentState {
   id: string;
   generation: number;
-  parentId: string | null;
-  bornAt: number;
-  alive: boolean;
-  causeOfDeath: string | null;
+  sourceId: string | null;
+  createdAt: number;
+  active: boolean;
+  stopReason: string | null;
   cycleCount: number;
-  mode: OrganismMode;
+  mode: AgentMode;
   goal: string | null;
-  forageRouting: ForageRouting;
   energy: EnergyLedgerData;
   drives: Record<DriveName, Drive>;
   memories: Memory[];
-  genome: Genome;
-}
-
-// Re-export Anthropic's types directly
-export type MessageParam = Anthropic.MessageParam;
-export type ContentBlock = Anthropic.ContentBlock;
-export type ContentBlockParam = Anthropic.ContentBlockParam;
-export type ToolUseBlock = Anthropic.ToolUseBlock;
-export type ToolResultBlockParam = Anthropic.ToolResultBlockParam;
-export type TextBlockParam = Anthropic.TextBlockParam;
-
-// Tool definition — matches Anthropic.Tool
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  input_schema: Anthropic.Tool.InputSchema;
+  config: Config;
 }
 
 // Task system
@@ -135,12 +122,25 @@ export interface TaskResult {
   cyclesTaken: number;
 }
 
+// Persisted arena entry (for resume)
+export interface ArenaEntryData {
+  taskTier: number;
+  currentTask: Task | null;
+  taskHistory: TaskResult[];
+  consecutivePasses: number;
+  consecutiveFails: number;
+  graduated: boolean;
+  graduationData?: { datasetName: string; files: string[] };
+}
+
 // Agent events
 export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "tool_use"; name: string; input: Record<string, unknown> }
   | { type: "tool_start"; name: string }
   | { type: "tool_result"; name: string; result: string }
-  | { type: "usage"; input: number; output: number; cacheCreation: number; cacheRead: number }
+  | { type: "usage"; input: number; output: number; cacheCreation: number; cacheRead: number; cumulative: { input: number; output: number; cacheCreation: number; cacheRead: number; iterations: number } }
   | { type: "error"; message: string }
-  | { type: "state_change"; from: OrganismMode; to: OrganismMode };
+  | { type: "state_change"; from: AgentMode; to: AgentMode }
+  | { type: "phase_change"; phase: "executing" | "resolving" | "memorizing" }
+  | { type: "tools_available"; tools: string[] };

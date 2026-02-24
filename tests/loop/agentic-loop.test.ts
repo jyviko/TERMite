@@ -1,25 +1,25 @@
 import { describe, it, expect } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
-import type { BrainResponse, ChatParams } from "../../src/brain/index.js";
-import { Brain } from "../../src/brain/index.js";
+import type { LLMResponse, ChatParams } from "../../src/llm/index.js";
+import { LLM } from "../../src/llm/index.js";
 import { AgenticLoop } from "../../src/loop/agentic-loop.js";
 import type { AgentEvent } from "../../src/types/index.js";
 
-class MockBrain extends Brain {
-  responses: BrainResponse[];
+class MockLLM extends LLM {
+  responses: LLMResponse[];
   callIndex = 0;
   calls: ChatParams[] = [];
 
-  constructor(responses: BrainResponse[]) {
+  constructor(responses: LLMResponse[]) {
     super({});
     this.responses = responses;
   }
 
-  async chat(params: ChatParams): Promise<BrainResponse> {
-    // Snapshot messages so mutations after the call don't affect our record
+  async chat(params: ChatParams): Promise<LLMResponse> {
+    // Snapshot messages so rewrites after the call don't affect our record
     this.calls.push({ ...params, messages: [...params.messages] });
     const resp = this.responses[this.callIndex];
-    if (!resp) throw new Error("MockBrain: no more responses");
+    if (!resp) throw new Error("MockLLM: no more responses");
     this.callIndex++;
     return resp;
   }
@@ -33,7 +33,7 @@ async function collectEvents(gen: AsyncGenerator<AgentEvent>): Promise<AgentEven
 
 describe("AgenticLoop", () => {
   it("stops when model returns no tool calls", async () => {
-    const brain = new MockBrain([
+    const llm = new MockLLM([
       {
         content: [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
@@ -41,7 +41,7 @@ describe("AgenticLoop", () => {
       },
     ]);
 
-    const loop = new AgenticLoop(brain);
+    const loop = new AgenticLoop(llm);
     const events = await collectEvents(
       loop.run({
         systemPrompt: "test",
@@ -59,7 +59,7 @@ describe("AgenticLoop", () => {
   });
 
   it("loops with tool calls and results", async () => {
-    const brain = new MockBrain([
+    const llm = new MockLLM([
       {
         content: [
           { type: "text", text: "Calling tool.", citations: null },
@@ -80,7 +80,7 @@ describe("AgenticLoop", () => {
       },
     ]);
 
-    const loop = new AgenticLoop(brain);
+    const loop = new AgenticLoop(llm);
     const events = await collectEvents(
       loop.run({
         systemPrompt: "test",
@@ -108,7 +108,7 @@ describe("AgenticLoop", () => {
   });
 
   it("tool results assembled as ONE user message with correct tool_use_id", async () => {
-    const brain = new MockBrain([
+    const llm = new MockLLM([
       {
         content: [
           {
@@ -134,7 +134,7 @@ describe("AgenticLoop", () => {
       },
     ]);
 
-    const loop = new AgenticLoop(brain);
+    const loop = new AgenticLoop(llm);
     await collectEvents(
       loop.run({
         systemPrompt: "test",
@@ -153,19 +153,21 @@ describe("AgenticLoop", () => {
     );
 
     // Check second call's messages — should have tool results as user message
-    const secondCallMessages = brain.calls[1]!.messages;
+    const secondCallMessages = llm.calls[1]!.messages;
     const lastMsg = secondCallMessages[secondCallMessages.length - 1]!;
     expect(lastMsg.role).toBe("user");
     expect(Array.isArray(lastMsg.content)).toBe(true);
-    const blocks = lastMsg.content as Anthropic.ToolResultBlockParam[];
-    expect(blocks).toHaveLength(2);
+    const blocks = lastMsg.content as Anthropic.ContentBlockParam[];
+    // 2 tool results + 1 usage note text block
+    expect(blocks).toHaveLength(3);
     expect(blocks[0]!.type).toBe("tool_result");
-    expect(blocks[0]!.tool_use_id).toBe("toolu_abc");
-    expect(blocks[1]!.tool_use_id).toBe("toolu_def");
+    expect((blocks[0] as Anthropic.ToolResultBlockParam).tool_use_id).toBe("toolu_abc");
+    expect((blocks[1] as Anthropic.ToolResultBlockParam).tool_use_id).toBe("toolu_def");
+    expect(blocks[2]!.type).toBe("text"); // usage note
   });
 
   it("catches tool errors and returns them as results", async () => {
-    const brain = new MockBrain([
+    const llm = new MockLLM([
       {
         content: [
           {
@@ -185,7 +187,7 @@ describe("AgenticLoop", () => {
       },
     ]);
 
-    const loop = new AgenticLoop(brain);
+    const loop = new AgenticLoop(llm);
     const events = await collectEvents(
       loop.run({
         systemPrompt: "test",
@@ -213,7 +215,7 @@ describe("AgenticLoop", () => {
   });
 
   it("respects maxIterations", async () => {
-    const endlessResponses: BrainResponse[] = Array.from({ length: 10 }, (_, i) => ({
+    const endlessResponses: LLMResponse[] = Array.from({ length: 10 }, (_, i) => ({
       content: [
         {
           type: "tool_use" as const,
@@ -226,8 +228,8 @@ describe("AgenticLoop", () => {
       usage: { input: 50, output: 20, cacheCreation: 0, cacheRead: 0 },
     }));
 
-    const brain = new MockBrain(endlessResponses);
-    const loop = new AgenticLoop(brain);
+    const llm = new MockLLM(endlessResponses);
+    const loop = new AgenticLoop(llm);
 
     const events = await collectEvents(
       loop.run({
@@ -247,13 +249,13 @@ describe("AgenticLoop", () => {
       }),
     );
 
-    expect(brain.callIndex).toBe(3);
+    expect(llm.callIndex).toBe(3);
   });
 
   it("AbortSignal stops loop", async () => {
     const controller = new AbortController();
 
-    const brain = new MockBrain([
+    const llm = new MockLLM([
       {
         content: [{ type: "text", text: "Start.", citations: null }] as Anthropic.ContentBlock[],
         stopReason: "end_turn",
@@ -263,7 +265,7 @@ describe("AgenticLoop", () => {
 
     controller.abort();
 
-    const loop = new AgenticLoop(brain);
+    const loop = new AgenticLoop(llm);
     const events = await collectEvents(
       loop.run({
         systemPrompt: "test",
@@ -277,6 +279,6 @@ describe("AgenticLoop", () => {
     );
 
     expect(events.some((e) => e.type === "error")).toBe(true);
-    expect(brain.callIndex).toBe(0);
+    expect(llm.callIndex).toBe(0);
   });
 });

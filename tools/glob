@@ -1,0 +1,28 @@
+#!/bin/bash
+# description: glob - Find files matching a pattern. Input: a glob pattern (e.g. "/workspace/**/*.txt"). Returns matching paths.
+PATTERN="$1"
+
+if [ -z "$PATTERN" ]; then
+  echo "Error: no pattern provided"
+  exit 1
+fi
+
+# Use find with shell glob expansion for recursive patterns
+# Handle ** patterns by converting to find syntax
+if [[ "$PATTERN" == *"**"* ]]; then
+  DIR="${PATTERN%%\*\**}"
+  DIR="${DIR%/}"
+  [ -z "$DIR" ] && DIR="/"
+  NAME_PART="${PATTERN##*\*\*/}"
+  if [ "$NAME_PART" = "$PATTERN" ]; then
+    find "$DIR" -type f 2>/dev/null | sort
+  else
+    find "$DIR" -type f -name "$NAME_PART" 2>/dev/null | sort
+  fi
+else
+  # Simple glob — let bash expand it
+  shopt -s nullglob
+  for f in $PATTERN; do
+    [ -e "$f" ] && echo "$f"
+  done
+fi

@@ -1,87 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type { Task } from "../types/index.js";
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
-// ── Peer visibility tools ────────────────────────────────────────────
-
-const LEADERBOARD_TOOL = `#!/usr/bin/env node
-const fs = require("fs");
-try {
-  const data = JSON.parse(fs.readFileSync("/shared/_leaderboard.json", "utf-8"));
-  const lines = ["LEADERBOARD (updated " + data.updated + ")", ""];
-  lines.push("Rank  ID              Alive  Energy  Tier  Cycles  Genome  Model  Passes");
-  lines.push("----  --------------  -----  ------  ----  ------  ------  -----  ------");
-  data.organisms.forEach(function(o, i) {
-    lines.push([
-      String(i + 1).padStart(4),
-      o.id.padEnd(14),
-      (o.alive ? "YES" : "NO").padEnd(5),
-      (o.energyPct + "%").padStart(6),
-      String(o.taskTier).padStart(4),
-      String(o.cycleCount).padStart(6),
-      ("v" + o.genomeVersion).padStart(6),
-      (o.forageRouting === "deep" ? "Son" : "Hai").padStart(5),
-      String(o.consecutivePasses).padStart(6),
-    ].join("  "));
-  });
-  console.log(lines.join("\\n"));
-} catch (e) {
-  console.log("Leaderboard not available yet: " + e.message);
-}
-`;
-
-const PEER_TOOLS_TOOL = `#!/usr/bin/env python3
-import json, sys
-
-try:
-    with open("/shared/_peer_tools.json") as f:
-        data = json.load(f)
-except Exception as e:
-    print(f"Peer tools not available: {e}")
-    sys.exit(0)
-
-arg = sys.argv[1].strip() if len(sys.argv) > 1 else ""
-organisms = data.get("organisms", {})
-
-if not arg:
-    # List all peers and their tool counts
-    print(f"PEER TOOLS (updated {data.get('updated', '?')})")
-    print()
-    for org_id, info in sorted(organisms.items()):
-        status = "ALIVE" if info.get("alive") else "DEAD"
-        tools = list(info.get("tools", {}).keys())
-        tool_str = ", ".join(tools) if tools else "(no custom tools)"
-        print(f"  {org_id}  [{status}]  {tool_str}")
-    print()
-    print("Usage: peer_tools <org_id> to see tool source code")
-    print("       peer_tools <org_id>/<tool_name> to see a specific tool")
-elif "/" in arg:
-    # Show specific tool
-    org_id, tool_name = arg.split("/", 1)
-    org = organisms.get(org_id, {})
-    tools = org.get("tools", {})
-    if tool_name in tools:
-        print(f"=== {org_id}/{tool_name} ===")
-        print(tools[tool_name])
-    else:
-        available = list(tools.keys())
-        print(f"Tool '{tool_name}' not found in {org_id}. Available: {available}")
-else:
-    # Show all tools for a specific organism
-    org = organisms.get(arg, {})
-    if not org:
-        print(f"Organism '{arg}' not found. Available: {list(organisms.keys())}")
-    else:
-        tools = org.get("tools", {})
-        if not tools:
-            print(f"{arg} has no custom tools yet.")
-        else:
-            for name, source in tools.items():
-                print(f"=== {arg}/{name} ===")
-                print(source)
-                print()
-`;
+// Default tools live in <project-root>/tools/ as editable, committable files.
+const DEFAULT_TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../tools");
 
 
 interface TaskTemplate {
@@ -90,44 +14,23 @@ interface TaskTemplate {
   dataGenerator?: () => Record<string, string>;
 }
 
-// Developer reference only — not shown to organisms.
-// Organism discovers what to do by reading data files and the check tool.
-const _TASK_NOTES: Record<string, string> = {
-  "Hello World": "Write greeting.txt with 'Hello, World!'",
-  "Count Lines": "Count lines in numbers.txt → count.txt",
-  "Sum Numbers": "Sum integers in numbers.txt → sum.txt",
-  "Sort Numbers": "Sort numbers ascending → sorted.txt",
-  "Extract Emails": "Extract emails from contacts.txt → emails.txt sorted",
-  "Find Duplicates": "Find duplicate numbers → duplicates.txt sorted",
-  "Parse Error Logs": "Extract timestamps from 500+ status lines → errors.txt",
-  "Top Words": "Top 10 most frequent words (case-insensitive) → top10.txt",
-  "IP Frequency": "Count IP occurrences → ip_counts.csv",
-  "Sales Totals": "Aggregate amount by product+region → totals.csv",
-  "Moving Average": "7-day moving average → moving_avg.csv",
-  "Join and Aggregate": "Join orders+customers, revenue by region → region_revenue.csv",
-  "HTTP Health Server": "server.js on :8080, GET /health → 'ok'",
-  "CSV API Server": "server.js on :8080, POST/GET /data with CSV + sort",
-  "Log Processor Pipeline": "process.sh → report.json with level/service counts + error_rate",
-};
-void _TASK_NOTES; // suppress unused warning
-
-// Expected TEQ cost for a code-writing organism. Used by efficiency bonus.
+// Expected TEQ cost for a code-writing agent. Used by efficiency bonus.
 export const TIER_EXPECTED_COST: Record<number, number> = {
-  1: 8_000,
-  2: 15_000,
-  3: 30_000,
-  4: 50_000,
-  5: 75_000,
+  1: 25_000,
+  2: 45_000,
+  3: 90_000,
+  4: 150_000,
+  5: 225_000,
 };
 
-// Rewards in TEQ. Calibrated so code-writing organisms earn 4-7x their cost,
+// Rewards in TEQ. Calibrated so code-writing agents earn 4-7x their cost,
 // while in-context reasoning burns far more than the reward.
 export const TIER_REWARDS: Record<number, number> = {
-  1: 60_000,
-  2: 100_000,
-  3: 150_000,
-  4: 200_000,
-  5: 300_000,
+  1: 180_000,
+  2: 300_000,
+  3: 500_000,
+  4: 700_000,
+  5: 1_000_000,
 };
 
 const TIER_DEADLINES: Record<number, number> = {
@@ -355,14 +258,14 @@ const TIER_TEMPLATES: Record<number, TaskTemplate[]> = {
       verifyScript: `#!/bin/bash
 EXPECTED="Hello, World!"
 ACTUAL=$(cat /workspace/output/greeting.txt 2>/dev/null)
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected '$EXPECTED', got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/greeting.txt expected '$EXPECTED', got '$ACTUAL'"; exit 1; fi`,
     },
     {
       title: "Count Lines",
       verifyScript: `#!/bin/bash
 EXPECTED=$(wc -l < /workspace/data/numbers.txt | tr -d ' ')
 ACTUAL=$(cat /workspace/output/count.txt 2>/dev/null | tr -d '[:space:]')
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected $EXPECTED lines, got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/count.txt expected $EXPECTED lines, got '$ACTUAL'"; exit 1; fi`,
       dataGenerator: () => ({
         "numbers.txt": generateNumbers(randomInt(5000, 8000), 1000),
       }),
@@ -372,7 +275,7 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expec
       verifyScript: `#!/bin/bash
 EXPECTED=$(awk '{s+=$1} END {print s}' /workspace/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sum.txt 2>/dev/null | tr -d '[:space:]')
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: expected $EXPECTED, got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/sum.txt expected $EXPECTED, got '$ACTUAL'"; exit 1; fi`,
       dataGenerator: () => ({
         "numbers.txt": generateNumbers(randomInt(5000, 8000), 10000),
       }),
@@ -583,7 +486,7 @@ console.log('PASS'); process.exit(0);
 };
 
 export class TaskGenerator {
-  generateTask(tier: number, currentCycle: number, completedIds: string[]): Task {
+  generateTask(tier: number, currentCycle: number): Task {
     const effectiveTier = Math.min(Math.max(tier, 1), 5);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates[randomInt(0, templates.length - 1)]!;
@@ -616,13 +519,12 @@ export class TaskGenerator {
     mkdirSync(workDir, { recursive: true });
     mkdirSync(toolsDir, { recursive: true });
 
-    // Seed tools — organism discovers everything through these
+    // Seed default tools from project tools/ directory
     if (!existsSync(join(toolsDir, "shell"))) {
-      writeFileSync(join(toolsDir, "shell"), '#!/bin/bash\neval "$*"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "count"), '#!/bin/bash\necho "TODO: Implement to work"\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "sum"), '#!/bin/bash\n# awk \'{s+=$1} END {print s}\' "$1"\n # Fix first\n', { mode: 0o755 });
-      writeFileSync(join(toolsDir, "leaderboard"), LEADERBOARD_TOOL, { mode: 0o755 });
-      writeFileSync(join(toolsDir, "peer_tools"), PEER_TOOLS_TOOL, { mode: 0o755 });
+      for (const name of readdirSync(DEFAULT_TOOLS_DIR)) {
+        const src = readFileSync(join(DEFAULT_TOOLS_DIR, name));
+        writeFileSync(join(toolsDir, name), src, { mode: 0o755 });
+      }
     }
 
     // Find the template and write check tool + data
@@ -630,8 +532,11 @@ export class TaskGenerator {
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
 
-    // check IS the verification script
-    writeFileSync(join(toolsDir, "check"), template.verifyScript, {
+    // check IS the verification script — inject description line so agent knows what it does
+    const checkScript = template.verifyScript.startsWith("#!/")
+      ? template.verifyScript.replace(/\n/, "\n# description: check - Validate task output in /workspace/output/. No args. Returns PASS or FAIL.\n")
+      : `#!/bin/bash\n# description: check - Validate task output in /workspace/output/. No args. Returns PASS or FAIL.\n${template.verifyScript}`;
+    writeFileSync(join(toolsDir, "check"), checkScript, {
       mode: 0o755,
       encoding: "utf-8",
     });
