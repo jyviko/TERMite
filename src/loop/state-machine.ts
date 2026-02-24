@@ -181,7 +181,19 @@ export class AgentStateMachine {
     };
 
     // Build messages: memory pairs (conversation history) + current awareness
-    const memoryMessages = this.state.memories.formatAsMessages(MEMORY_TOKEN_BUDGET);
+    const memoryMessages: Anthropic.MessageParam[] = this.state.memories.formatAsMessages(MEMORY_TOKEN_BUDGET);
+
+    // Mark last memory message for caching so system+memories prefix is a cache hit
+    // on subsequent agentic loop iterations (tool use rounds)
+    if (memoryMessages.length > 0) {
+      const lastMem = memoryMessages[memoryMessages.length - 1]!;
+      if (typeof lastMem.content === "string") {
+        memoryMessages[memoryMessages.length - 1] = {
+          ...lastMem,
+          content: [{ type: "text" as const, text: lastMem.content, cache_control: { type: "ephemeral" as const } }],
+        };
+      }
+    }
 
     for await (const event of this.loop.run({
       systemPrompt: this.state.config.systemPrompt,

@@ -1,0 +1,29 @@
+# Task Completion Summary
+
+## Task: cache-hits
+**Status**: ✅ Completed
+**Date**: 2026-02-24
+
+## Changes Made
+- Modified src/loop/state-machine.ts: Added cache_control breakpoint on last memory message
+- Typed memoryMessages as Anthropic.MessageParam[] to support content block arrays
+- Converts last memory message content from string to TextBlockParam[] with cache_control: ephemeral
+
+## Tests Run
+- npx tsc --noEmit: Clean compile (0 errors)
+- npm test: 102 tests passed across 11 test files (including state-machine and full-loop integration tests)
+
+## Files Changed
+```
+M	src/loop/state-machine.ts
+```
+
+## Commit Summary
+```
+97ad53c fix: add cache breakpoint on last memory message for cache hits
+```
+
+## Notes
+- Pre-existing errors (missing @anthropic-ai/sdk types) only appeared before npm install; clean after
+- The LLM layer (src/llm/index.ts) already marks the last user message with cache_control via withMessageCacheBreakpoint — this new breakpoint is complementary, targeting the stable memory prefix
+- Cache hits will only be observable when agents run multiple agentic loop iterations per cycle (requires maxCycleCost to be high enough — tracked as a separate task)
