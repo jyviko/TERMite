@@ -121,6 +121,7 @@ export class AgenticLoop {
 
       for (const toolBlock of toolUseBlocks) {
         yield { type: "tool_start", name: toolBlock.name };
+        yield { type: "tool_use", name: toolBlock.name, input: toolBlock.input as Record<string, unknown> };
 
         let result: string;
         try {

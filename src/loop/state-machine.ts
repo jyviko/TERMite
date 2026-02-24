@@ -221,8 +221,20 @@ export class AgentStateMachine {
         this.cur.actions.push(`→ ${event.name}`);
         return { type: "phase_change", phase: "executing" as const };
       }
+      case "tool_use": {
+        // Enrich the preceding tool_start entry with the actual input
+        const raw = event.input?.input;
+        const inputStr = typeof raw === "string" ? raw.slice(0, 200) : "";
+        if (inputStr) {
+          const lastIdx = this.cur.actions.length - 1;
+          if (lastIdx >= 0 && this.cur.actions[lastIdx]!.startsWith("→")) {
+            this.cur.actions[lastIdx] = `→ ${event.name}(${inputStr})`;
+          }
+        }
+        return null;
+      }
       case "tool_result":
-        this.cur.actions.push(`← ${event.name}: ${event.result.slice(0, 100)}`);
+        this.cur.actions.push(`← ${event.name}: ${event.result.slice(0, 300)}`);
         return null;
       case "text":
         this.cur.actions.push(event.text.slice(0, 150));
@@ -345,8 +357,8 @@ export class AgentStateMachine {
   }
 
   private summarizeRecentActions(): string {
-    if (this.cur.actions.length === 0) return "(no actions)";
-    return this.cur.actions.slice(-20).join("\n");
+    if (this.cur.actions.length === 0) return "(no actions taken)";
+    return this.cur.actions.slice(-30).join("\n");
   }
 
   setTaskReward(reward: number, tier: number): void {

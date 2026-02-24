@@ -2,8 +2,8 @@
 # Helper script to create task completion file with proper naming
 # Usage: ./complete_task.sh
 
-TASK_NAME="memorize-resolve-sonnet"
-TASK_ID="33536708"
+TASK_NAME="resolve-consistency"
+TASK_ID="044974a5"
 BASE_BRANCH="feature/TERM_tools"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%S-%3N)
 COMPLETION_FILE=".claude-o/${TIMESTAMP}_${TASK_NAME}-${TASK_ID}.task_complete"
