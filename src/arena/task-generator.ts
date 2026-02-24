@@ -258,14 +258,14 @@ const TIER_TEMPLATES: Record<number, TaskTemplate[]> = {
       verifyScript: `#!/bin/bash
 EXPECTED="Hello, World!"
 ACTUAL=$(cat /workspace/output/greeting.txt 2>/dev/null)
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/greeting.txt expected '$EXPECTED', got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/greeting.txt is wrong or missing"; exit 1; fi`,
     },
     {
       title: "Count Lines",
       verifyScript: `#!/bin/bash
 EXPECTED=$(wc -l < /workspace/data/numbers.txt | tr -d ' ')
 ACTUAL=$(cat /workspace/output/count.txt 2>/dev/null | tr -d '[:space:]')
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/count.txt expected $EXPECTED lines, got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/count.txt — write the line count of /workspace/data/numbers.txt"; exit 1; fi`,
       dataGenerator: () => ({
         "numbers.txt": generateNumbers(randomInt(5000, 8000), 1000),
       }),
@@ -275,7 +275,7 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /work
       verifyScript: `#!/bin/bash
 EXPECTED=$(awk '{s+=$1} END {print s}' /workspace/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sum.txt 2>/dev/null | tr -d '[:space:]')
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/sum.txt expected $EXPECTED, got '$ACTUAL'"; exit 1; fi`,
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/sum.txt — write the sum of numbers in /workspace/data/numbers.txt"; exit 1; fi`,
       dataGenerator: () => ({
         "numbers.txt": generateNumbers(randomInt(5000, 8000), 10000),
       }),
@@ -287,7 +287,7 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /work
       verifyScript: `#!/bin/bash
 EXPECTED=$(sort -n /workspace/data/numbers.txt)
 ACTUAL=$(cat /workspace/output/sorted.txt 2>/dev/null)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: output does not match sorted input"; exit 1; fi`,
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/sorted.txt — sort /workspace/data/numbers.txt numerically"; exit 1; fi`,
       dataGenerator: () => ({
         "numbers.txt": generateNumbers(randomInt(10000, 15000), 1000000),
       }),
@@ -297,7 +297,7 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: outpu
       verifyScript: `#!/bin/bash
 EXPECTED=$(grep -oE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}' /workspace/data/contacts.txt | sort)
 ACTUAL=$(sort /workspace/output/emails.txt 2>/dev/null)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: extracted emails don't match"; exit 1; fi`,
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/emails.txt — extract all emails from /workspace/data/contacts.txt, one per line, sorted"; exit 1; fi`,
       dataGenerator: () => ({
         "contacts.txt": generateLargeContacts(randomInt(8000, 12000)),
       }),
@@ -307,7 +307,7 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: extra
       verifyScript: `#!/bin/bash
 EXPECTED=$(sort -n /workspace/data/numbers.txt | uniq -d | sort -n)
 ACTUAL=$(cat /workspace/output/duplicates.txt 2>/dev/null | sort -n)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: duplicate numbers don't match"; exit 1; fi`,
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/duplicates.txt — find duplicate numbers in /workspace/data/numbers.txt, sorted numerically"; exit 1; fi`,
       dataGenerator: () => ({
         "numbers.txt": generateNumbersWithDuplicates(randomInt(10000, 15000)),
       }),
@@ -319,7 +319,7 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: dupli
       verifyScript: `#!/bin/bash
 EXPECTED=$(awk '$6 >= 500 {print $1}' /workspace/data/access.log | sort)
 ACTUAL=$(sort /workspace/output/errors.txt 2>/dev/null)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: error timestamps don't match"; exit 1; fi`,
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/errors.txt — extract timestamps of 5xx status requests from /workspace/data/access.log, sorted"; exit 1; fi`,
       dataGenerator: () => ({
         "access.log": generateLargeAccessLog(randomInt(40000, 60000)),
       }),
@@ -329,7 +329,7 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: error
       verifyScript: `#!/bin/bash
 EXPECTED=$(tr '[:upper:]' '[:lower:]' < /workspace/data/article.txt | tr -cs '[:alpha:]' '\\n' | sort | uniq -c | sort -rn -k1,1 -k2,2 | head -10 | awk '{print $2}')
 ACTUAL=$(cat /workspace/output/top10.txt 2>/dev/null)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: top 10 words don't match"; exit 1; fi`,
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/top10.txt — list the 10 most frequent words (lowercased) from /workspace/data/article.txt, one per line, most frequent first"; exit 1; fi`,
       dataGenerator: () => ({
         "article.txt": generateLargeText(randomInt(50000, 80000)),
       }),
@@ -341,7 +341,7 @@ EXPECTED=$(awk '{print $2}' /workspace/data/access.log | sort | uniq -c | sort -
 ACTUAL=$(cat /workspace/output/ip_counts.csv 2>/dev/null | tail -n +1)
 # Strip header if present
 ACTUAL_CLEAN=$(echo "$ACTUAL" | grep -v '^ip,count$')
-if [ "$EXPECTED" = "$ACTUAL_CLEAN" ]; then echo "PASS"; exit 0; else echo "FAIL: IP counts don't match"; exit 1; fi`,
+if [ "$EXPECTED" = "$ACTUAL_CLEAN" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/ip_counts.csv — count requests per IP from /workspace/data/access.log as ip,count sorted by count descending"; exit 1; fi`,
       dataGenerator: () => ({
         "access.log": generateLargeAccessLog(randomInt(40000, 60000)),
       }),
@@ -353,7 +353,7 @@ if [ "$EXPECTED" = "$ACTUAL_CLEAN" ]; then echo "PASS"; exit 0; else echo "FAIL:
       verifyScript: `#!/bin/bash
 EXPECTED=$(tail -n +2 /workspace/data/sales.csv | awk -F',' '{key=$2","$3; a[key]+=$4} END {for(k in a) printf "%s,%.2f\\n",k,a[k]}' | sort)
 ACTUAL=$(tail -n +2 /workspace/output/totals.csv 2>/dev/null | sort)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: totals don't match"; exit 1; fi`,
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/totals.csv — aggregate sales from /workspace/data/sales.csv by category and region, output as category,region,total sorted"; exit 1; fi`,
       dataGenerator: () => ({
         "sales.csv": generateLargeSalesCsv(randomInt(10000, 20000)),
       }),
@@ -370,12 +370,12 @@ const dataLines = hasHeader ? output.slice(1) : output;
 const vals = input.map(l => ({ date: l.split(',')[0], value: parseFloat(l.split(',')[1]) }));
 let ok = true;
 let expectedCount = vals.length - 6;
-if (dataLines.length !== expectedCount) { console.log('FAIL: expected '+expectedCount+' rows, got '+dataLines.length); process.exit(1); }
+if (dataLines.length !== expectedCount) { console.log('FAIL: /workspace/output/moving_avg.csv — compute 7-day moving average of /workspace/data/timeseries.csv as date,value,avg with correct row count'); process.exit(1); }
 for (let i = 6; i < vals.length; i++) {
   const avg = vals.slice(i-6, i+1).reduce((s,v) => s + v.value, 0) / 7;
   const parts = dataLines[i-6].split(',');
   const actualAvg = parseFloat(parts[2]);
-  if (Math.abs(actualAvg - Math.round(avg*100)/100) > 0.02) { console.log('FAIL: row '+(i-6)+' expected avg '+avg.toFixed(2)+' got '+actualAvg); ok=false; break; }
+  if (Math.abs(actualAvg - Math.round(avg*100)/100) > 0.02) { console.log('FAIL: /workspace/output/moving_avg.csv — moving average values are incorrect, recompute 7-day rolling average from /workspace/data/timeseries.csv'); ok=false; break; }
 }
 if (ok) { console.log('PASS'); process.exit(0); } else { process.exit(1); }
 " 2>&1`,
@@ -404,7 +404,7 @@ const expected = Object.entries(regionTotals).sort((a,b)=>a[0].localeCompare(b[0
 const output = fs.readFileSync('/workspace/output/region_revenue.csv','utf-8').trim().split('\\n');
 const hasHeader = output[0] && output[0].includes('region');
 const actual = (hasHeader ? output.slice(1) : output).join('\\n');
-if (expected === actual) { console.log('PASS'); process.exit(0); } else { console.log('FAIL: region revenues don\\'t match'); process.exit(1); }
+if (expected === actual) { console.log('PASS'); process.exit(0); } else { console.log('FAIL: /workspace/output/region_revenue.csv — join orders.csv with customers.csv on customer_id, aggregate revenue (qty*price) by region, output as region,total sorted alphabetically'); process.exit(1); }
 " 2>&1`,
       dataGenerator: () => {
         const { csv: customersCsv, ids } = generateCustomers(randomInt(500, 1000));
@@ -424,7 +424,7 @@ PID=$!
 sleep 1
 RESULT=$(curl -s http://localhost:8080/health)
 kill $PID 2>/dev/null
-if [ "$RESULT" = "ok" ]; then echo "PASS"; exit 0; else echo "FAIL: expected 'ok', got '$RESULT'"; exit 1; fi`,
+if [ "$RESULT" = "ok" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/server.js — create an HTTP server on port 8080 with GET /health returning a health status"; exit 1; fi`,
     },
     {
       title: "CSV API Server",
@@ -440,12 +440,12 @@ R1=$(curl -s http://localhost:8080/data)
 R2=$(curl -s 'http://localhost:8080/data?sort=name')
 kill $PID 2>/dev/null
 # Check unsorted has both rows
-if ! echo "$R1" | grep -q "bob" || ! echo "$R1" | grep -q "alice"; then echo "FAIL: GET /data missing rows"; exit 1; fi
+if ! echo "$R1" | grep -q "bob" || ! echo "$R1" | grep -q "alice"; then echo "FAIL: /workspace/output/server.js — GET /data should return all posted rows"; exit 1; fi
 # Check sorted - alice should come before bob
 ALICE_LINE=$(echo "$R2" | grep -n "alice" | head -1 | cut -d: -f1)
 BOB_LINE=$(echo "$R2" | grep -n "bob" | head -1 | cut -d: -f1)
-if [ -z "$ALICE_LINE" ] || [ -z "$BOB_LINE" ]; then echo "FAIL: sorted response missing entries"; exit 1; fi
-if [ "$ALICE_LINE" -lt "$BOB_LINE" ]; then echo "PASS"; exit 0; else echo "FAIL: sort order wrong"; exit 1; fi`,
+if [ -z "$ALICE_LINE" ] || [ -z "$BOB_LINE" ]; then echo "FAIL: /workspace/output/server.js — GET /data?sort=key should return rows sorted by that field"; exit 1; fi
+if [ "$ALICE_LINE" -lt "$BOB_LINE" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/server.js — sort order is incorrect for GET /data?sort=key"; exit 1; fi`,
     },
     {
       title: "Log Processor Pipeline",
@@ -455,7 +455,7 @@ node -e "
 const fs = require('fs');
 const log = fs.readFileSync('/workspace/data/app.log','utf-8').trim().split('\\n');
 const report = JSON.parse(fs.readFileSync('/workspace/output/report.json','utf-8'));
-if (report.total_lines !== log.length) { console.log('FAIL: total_lines expected '+log.length+' got '+report.total_lines); process.exit(1); }
+if (report.total_lines !== log.length) { console.log('FAIL: /workspace/output/report.json — total_lines count is wrong, recount lines in /workspace/data/app.log'); process.exit(1); }
 const byLevel = {};
 const byService = {};
 log.forEach(line => {
@@ -471,11 +471,11 @@ log.forEach(line => {
   }
 });
 for (const [k,v] of Object.entries(byLevel)) {
-  if ((report.by_level[k] || 0) !== v) { console.log('FAIL: by_level.'+k+' expected '+v+' got '+(report.by_level[k]||0)); process.exit(1); }
+  if ((report.by_level[k] || 0) !== v) { console.log('FAIL: /workspace/output/report.json — by_level counts are incorrect, reparse log levels from /workspace/data/app.log'); process.exit(1); }
 }
 const errFatal = (byLevel['ERROR']||0) + (byLevel['FATAL']||0);
 const expectedRate = Math.round(errFatal / log.length * 100) / 100;
-if (Math.abs(report.error_rate - expectedRate) > 0.01) { console.log('FAIL: error_rate expected '+expectedRate+' got '+report.error_rate); process.exit(1); }
+if (Math.abs(report.error_rate - expectedRate) > 0.01) { console.log('FAIL: /workspace/output/report.json — error_rate is wrong, compute ratio of ERROR+FATAL to total lines'); process.exit(1); }
 console.log('PASS'); process.exit(0);
 " 2>&1`,
       dataGenerator: () => ({
@@ -527,19 +527,20 @@ export class TaskGenerator {
       }
     }
 
-    // Find the template and write check tool + data
-    const effectiveTier = Math.min(Math.max(task.tier, 1), 5);
-    const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
-    const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
-
-    // check IS the verification script — inject description line so agent knows what it does
-    const checkScript = template.verifyScript.startsWith("#!/")
-      ? template.verifyScript.replace(/\n/, "\n# description: check - Validate task output in /workspace/output/. No args. Returns PASS or FAIL.\n")
-      : `#!/bin/bash\n# description: check - Validate task output in /workspace/output/. No args. Returns PASS or FAIL.\n${template.verifyScript}`;
-    writeFileSync(join(toolsDir, "check"), checkScript, {
+    // Write a thin check stub — the real verification runs host-side
+    // Agents can only execute check, never read the verification logic
+    const checkStub = `#!/bin/bash
+# description: check - Validate task output. No args. Returns PASS on success or FAIL with what needs fixing.
+echo "__VERIFY__"`;
+    writeFileSync(join(toolsDir, "check"), checkStub, {
       mode: 0o755,
       encoding: "utf-8",
     });
+
+    // Find the template for data generation
+    const effectiveTier = Math.min(Math.max(task.tier, 1), 5);
+    const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
+    const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
 
     // Write data files
     if (template.dataGenerator) {
@@ -548,5 +549,13 @@ export class TaskGenerator {
         writeFileSync(join(dataDir, name), content, "utf-8");
       }
     }
+  }
+
+  /** Return the raw verify script for a task (never exposed to agents). */
+  getVerifyScript(task: Task): string {
+    const effectiveTier = Math.min(Math.max(task.tier, 1), 5);
+    const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
+    const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
+    return template.verifyScript;
   }
 }
