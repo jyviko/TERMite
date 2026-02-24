@@ -2,8 +2,13 @@
 # Helper script to create task completion file with proper naming
 # Usage: ./complete_task.sh
 
+<<<<<<< HEAD
 TASK_NAME="resolve-consistency"
 TASK_ID="044974a5"
+=======
+TASK_NAME="emergence-economics"
+TASK_ID="c18fae6f"
+>>>>>>> fix/emergence-economics-1771944855811
 BASE_BRANCH="feature/TERM_tools"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%S-%3N)
 COMPLETION_FILE=".claude-o/${TIMESTAMP}_${TASK_NAME}-${TASK_ID}.task_complete"

@@ -16,21 +16,21 @@ interface TaskTemplate {
 
 // Expected TEQ cost for a code-writing agent. Used by efficiency bonus.
 export const TIER_EXPECTED_COST: Record<number, number> = {
-  1: 8_000,
-  2: 15_000,
-  3: 30_000,
-  4: 50_000,
-  5: 75_000,
+  1: 25_000,
+  2: 45_000,
+  3: 90_000,
+  4: 150_000,
+  5: 225_000,
 };
 
 // Rewards in TEQ. Calibrated so code-writing agents earn 4-7x their cost,
 // while in-context reasoning burns far more than the reward.
 export const TIER_REWARDS: Record<number, number> = {
-  1: 60_000,
-  2: 100_000,
-  3: 150_000,
-  4: 200_000,
-  5: 300_000,
+  1: 180_000,
+  2: 300_000,
+  3: 500_000,
+  4: 700_000,
+  5: 1_000_000,
 };
 
 const TIER_DEADLINES: Record<number, number> = {

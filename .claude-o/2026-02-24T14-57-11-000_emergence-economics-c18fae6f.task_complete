@@ -1,0 +1,34 @@
+# Task Completion Summary
+
+## Task: emergence-economics
+**Status**: Completed
+**Date**: 2026-02-24
+
+## Changes Made
+- `src/arena/task-generator.ts`: Increased TIER_REWARDS (180k/300k/500k/700k/1M) and TIER_EXPECTED_COST (25k/45k/90k/150k/225k)
+- `src/loop/resolve.ts`: Added MODEL_BOUNTY_MULTIPLIER map (haiku 1x, sonnet 3x, opus 5x) with prefix-matching lookup, added `model` parameter to computeIncome()
+- `src/loop/state-machine.ts`: Passed `this.cur.model` to computeIncome() in finalizeCycle()
+- `src/arena/teq-pool.ts`: Updated DEFAULT_CONFIG (initialBalance: 10M, regenPerCycle: 50k, maxBalance: 25M)
+
+## Tests Run
+- `npx tsc --noEmit` — passed with zero errors (after npm install for dependencies)
+- No runtime tests exist in the project; type-checking is the primary validation
+
+## Files Changed
+```
+M	src/arena/task-generator.ts
+M	src/arena/teq-pool.ts
+M	src/loop/resolve.ts
+M	src/loop/state-machine.ts
+```
+
+## Commit Summary
+```
+04b710f Emergence economics: increase bounties, add model multiplier, expand pool
+```
+
+## Notes
+- Model multiplier is applied before the efficiency bonus, so both compound multiplicatively
+- Prefix matching mirrors the existing lookupPricing pattern in energy.ts
+- Default multiplier is 1.0 for unknown models (no penalty for unrecognized model strings)
+- Pool expansion (5x initial, 10x regen, 5x cap) ensures the higher bounties remain liquid
