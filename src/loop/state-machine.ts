@@ -302,8 +302,12 @@ export class AgentStateMachine {
   }
 
   private deriveGoal(): string | null {
-    const drive = this.state.drives.highestActive();
-    return drive ? this.state.drives.driveToGoal(drive) : null;
+    const active = this.state.drives.activeDrives();
+    if (active.length === 0) return null;
+    return active
+      .sort((a, b) => b.level - a.level)
+      .map((d) => this.state.drives.driveToGoal(d))
+      .join(" ");
   }
 
   private async buildTools(): Promise<Anthropic.Tool[]> {
