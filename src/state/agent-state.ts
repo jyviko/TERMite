@@ -101,6 +101,7 @@ export class AgentStateManager {
       goal: this.goal,
       energy: this.energy.toJSON(),
       drives: this.drives.toJSON(),
+      drivePhaseTracking: this.drives.phaseTrackingToJSON(),
       memories: this.memories.toJSON(),
       config: this.config.toJSON(),
     };
@@ -117,7 +118,7 @@ export class AgentStateManager {
     mgr.mode = data.mode;
     mgr.goal = data.goal;
     mgr.energy = EnergyLedger.fromJSON(data.energy);
-    mgr.drives = DriveSystem.fromJSON(data.drives);
+    mgr.drives = DriveSystem.fromJSON(data.drives, data.drivePhaseTracking);
     mgr.memories = MemoryStore.fromJSON(data.memories);
     mgr.config = Config.fromJSON(data.config);
     return mgr;

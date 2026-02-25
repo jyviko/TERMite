@@ -87,6 +87,10 @@ export interface PromptRewrite {
   version: number;
 }
 
+export interface DrivePhaseTracking {
+  coordinateActiveCycles: number;
+}
+
 export interface AgentState {
   id: string;
   generation: number;
@@ -99,6 +103,7 @@ export interface AgentState {
   goal: string | null;
   energy: EnergyLedgerData;
   drives: Record<DriveName, Drive>;
+  drivePhaseTracking?: DrivePhaseTracking;
   memories: Memory[];
   config: Config;
 }

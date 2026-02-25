@@ -196,7 +196,7 @@ export class EnergyLedger {
   }
 
   get active(): boolean {
-    return this.reserves > 0;
+    return this.reserves > 0 && this.spent < this.budget;
   }
 
   get currentCycleCost(): number {

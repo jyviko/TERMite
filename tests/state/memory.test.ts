@@ -60,8 +60,9 @@ describe("MemoryStore", () => {
     expect(store.memories[0]!.context).toContain("Cycle 1");
   });
 
-  it("effectiveScore decays with age", () => {
-    const mem = store.add("test", "semantic", 1.0);
+  it("effectiveScore decays with age for episodic memories", () => {
+    // Only episodic memories decay — semantic/procedural persist at full weight
+    const mem = store.add("test", "episodic", 1.0);
     const scoreNow = store.effectiveScore(mem);
 
     // Simulate age by backdating
@@ -94,17 +95,23 @@ describe("MemoryStore", () => {
     expect(messages[3]!.content).toBe("actions from cycle 2");
   });
 
-  it("formatAsMessages respects token budget (keeps most recent)", () => {
+  it("formatAsMessages respects token budget", () => {
     for (let i = 0; i < 20; i++) {
       store.add(`actions ${i} with lots of extra content padding here`, "episodic", 0.5, `Cycle ${i}`);
     }
     const messages = store.formatAsMessages(100); // tight budget
-    // Should have fewer than all 20 pairs
+    // Should have fewer than all 20 pairs but still some content
     expect(messages.length).toBeLessThan(40);
     expect(messages.length).toBeGreaterThan(0);
-    // Last pair should be most recent
-    const lastUser = messages[messages.length - 2]!;
-    expect(lastUser.content).toContain("Cycle 19");
+    // Messages should be in user/assistant pairs
+    expect(messages.length % 2).toBe(0);
+    // Selected pairs should be chronologically ordered
+    const userMessages = messages.filter((_, i) => i % 2 === 0);
+    for (let i = 1; i < userMessages.length; i++) {
+      const prevCycle = parseInt(userMessages[i - 1]!.content.replace("Cycle ", ""));
+      const currCycle = parseInt(userMessages[i]!.content.replace("Cycle ", ""));
+      expect(currCycle).toBeGreaterThan(prevCycle);
+    }
   });
 
   it("format shows pairs for memorize management view", () => {

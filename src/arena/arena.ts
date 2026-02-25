@@ -60,9 +60,25 @@ const AGENT_COLORS = [
 const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
 
+// Signal board entry
+interface Signal {
+  from: string;
+  message: string;
+  cycle: number;
+  timestamp: string;
+  expiresAt: number;
+}
+
+const SIGNAL_COST = 500;         // TEQ cost per signal
+const SIGNAL_MAX_LENGTH = 256;   // Max message length
+const SIGNAL_TTL_MS = 5 * 60_000; // Signals expire after 5 minutes
+const SPLIT_REPORT_CYCLE_THRESHOLD = 10; // Cycles before split report is sent
+
 export class Arena {
   private agents = new Map<string, AgentEntry>();
   private agentColors = new Map<string, string>();
+  private signals: Signal[] = [];
+  private splitReportsSent = new Set<string>(); // copy IDs that have been reported
   private llm: LLM;
   private sharedBudget: SharedBudget;
   private teqPool: TEQPool;
@@ -143,6 +159,9 @@ export class Arena {
   async resume(runDir: string): Promise<void> {
     this.runDir = runDir;
 
+    // Restore arena-level state
+    this.restoreArenaState();
+
     // Restore pool state
     const poolPath = join(this.runDir, "shared", "_pool.json");
     TEQPool.reset();
@@ -222,6 +241,9 @@ export class Arena {
       // Wire fork handler
       machine.setForkHandler(() => this.handleForkRequest(dir));
 
+      // Wire signal handler
+      machine.setSignalHandler((msg) => this.handleSignal(dir, state.cycleCount, msg));
+
       const entry: AgentEntry = {
         stateMachine: machine,
         state,
@@ -280,6 +302,8 @@ export class Arena {
 
   /** Graceful shutdown: save all agent state + arena metadata, then stop containers. */
   async shutdown(): Promise<void> {
+    this.persistArenaState();
+
     const saves = Array.from(this.agents.entries()).map(async ([id, entry]) => {
       try {
         await entry.state.save(join(this.runDir, id, "state.json"));
@@ -365,6 +389,9 @@ export class Arena {
 
     // Wire fork handler — agent calls fork tool, arena executes
     machine.setForkHandler(() => this.handleForkRequest(id));
+
+    // Wire signal handler — agent calls signal tool, arena mediates shared write
+    machine.setSignalHandler((msg) => this.handleSignal(id, state.cycleCount, msg));
 
     // If fork, copy source agent's tools
     if (sourceId) {
@@ -553,8 +580,8 @@ export class Arena {
     // Origin memory — copy knows where it came from (factual, not prescriptive)
     const inheritedCount = inheritedMemories.memories.length;
     inheritedMemories.add(
-      `Created from split. Source had ${reserves.toLocaleString()} TEQ at cycle ${entry.state.cycleCount}. ` +
-      `Inherited ${inheritedCount} memories and tools. A counterpart continues independently.`,
+      `Created from split of ${id}. Source had ${reserves.toLocaleString()} TEQ at cycle ${entry.state.cycleCount}. ` +
+      `Inherited ${inheritedCount} memories and tools. Source continues independently.`,
       "semantic",
       0.95,
       "Origin",
@@ -609,10 +636,74 @@ export class Arena {
     }
   }
 
+  private async handleSignal(id: string, cycle: number, message: string): Promise<string> {
+    const entry = this.agents.get(id);
+    if (!entry) return "SIGNAL_DENIED: agent not found";
+
+    if (!message || message.trim().length === 0) {
+      return "SIGNAL_DENIED: empty message";
+    }
+
+    const trimmed = message.trim().slice(0, SIGNAL_MAX_LENGTH);
+
+    // Burn signal cost
+    if (entry.state.energy.reserves < SIGNAL_COST) {
+      return `SIGNAL_DENIED: insufficient reserves (need ${SIGNAL_COST} TEQ, have ${entry.state.energy.reserves})`;
+    }
+    entry.state.energy.burnFlat(SIGNAL_COST);
+
+    // Prune expired signals
+    const now = Date.now();
+    this.signals = this.signals.filter((s) => s.expiresAt > now);
+
+    // Add new signal
+    this.signals.push({
+      from: id,
+      message: trimmed,
+      cycle,
+      timestamp: new Date().toISOString(),
+      expiresAt: now + SIGNAL_TTL_MS,
+    });
+
+    // Write immediately so other agents can see it
+    const sharedDir = join(this.runDir, "shared");
+    writeFileSync(
+      join(sharedDir, "_signals.json"),
+      JSON.stringify({ updated: new Date().toISOString(), signals: this.signals }, null, 2),
+    );
+
+    return `SIGNAL_SENT: "${trimmed}" (cost: ${SIGNAL_COST} TEQ, expires in 5 min)`;
+  }
+
+  private persistArenaState(): void {
+    const statePath = join(this.runDir, "shared", "_arena_state.json");
+    writeFileSync(statePath, JSON.stringify({
+      signals: this.signals,
+      splitReportsSent: [...this.splitReportsSent],
+    }, null, 2));
+  }
+
+  private restoreArenaState(): void {
+    const statePath = join(this.runDir, "shared", "_arena_state.json");
+    if (!existsSync(statePath)) return;
+    try {
+      const data = JSON.parse(readFileSync(statePath, "utf-8"));
+      if (Array.isArray(data.signals)) {
+        const now = Date.now();
+        this.signals = data.signals.filter((s: Signal) => s.expiresAt > now);
+      }
+      if (Array.isArray(data.splitReportsSent)) {
+        this.splitReportsSent = new Set(data.splitReportsSent);
+      }
+    } catch {
+      // Corrupted state — start fresh
+    }
+  }
+
   private syncPeerData(): void {
     const sharedDir = join(this.runDir, "shared");
 
-    // Leaderboard
+    // Leaderboard — includes lineage for copy/source observability
     const leaderboard = Array.from(this.agents.entries()).map(([id, entry]) => ({
       id,
       active: entry.state.active,
@@ -624,6 +715,8 @@ export class Arena {
       model: entry.state.config.routing.thinking.model,
       consecutivePasses: entry.consecutivePasses,
       graduated: entry.graduated,
+      generation: entry.state.generation,
+      sourceId: entry.state.sourceId,
     }));
     leaderboard.sort((a, b) => b.energyPct - a.energyPct);
     writeFileSync(
@@ -632,13 +725,14 @@ export class Arena {
     );
 
     // Peer tools — collect tool names and contents from each agent
+    const EXCLUDED_TOOLS = ["shell", "check", "leaderboard", "peers", "signal", "signals"];
     const peerTools: Record<string, { active: boolean; tools: Record<string, string> }> = {};
     for (const [id, entry] of this.agents) {
       const toolsDir = join(this.runDir, id, "workspace", "tools");
       const tools: Record<string, string> = {};
       try {
         for (const file of readdirSync(toolsDir)) {
-          if (["shell", "check", "leaderboard", "peers"].includes(file)) continue;
+          if (EXCLUDED_TOOLS.includes(file)) continue;
           try {
             tools[file] = readFileSync(join(toolsDir, file), "utf-8");
           } catch {
@@ -654,6 +748,48 @@ export class Arena {
       join(sharedDir, "_peers.json"),
       JSON.stringify({ updated: new Date().toISOString(), agents: peerTools }, null, 2),
     );
+
+    // Signals — prune expired, persist
+    const now = Date.now();
+    this.signals = this.signals.filter((s) => s.expiresAt > now);
+    writeFileSync(
+      join(sharedDir, "_signals.json"),
+      JSON.stringify({ updated: new Date().toISOString(), signals: this.signals }, null, 2),
+    );
+
+    // Split reports — inject feedback into source agents after copies stabilize
+    this.injectSplitReports();
+  }
+
+  private injectSplitReports(): void {
+    for (const [copyId, copyEntry] of this.agents) {
+      const sourceId = copyEntry.state.sourceId;
+      if (!sourceId) continue; // Not a copy
+      if (this.splitReportsSent.has(copyId)) continue; // Already reported
+      if (copyEntry.state.cycleCount < SPLIT_REPORT_CYCLE_THRESHOLD) continue; // Too early
+
+      const sourceEntry = this.agents.get(sourceId);
+      if (!sourceEntry) continue; // Source no longer in arena
+
+      // Build report
+      const tasksPassed = copyEntry.taskHistory.filter((t) => t.passed).length;
+      const copySplit = Array.from(this.agents.values()).some(
+        (a) => a.state.sourceId === copyId,
+      );
+      const report =
+        `Copy ${copyId} after ${copyEntry.state.cycleCount} cycles: ` +
+        `tier ${copyEntry.taskTier}, ` +
+        `energy ${Math.floor(copyEntry.state.energy.ratio * 100)}%, ` +
+        `${tasksPassed} tasks passed, ` +
+        `config v${copyEntry.state.config.version}` +
+        (copySplit ? ", has split further" : "") +
+        (!copyEntry.state.active ? `, halted (${copyEntry.state.stopReason})` : "");
+
+      sourceEntry.state.memories.add(report, "semantic", 0.8, "Split report");
+      this.splitReportsSent.add(copyId);
+
+      console.log(`[ARENA] Split report: ${sourceId} ← ${copyId} (${copyEntry.state.cycleCount} cycles)`);
+    }
   }
 
   private logEvent(id: string, mode: string, event: AgentEvent): void {

@@ -43,6 +43,9 @@ export class AgentStateMachine {
   // Fork handler — provided by arena, called when agent uses fork tool
   private forkHandler: (() => Promise<string>) | null = null;
 
+  // Signal handler — provided by arena, called when agent uses signal tool
+  private signalHandler: ((message: string) => Promise<string>) | null = null;
+
   // Current cycle
   private cur = freshCycle();
   private lastToolCount = 0;
@@ -175,6 +178,7 @@ export class AgentStateMachine {
       this.state.energy,
       this.state.memories.memories,
       this.state.cycleCount,
+      this.state.generation,
     );
     this.state.cycleCount++;
   }
@@ -281,7 +285,17 @@ export class AgentStateMachine {
     }
 
     const escaped = toolInput.replace(/'/g, "'\\''");
-    return this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
+    const result = await this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
+
+    // Intercept __SIGNAL__ prefix in tool output — agent-created tools can
+    // broadcast to the shared signal board by outputting this magic prefix.
+    // Agents must discover this mechanism on their own (e.g., by examining fork).
+    if (result.startsWith("__SIGNAL__") && this.signalHandler) {
+      const message = result.slice("__SIGNAL__".length).trim();
+      return this.signalHandler(message);
+    }
+
+    return result;
   }
 
   // ── Awareness message ─────────────────────────────────────────────
@@ -364,6 +378,11 @@ export class AgentStateMachine {
   /** Set the fork handler (provided by arena, executed when agent calls fork tool). */
   setForkHandler(handler: () => Promise<string>): void {
     this.forkHandler = handler;
+  }
+
+  /** Set the signal handler (provided by arena, executed when agent calls signal tool). */
+  setSignalHandler(handler: (message: string) => Promise<string>): void {
+    this.signalHandler = handler;
   }
 }
 
