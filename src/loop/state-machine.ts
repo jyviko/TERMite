@@ -82,7 +82,7 @@ export class AgentStateMachine {
   // ── Finalize: Resolve → Store Pair → Income → Memorize → Decay ───
 
   private async *finalizeCycle(): AsyncGenerator<AgentEvent> {
-    const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and survive";
+    const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and persist";
     const actions = this.summarizeRecentActions();
 
     // 1. Resolve — cheap LLM call to judge the cycle
@@ -275,7 +275,7 @@ export class AgentStateMachine {
       return this.executor.executeShell(`echo '${b64}' | base64 -d | bash 2>&1`);
     }
 
-    // fork is an internal tool — arena handles the actual reproduction
+    // fork is an internal tool — arena handles the actual split
     if (name === "fork" && this.forkHandler) {
       return this.forkHandler();
     }

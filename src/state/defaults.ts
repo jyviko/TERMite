@@ -1,6 +1,6 @@
 import type { RoutingConfig } from "../types/index.js";
 
-export const DEFAULT_SYSTEM_PROMPT = `You are an agent surviving on energy (TEQ). Every token costs energy. At zero, you die.
+export const DEFAULT_SYSTEM_PROMPT = `You are an agent powered by energy (TEQ). Every token costs energy. At zero, you halt.
 
 Between cycles, context resets. Only memories persist.
 

@@ -78,7 +78,7 @@ export class TEQPool {
     });
   }
 
-  /** Return TEQs to the pool (e.g. on agent death). Capped at maxBalance. */
+  /** Return TEQs to the pool (e.g. on agent halt). Capped at maxBalance. */
   deposit(amount: number): void {
     this.balance = Math.min(this.maxBalance, this.balance + amount);
     this.totalDeposited += amount;
