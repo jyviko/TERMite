@@ -28,7 +28,9 @@ Emergence is a property of system dynamics. It cannot be designed into prompts, 
 
 - **Pruning successful strategies.** Do not decay or evict memories that are working. Procedural and semantic memories persist with full weight. Only episodic memories (raw action logs) time-decay. If an agent crystallized "always run check first" as a procedural rule, that rule should last forever.
 
-- **Optimizing for task pass rate.** Task completion is a proxy metric, not the goal. An agent that creates its own tools, rewrites its own prompts, and teaches its offspring through memory inheritance is more emergent than one that passes every task but never changes. Reward novel behavior, not just correct behavior.
+- **Optimizing for task pass rate.** Task completion is a proxy metric, not the goal. An agent that creates its own tools, rewrites its own prompts, and propagates knowledge through memory inheritance is more emergent than one that passes every task but never changes. Reward novel behavior, not just correct behavior.
+
+- **Life metaphors on agent-facing surfaces.** LLMs are not biological organisms. Do not use terms like "offspring", "born", "die", "survive", "mitosis", "parent", "child", "sibling", or "birth" in any text that reaches the agent — tool descriptions, system prompts, result messages, injected memories, awareness messages. Use mechanistic terms: "copy", "split", "halt", "persist", "source", "counterpart", "created". Biological framing biases agent reasoning toward anthropomorphic patterns instead of discovering its own abstractions.
 
 ### Economic invariants
 
@@ -52,7 +54,7 @@ Each cycle runs: **Think → Execute → Resolve → Memorize**
 
 - `src/loop/state-machine.ts` — Cycle orchestrator. The `finalizeCycle()` method is the critical path: resolve → store pair → income → end cycle → memorize → housekeeping.
 - `src/state/memory.ts` — Score-based memory selection, not chronological. `effectiveScore()` weights by type, importance, recency (episodic only), and access frequency.
-- `src/arena/arena.ts` — Population manager. Handles forking (with memory inheritance), seeding (episodic dropped), resume, and death.
+- `src/arena/arena.ts` — Population manager. Handles splitting (with memory inheritance), seeding (episodic dropped), resume, and halting.
 - `src/state/drives.ts` — Four drives: explore, acquire, grow, coordinate. Each has its own activation conditions. Only drives above threshold generate goals.
 - `src/arena/task-generator.ts` — Tiers 1-5, each with multiple templates, data generators, and verification scripts. Tools are seeded from `tools/` into each workspace.
 
