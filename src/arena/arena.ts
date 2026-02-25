@@ -532,81 +532,77 @@ export class Arena {
     if (!entry) return "FORK_DENIED: agent not found";
 
     const MIN_VIABLE_OFFSPRING = 20_000;
-    const BIRTH_BONUS_RATIO = 0.1; // 10% of parent reserves per offspring, from TEQ pool
+    const BIRTH_BONUS_RATIO = 0.1; // 10% of parent reserves, from TEQ pool
+    const INVESTMENT_RATIO = 0.5; // Parent invests 50% of reserves in offspring
     const reserves = entry.state.energy.reserves;
-    const half = Math.floor(reserves / 2);
+    const investment = Math.floor(reserves * INVESTMENT_RATIO);
 
-    if (half < MIN_VIABLE_OFFSPRING) {
-      return `FORK_DENIED: insufficient reserves for mitosis (each offspring needs at least ${MIN_VIABLE_OFFSPRING} TEQ, you have ${reserves})`;
+    if (investment < MIN_VIABLE_OFFSPRING) {
+      return `FORK_DENIED: insufficient reserves for mitosis (offspring needs at least ${MIN_VIABLE_OFFSPRING} TEQ, you have ${reserves})`;
     }
 
     // Birth bonus — environment invests in reproduction via TEQ pool
     const requestedBonus = Math.floor(reserves * BIRTH_BONUS_RATIO);
-    const birthBonus = await this.teqPool.withdraw(requestedBonus * 2);
-    const bonusPerChild = Math.floor(birthBonus / 2);
+    const birthBonus = await this.teqPool.withdraw(requestedBonus);
 
     // Inherit procedural + semantic memories (episodic is context-specific)
     const inheritedMemories = new MemoryStore(
       entry.state.memories.memories.filter((m) => m.type !== "episodic"),
     );
 
-    // Birth memory — offspring know their origin (factual, not prescriptive)
+    // Birth memory — offspring knows its origin (factual, not prescriptive)
     const inheritedCount = inheritedMemories.memories.length;
     inheritedMemories.add(
       `Born from mitosis. Parent divided at cycle ${entry.state.cycleCount} with ${reserves.toLocaleString()} TEQ. ` +
-      `Inherited ${inheritedCount} memories and parent's tools. A sibling was created simultaneously with an independent configuration.`,
+      `Inherited ${inheritedCount} memories and parent's tools. A sibling continues independently.`,
       "semantic",
       0.95,
       "Origin",
     );
 
-    // Offspring inherit tier (minus 1, minimum 1) — progress isn't lost
+    // Offspring inherits tier (minus 1, minimum 1) — progress isn't lost
     const offspringTier = Math.max(1, entry.taskTier - 1);
 
     try {
-      // Two config iterations — genetic diversity via LLM temperature
-      const [configA, configB] = await Promise.all([
-        this.iterator.iterate({
-          sourceConfig: entry.state.config,
-          memories: entry.state.memories.memories,
-          taskHistory: entry.taskHistory,
-          generation: entry.state.generation,
-        }),
-        this.iterator.iterate({
-          sourceConfig: entry.state.config,
-          memories: entry.state.memories.memories,
-          taskHistory: entry.taskHistory,
-          generation: entry.state.generation,
-        }),
-      ]);
+      // One config iteration for offspring — genetic diversity
+      const offspringConfig = await this.iterator.iterate({
+        sourceConfig: entry.state.config,
+        memories: entry.state.memories.memories,
+        taskHistory: entry.taskHistory,
+        generation: entry.state.generation,
+      });
 
-      // Spawn two offspring — each gets half reserves + birth bonus, inherits tier
-      const childAReserves = half + bonusPerChild;
-      const childBReserves = (reserves - half) + (birthBonus - bonusPerChild);
-      const childA = await this.spawnAgent(id, configA, childAReserves, inheritedMemories, undefined, offspringTier);
-      const childB = await this.spawnAgent(id, configB, childBReserves, inheritedMemories, undefined, offspringTier);
+      // Parent invests half its reserves; offspring gets investment + birth bonus
+      const offspringReserves = investment + birthBonus;
+      entry.state.energy.burnFlat(investment);
+
+      const offspring = await this.spawnAgent(id, offspringConfig, offspringReserves, inheritedMemories, undefined, offspringTier);
 
       const gen = entry.state.generation + 1;
       console.log(
-        `[ARENA] ${id} mitosis → ${childA} + ${childB} (gen ${gen}, ${childAReserves} + ${childBReserves} TEQ, tier ${offspringTier}, bonus ${birthBonus} from pool)`,
+        `[ARENA] ${id} mitosis → ${offspring} (gen ${gen}, invested ${investment} + ${birthBonus} bonus = ${offspringReserves} TEQ, tier ${offspringTier})`,
       );
 
-      // Parent dies — drain all reserves
-      entry.state.energy.burnFlat(reserves);
-      entry.state.terminate("reproduced");
+      // Parent adds its own birth/division memory
+      entry.state.memories.add(
+        `Divided at cycle ${entry.state.cycleCount}. Invested ${investment.toLocaleString()} TEQ. ` +
+        `Offspring ${offspring} spawned with ${offspringReserves.toLocaleString()} TEQ at tier ${offspringTier}. ` +
+        `Remaining reserves: ${entry.state.energy.reserves.toLocaleString()} TEQ.`,
+        "semantic",
+        0.9,
+        "Mitosis",
+      );
 
-      // Run both offspring concurrently
-      for (const childId of [childA, childB]) {
-        const childEntry = this.agents.get(childId);
-        if (childEntry) {
-          this.runAgent(childId, childEntry).catch((err: unknown) => {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[ARENA] Offspring ${childId} run failed: ${msg}`);
-          });
-        }
+      // Run offspring concurrently
+      const childEntry = this.agents.get(offspring);
+      if (childEntry) {
+        this.runAgent(offspring, childEntry).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[ARENA] Offspring ${offspring} run failed: ${msg}`);
+        });
       }
 
-      return `MITOSIS: divided into ${childA} and ${childB}, each with ~${half + bonusPerChild} TEQ at tier ${offspringTier}. You cease to exist.`;
+      return `MITOSIS: offspring ${offspring} spawned with ${offspringReserves.toLocaleString()} TEQ at tier ${offspringTier}. You invested ${investment.toLocaleString()} TEQ. Remaining: ${entry.state.energy.reserves.toLocaleString()} TEQ.`;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return `FORK_FAILED: ${msg}`;
