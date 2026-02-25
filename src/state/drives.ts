@@ -114,7 +114,7 @@ export class DriveSystem {
     const goals: Record<DriveName, string> = {
       explore: "Unmapped territory detected.",
       acquire: "Energy deficit.",
-      grow: "Capacity for expansion.",
+      grow: "Conditions favor division.",
       coordinate: "Other agents detected.",
     };
     return goals[drive.name];
