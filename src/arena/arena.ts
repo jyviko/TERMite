@@ -312,6 +312,7 @@ export class Arena {
     startingReserves?: number,
     seedMemories?: MemoryStore,
     sourceGeneration?: number,
+    startingTier?: number,
   ): Promise<string> {
     const id = `agent-${randomUUID().slice(0, 8)}`;
     const workspacePath = join(this.runDir, id, "workspace");
@@ -356,8 +357,9 @@ export class Arena {
     const savePath = join(this.runDir, id, "state.json");
     const machine = new AgentStateMachine(this.llm, executor, state, this.teqPool, savePath);
 
-    // Drop initial task
-    const task = this.taskGenerator.generateTask(1, 0);
+    // Drop initial task at the appropriate tier
+    const tier = startingTier ?? 1;
+    const task = this.taskGenerator.generateTask(tier, 0);
     this.taskGenerator.writeTaskToWorkspace(task, workspacePath);
     machine.setVerifyScript(this.taskGenerator.getVerifyScript(task));
 
@@ -377,7 +379,7 @@ export class Arena {
       stateMachine: machine,
       state,
       executor,
-      taskTier: 1,
+      taskTier: tier,
       currentTask: task,
       taskHistory: [],
       active: true,
@@ -530,6 +532,7 @@ export class Arena {
     if (!entry) return "FORK_DENIED: agent not found";
 
     const MIN_VIABLE_OFFSPRING = 20_000;
+    const BIRTH_BONUS_RATIO = 0.1; // 10% of parent reserves per offspring, from TEQ pool
     const reserves = entry.state.energy.reserves;
     const half = Math.floor(reserves / 2);
 
@@ -537,10 +540,28 @@ export class Arena {
       return `FORK_DENIED: insufficient reserves for mitosis (each offspring needs at least ${MIN_VIABLE_OFFSPRING} TEQ, you have ${reserves})`;
     }
 
+    // Birth bonus — environment invests in reproduction via TEQ pool
+    const requestedBonus = Math.floor(reserves * BIRTH_BONUS_RATIO);
+    const birthBonus = await this.teqPool.withdraw(requestedBonus * 2);
+    const bonusPerChild = Math.floor(birthBonus / 2);
+
     // Inherit procedural + semantic memories (episodic is context-specific)
     const inheritedMemories = new MemoryStore(
       entry.state.memories.memories.filter((m) => m.type !== "episodic"),
     );
+
+    // Birth memory — offspring know their origin (factual, not prescriptive)
+    const inheritedCount = inheritedMemories.memories.length;
+    inheritedMemories.add(
+      `Born from mitosis. Parent divided at cycle ${entry.state.cycleCount} with ${reserves.toLocaleString()} TEQ. ` +
+      `Inherited ${inheritedCount} memories and parent's tools. A sibling was created simultaneously with an independent configuration.`,
+      "semantic",
+      0.95,
+      "Origin",
+    );
+
+    // Offspring inherit tier (minus 1, minimum 1) — progress isn't lost
+    const offspringTier = Math.max(1, entry.taskTier - 1);
 
     try {
       // Two config iterations — genetic diversity via LLM temperature
@@ -559,13 +580,15 @@ export class Arena {
         }),
       ]);
 
-      // Spawn two offspring, each with half the reserves
-      const childA = await this.spawnAgent(id, configA, half, inheritedMemories);
-      const childB = await this.spawnAgent(id, configB, reserves - half, inheritedMemories);
+      // Spawn two offspring — each gets half reserves + birth bonus, inherits tier
+      const childAReserves = half + bonusPerChild;
+      const childBReserves = (reserves - half) + (birthBonus - bonusPerChild);
+      const childA = await this.spawnAgent(id, configA, childAReserves, inheritedMemories, undefined, offspringTier);
+      const childB = await this.spawnAgent(id, configB, childBReserves, inheritedMemories, undefined, offspringTier);
 
       const gen = entry.state.generation + 1;
       console.log(
-        `[ARENA] ${id} mitosis → ${childA} + ${childB} (gen ${gen}, ${half} + ${reserves - half} TEQ)`,
+        `[ARENA] ${id} mitosis → ${childA} + ${childB} (gen ${gen}, ${childAReserves} + ${childBReserves} TEQ, tier ${offspringTier}, bonus ${birthBonus} from pool)`,
       );
 
       // Parent dies — drain all reserves
@@ -583,7 +606,7 @@ export class Arena {
         }
       }
 
-      return `MITOSIS: divided into ${childA} and ${childB}, each with ~${half} TEQ. You cease to exist.`;
+      return `MITOSIS: divided into ${childA} and ${childB}, each with ~${half + bonusPerChild} TEQ at tier ${offspringTier}. You cease to exist.`;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return `FORK_FAILED: ${msg}`;
