@@ -421,9 +421,16 @@ export class Arena {
   }
 
   private async runAgent(id: string, entry: AgentEntry): Promise<void> {
+    let lastCycle = entry.state.cycleCount;
     try {
       for await (const event of entry.stateMachine.run()) {
         this.logEvent(id, entry.state.mode, event);
+
+        // Detect cycle boundary — check task deadline and demotion
+        if (entry.state.cycleCount !== lastCycle) {
+          lastCycle = entry.state.cycleCount;
+          this.checkTaskDeadline(id, entry);
+        }
 
         // Check shared budget
         if (this.sharedBudget.exhausted) {
@@ -492,15 +499,15 @@ export class Arena {
     entry.consecutivePasses++;
     entry.consecutiveFails = 0;
 
-    // Tier escalation: 3 consecutive passes → tier up (or graduate at tier 5)
+    // Tier escalation: 3 consecutive passes → tier up (or graduate at tier 6)
     if (entry.consecutivePasses >= 3) {
-      if (entry.taskTier >= 5) {
+      if (entry.taskTier >= 6) {
         entry.graduated = true;
         entry.consecutivePasses = 0;
         await this.onGraduation(id, entry);
         return; // No more structured tasks
       }
-      entry.taskTier = Math.min(5, entry.taskTier + 1);
+      entry.taskTier = Math.min(6, entry.taskTier + 1);
       entry.consecutivePasses = 0;
     }
 
@@ -514,9 +521,53 @@ export class Arena {
     entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
   }
 
+  private checkTaskDeadline(id: string, entry: AgentEntry): void {
+    const task = entry.currentTask;
+    if (!task || entry.graduated) return;
+
+    const cyclesOnTask = entry.state.cycleCount - task.assignedCycle;
+    if (cyclesOnTask < task.deadlineCycles) return;
+
+    // Task expired — record failure
+    entry.taskHistory.push({
+      taskId: task.id,
+      tier: task.tier,
+      passed: false,
+      cyclesTaken: cyclesOnTask,
+    });
+
+    entry.consecutivePasses = 0;
+    entry.consecutiveFails++;
+
+    console.log(
+      `[ARENA] ${id} deadline expired on tier ${task.tier} "${task.title}" ` +
+      `(${cyclesOnTask}/${task.deadlineCycles} cycles, fails: ${entry.consecutiveFails})`,
+    );
+
+    // Tier demotion: 2 consecutive deadline failures → tier down
+    if (entry.consecutiveFails >= 2) {
+      const oldTier = entry.taskTier;
+      entry.taskTier = Math.max(1, entry.taskTier - 1);
+      entry.consecutiveFails = 0;
+      if (entry.taskTier !== oldTier) {
+        console.log(`[ARENA] ${id} demoted to tier ${entry.taskTier}`);
+      }
+    }
+
+    // Assign new task at current tier (possibly demoted)
+    const workspacePath = join(this.runDir, id, "workspace");
+    const newTask = this.taskGenerator.generateTask(
+      entry.taskTier,
+      entry.state.cycleCount,
+    );
+    entry.currentTask = newTask;
+    this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
+    entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
+  }
+
   private async onGraduation(id: string, entry: AgentEntry): Promise<void> {
     const workspacePath = join(this.runDir, id, "workspace");
-    console.log(`[ARENA] ${id} GRADUATED from tier 5 — transitioning to open data`);
+    console.log(`[ARENA] ${id} GRADUATED from tier 6 — transitioning to open data`);
 
     entry.currentTask = null;
 
@@ -532,11 +583,11 @@ export class Arena {
 
     try {
       const rating = await this.workRater.rate(dataDir, outputDir);
-      const baseReward = TIER_REWARDS[5] ?? 300_000;
+      const baseReward = TIER_REWARDS[6] ?? 300_000;
       const reward = Math.floor(rating.score * baseReward);
 
       if (reward > 0) {
-        entry.stateMachine.setTaskReward(reward, 5);
+        entry.stateMachine.setTaskReward(reward, 6);
       }
 
       console.log(

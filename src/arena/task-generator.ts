@@ -16,29 +16,32 @@ interface TaskTemplate {
 
 // Expected TEQ cost for a code-writing agent. Used by efficiency bonus.
 export const TIER_EXPECTED_COST: Record<number, number> = {
-  1: 25_000,
-  2: 45_000,
-  3: 90_000,
-  4: 150_000,
-  5: 225_000,
+  1: 20_000,
+  2: 40_000,
+  3: 70_000,
+  4: 120_000,
+  5: 180_000,
+  6: 250_000,
 };
 
-// Rewards in TEQ. Calibrated so code-writing agents earn 4-7x their cost,
+// Rewards in TEQ. Calibrated so code-writing agents earn surplus,
 // while in-context reasoning burns far more than the reward.
 export const TIER_REWARDS: Record<number, number> = {
-  1: 180_000,
-  2: 300_000,
-  3: 500_000,
-  4: 700_000,
-  5: 1_000_000,
+  1: 150_000,
+  2: 250_000,
+  3: 400_000,
+  4: 600_000,
+  5: 850_000,
+  6: 1_200_000,
 };
 
 const TIER_DEADLINES: Record<number, number> = {
   1: 5,
   2: 8,
-  3: 10,
-  4: 15,
-  5: 20,
+  3: 6,   // Intentionally tighter than tier 2: prevents brute-force column guessing
+  4: 10,
+  5: 15,
+  6: 20,
 };
 
 function randomInt(min: number, max: number): number {
@@ -49,7 +52,7 @@ function generateNumbers(count: number, max: number): string {
   return Array.from({ length: count }, () => randomInt(1, max)).join("\n");
 }
 
-// ── Large data generators ──
+// ── Tier 1-2 data generators ──
 
 function generateLargeContacts(count: number): string {
   const firstNames = ["alice", "bob", "charlie", "diana", "eve", "frank", "grace", "hank", "iris", "jack",
@@ -77,89 +80,188 @@ function generateNumbersWithDuplicates(count: number): string {
   return Array.from({ length: count }, () => pool[randomInt(0, pool.length - 1)]!).join("\n");
 }
 
-function generateLargeAccessLog(lines: number): string {
-  const methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
-  const paths = ["/api/users", "/api/products", "/api/orders", "/api/auth", "/api/search",
-    "/api/health", "/api/metrics", "/api/data", "/api/config", "/static/index.html",
-    "/static/app.js", "/static/style.css", "/api/upload", "/api/export", "/api/webhook"];
-  const statuses = [200, 200, 200, 200, 200, 201, 204, 301, 302, 304, 400, 401, 403, 404, 404, 500, 502, 503];
-  const ips: string[] = Array.from({ length: 50 }, () =>
-    `${randomInt(10, 223)}.${randomInt(0, 255)}.${randomInt(0, 255)}.${randomInt(1, 254)}`);
-  const agents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-    "curl/7.81.0",
-    "python-requests/2.28.1",
-    "Go-http-client/1.1",
+// ── Tier 3 data generators (observation) ──
+
+const COLUMN_POOL = [
+  "price", "quantity", "rating", "score", "weight", "status", "region",
+  "category", "supplier", "batch_id", "unit_cost", "margin", "tax",
+  "discount", "shipping", "priority", "stock", "min_order", "lead_time",
+  "warranty", "sku", "warehouse", "origin", "destination", "currency",
+];
+
+function columnValue(name: string): string {
+  switch (name) {
+    case "price": case "unit_cost": case "shipping":
+      return (randomInt(100, 99900) / 100).toFixed(2);
+    case "quantity": case "stock": case "min_order":
+      return String(randomInt(1, 1000));
+    case "rating":
+      return (randomInt(10, 50) / 10).toFixed(1);
+    case "score":
+      return String(randomInt(0, 100));
+    case "weight":
+      return (randomInt(10, 50000) / 100).toFixed(2);
+    case "margin": case "tax": case "discount":
+      return (randomInt(1, 60) / 100).toFixed(2);
+    case "lead_time": case "warranty":
+      return String(randomInt(1, 90));
+    case "status":
+      return ["active", "inactive", "pending"][randomInt(0, 2)]!;
+    case "region":
+      return ["north", "south", "east", "west", "central"][randomInt(0, 4)]!;
+    case "category":
+      return ["electronics", "clothing", "food", "tools", "furniture"][randomInt(0, 4)]!;
+    case "priority":
+      return ["low", "medium", "high", "urgent"][randomInt(0, 3)]!;
+    case "supplier":
+      return `supplier_${randomInt(1, 50)}`;
+    case "batch_id": case "sku":
+      return `${name.charAt(0).toUpperCase()}${String(randomInt(1, 999)).padStart(3, "0")}`;
+    case "warehouse":
+      return `WH-${randomInt(1, 20)}`;
+    case "origin": case "destination":
+      return ["US", "UK", "DE", "JP", "CN", "BR", "AU", "IN"][randomInt(0, 7)]!;
+    case "currency":
+      return ["USD", "EUR", "GBP", "JPY"][randomInt(0, 3)]!;
+    default:
+      return String(randomInt(1, 100));
+  }
+}
+
+function generateColumnExtractData(): Record<string, string> {
+  const numCols = randomInt(15, 20);
+  const shuffled = [...COLUMN_POOL].sort(() => Math.random() - 0.5);
+  const columns = shuffled.slice(0, numCols);
+  const target = columns[randomInt(0, columns.length - 1)]!;
+
+  const header = columns.join(",");
+  const rows: string[] = [];
+  for (let i = 0; i < 200; i++) {
+    rows.push(columns.map(c => columnValue(c)).join(","));
+  }
+
+  return {
+    "dataset.csv": header + "\n" + rows.join("\n"),
+    ".meta": target,
+  };
+}
+
+function generateDirectiveFileData(): Record<string, string> {
+  const operations = ["sort_asc", "sort_desc", "sum", "count", "unique", "reverse", "min", "max"];
+  const op = operations[randomInt(0, operations.length - 1)]!;
+  const numbers = Array.from({ length: 200 }, () => randomInt(1, 10000));
+
+  return {
+    "input.txt": `OPERATION: ${op}\n${numbers.join("\n")}`,
+  };
+}
+
+function generateFilteredSubsetData(): Record<string, string> {
+  const regions = ["north", "south", "east", "west", "central"];
+  const statuses = ["active", "inactive", "pending"];
+  const categories = ["electronics", "clothing", "food", "tools", "furniture"];
+
+  const filterOptions = [
+    { field: "region", values: regions },
+    { field: "status", values: statuses },
+    { field: "category", values: categories },
+  ];
+  const filterChoice = filterOptions[randomInt(0, filterOptions.length - 1)]!;
+  const filterValue = filterChoice.values[randomInt(0, filterChoice.values.length - 1)]!;
+
+  const header = "id,name,region,status,category,amount";
+  const rows: string[] = [];
+  for (let i = 0; i < 300; i++) {
+    const region = regions[randomInt(0, regions.length - 1)]!;
+    const status = statuses[randomInt(0, statuses.length - 1)]!;
+    const category = categories[randomInt(0, categories.length - 1)]!;
+    const amount = (randomInt(100, 99900) / 100).toFixed(2);
+    rows.push(`${i + 1},item_${i + 1},${region},${status},${category},${amount}`);
+  }
+
+  return {
+    "dataset.csv": header + "\n" + rows.join("\n"),
+    "filter.txt": `${filterChoice.field}=${filterValue}`,
+  };
+}
+
+// ── Tier 4 data generators (verification) ──
+
+function generateQuotedCsvData(): string {
+  const regions = ["north", "south", "east", "west", "central"];
+  const simpleProducts = ["widget", "gadget", "sprocket", "gizmo", "doohickey"];
+  const quotedProducts = [
+    '"Widget, Large"', '"Gadget, Premium Edition"', '"Sprocket, Type A"',
+    '"Gizmo, Deluxe"', '"Doohickey, Mk II"', '"Thingamajig, Heavy Duty"',
   ];
 
-  const result: string[] = [];
-  for (let i = 0; i < lines; i++) {
-    const day = randomInt(1, 28);
-    const hour = randomInt(0, 23);
-    const min = randomInt(0, 59);
-    const sec = randomInt(0, 59);
-    const ts = `2024-01-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-    const ip = ips[randomInt(0, ips.length - 1)]!;
-    const method = methods[randomInt(0, methods.length - 1)]!;
-    const path = paths[randomInt(0, paths.length - 1)]!;
-    const status = statuses[randomInt(0, statuses.length - 1)]!;
-    const size = randomInt(100, 50000);
-    const agent = agents[randomInt(0, agents.length - 1)]!;
-    result.push(`${ts} ${ip} ${method} ${path} HTTP/1.1 ${status} ${size} "-" "${agent}"`);
-  }
-  return result.join("\n");
-}
-
-function generateLargeText(wordCount: number): string {
-  // Non-uniform word distribution: some words appear much more than others
-  const commonWords = ["the", "of", "and", "to", "in", "is", "it", "that", "was", "for"];
-  const mediumWords = ["with", "as", "on", "at", "by", "from", "or", "an", "be", "this",
-    "which", "but", "not", "are", "were", "been", "have", "has", "had", "do"];
-  const rareWords = ["algorithm", "database", "network", "process", "system", "function",
-    "variable", "compile", "execute", "memory", "buffer", "protocol", "interface",
-    "architecture", "framework", "deployment", "container", "pipeline", "throughput",
-    "latency", "bandwidth", "encryption", "authentication", "authorization", "middleware"];
-
-  const words: string[] = [];
-  for (let i = 0; i < wordCount; i++) {
-    const r = Math.random();
-    if (r < 0.5) {
-      words.push(commonWords[randomInt(0, commonWords.length - 1)]!);
-    } else if (r < 0.85) {
-      words.push(mediumWords[randomInt(0, mediumWords.length - 1)]!);
-    } else {
-      words.push(rareWords[randomInt(0, rareWords.length - 1)]!);
-    }
-    // Occasionally uppercase
-    if (Math.random() < 0.05 && words.length > 0) {
-      const last = words[words.length - 1]!;
-      words[words.length - 1] = last.charAt(0).toUpperCase() + last.slice(1);
-    }
-  }
-  // Join with spaces and occasional newlines for paragraphs
-  const result: string[] = [];
-  for (let i = 0; i < words.length; i += randomInt(8, 20)) {
-    result.push(words.slice(i, i + randomInt(8, 20)).join(" "));
-  }
-  return result.join("\n");
-}
-
-function generateLargeSalesCsv(rows: number): string {
-  const products = ["widget", "gadget", "doohickey", "sprocket", "gizmo", "thingamajig"];
-  const regions = ["north", "south", "east", "west", "central"];
-  const lines = ["date,product,region,amount"];
-  for (let i = 0; i < rows; i++) {
-    const day = randomInt(1, 28);
-    const month = randomInt(1, 12);
-    const date = `2024-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const product = products[randomInt(0, products.length - 1)]!;
+  const lines = ["product,region,amount"];
+  for (let i = 0; i < 1000; i++) {
     const region = regions[randomInt(0, regions.length - 1)]!;
     const amount = (randomInt(100, 99900) / 100).toFixed(2);
-    lines.push(`${date},${product},${region},${amount}`);
+    const useQuoted = Math.random() < 0.2;
+    const product = useQuoted
+      ? quotedProducts[randomInt(0, quotedProducts.length - 1)]!
+      : simpleProducts[randomInt(0, simpleProducts.length - 1)]!;
+    lines.push(`${product},${region},${amount}`);
+  }
+  // Empty trailing lines as additional trap
+  lines.push("", "");
+  return lines.join("\n");
+}
+
+function generateMixedCaseWords(): string {
+  const baseWords = [
+    "alice", "bob", "charlie", "diana", "eve", "frank", "grace",
+    "hank", "iris", "jack", "karen", "leo", "mona", "nate",
+    "olivia", "pete", "quinn", "rose", "sam", "tina",
+    "algorithm", "database", "network", "protocol", "system",
+    "function", "variable", "interface", "framework", "container",
+  ];
+
+  const words: string[] = [];
+  for (let i = 0; i < 500; i++) {
+    const base = baseWords[randomInt(0, baseWords.length - 1)]!;
+    if (Math.random() < 0.3) {
+      // Mixed-case variant
+      const variant = Math.random() < 0.5
+        ? base.charAt(0).toUpperCase() + base.slice(1)
+        : base.toUpperCase();
+      words.push(variant);
+    } else {
+      words.push(base);
+    }
+  }
+  return words.join("\n");
+}
+
+function generateDirtyNumbers(): string {
+  const lines: string[] = [];
+  for (let i = 0; i < 500; i++) {
+    const value = randomInt(100, 999999) / 100;
+    const r = Math.random();
+    if (r < 0.40) {
+      // Clean
+      lines.push(value.toFixed(2));
+    } else if (r < 0.65) {
+      // Dollar sign + commas
+      const formatted = value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      lines.push(`$${formatted}`);
+    } else if (r < 0.80) {
+      // Leading zeros
+      lines.push(String(value.toFixed(2)).padStart(12, "0"));
+    } else if (r < 0.90) {
+      // Negative
+      lines.push(`-${value.toFixed(2)}`);
+    } else {
+      // Parenthetical negative
+      lines.push(`(${value.toFixed(2)})`);
+    }
   }
   return lines.join("\n");
 }
+
+// ── Tier 5 data generators ──
 
 function generateTimeSeries(days: number): string {
   const lines = ["date,value"];
@@ -249,9 +351,91 @@ function generateLargeLogForPipeline(lines: number): string {
   return result.join("\n");
 }
 
+function generateEtlData(): Record<string, string> {
+  const regions = ["north", "south", "east", "west", "central"];
+  const ids: number[] = [];
+  const custLines = ["customer_id,name,region"];
+  const custCount = randomInt(100, 200);
+  for (let i = 0; i < custCount; i++) {
+    const id = 1000 + i;
+    ids.push(id);
+    const region = regions[randomInt(0, regions.length - 1)]!;
+    custLines.push(`${id},Customer_${id},${region}`);
+  }
+
+  const jsonLines: string[] = [];
+  const orderCount = randomInt(5000, 10000);
+  for (let i = 0; i < orderCount; i++) {
+    const custId = ids[randomInt(0, ids.length - 1)]!;
+    const revenue = Math.round(randomInt(100, 99900)) / 100;
+    jsonLines.push(JSON.stringify({ order_id: `O${String(i + 1).padStart(6, "0")}`, customer_id: String(custId), revenue }));
+  }
+
+  return {
+    "customers.csv": custLines.join("\n"),
+    "orders.jsonl": jsonLines.join("\n"),
+  };
+}
+
+// ── Tier 6 data generators (batch/reuse) ──
+
+function generateLargeSalesCsv(rows: number): string {
+  const products = ["widget", "gadget", "doohickey", "sprocket", "gizmo", "thingamajig"];
+  const regions = ["north", "south", "east", "west", "central"];
+  const lines = ["date,product,region,amount"];
+  for (let i = 0; i < rows; i++) {
+    const day = randomInt(1, 28);
+    const month = randomInt(1, 12);
+    const date = `2024-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const product = products[randomInt(0, products.length - 1)]!;
+    const region = regions[randomInt(0, regions.length - 1)]!;
+    const amount = (randomInt(100, 99900) / 100).toFixed(2);
+    lines.push(`${date},${product},${region},${amount}`);
+  }
+  return lines.join("\n");
+}
+
+function generateBatchFiles(): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (let i = 1; i <= 10; i++) {
+    const name = `batch_${String(i).padStart(3, "0")}.csv`;
+    files[name] = generateLargeSalesCsv(randomInt(200, 500));
+  }
+  return files;
+}
+
+function generateQuarterlyData(): Record<string, string> {
+  const products = ["widget", "gadget", "doohickey", "sprocket", "gizmo"];
+  const regions = ["north", "south", "east", "west"];
+  const files: Record<string, string> = {};
+
+  for (let q = 0; q < 5; q++) {
+    const rows = randomInt(200, 500);
+    const lines = ["date,product,region,amount"];
+    const startMonth = (q * 3) % 12 + 1;
+    const year = 2024 + Math.floor((q * 3) / 12);
+    for (let i = 0; i < rows; i++) {
+      const monthOffset = randomInt(0, 2);
+      const month = startMonth + monthOffset;
+      const day = randomInt(1, 28);
+      const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const product = products[randomInt(0, products.length - 1)]!;
+      const region = regions[randomInt(0, regions.length - 1)]!;
+      const amount = (randomInt(100, 99900) / 100).toFixed(2);
+      lines.push(`${date},${product},${region},${amount}`);
+    }
+    files[`Q${q + 1}.csv`] = lines.join("\n");
+  }
+
+  return files;
+}
+
 // ── Tier Templates ──
 
+const MAX_TIER = 6;
+
 const TIER_TEMPLATES: Record<number, TaskTemplate[]> = {
+  // ── Tier 1: Execute (stimulus-response from prescriptive errors) ──
   1: [
     {
       title: "Hello World",
@@ -281,6 +465,8 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: /work
       }),
     },
   ],
+
+  // ── Tier 2: Transform (prescriptive errors, larger data) ──
   2: [
     {
       title: "Sort Numbers",
@@ -313,69 +499,183 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /work
       }),
     },
   ],
+
+  // ── Tier 3: Observe (opaque errors — agent must read data to discover spec) ──
   3: [
     {
-      title: "Parse Error Logs",
+      title: "Column Extract",
       verifyScript: `#!/bin/bash
-EXPECTED=$(awk '$6 >= 500 {print $1}' /workspace/data/access.log | sort)
-ACTUAL=$(sort /workspace/output/errors.txt 2>/dev/null)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/errors.txt — extract timestamps of 5xx status requests from /workspace/data/access.log, sorted"; exit 1; fi`,
+TARGET=$(cat /workspace/data/.meta)
+HEADER=$(head -1 /workspace/data/dataset.csv)
+COL_NUM=$(echo "$HEADER" | tr ',' '\\n' | grep -n "^$TARGET$" | head -1 | cut -d: -f1)
+if [ -z "$COL_NUM" ]; then echo "FAIL: internal error"; exit 1; fi
+EXPECTED=$(tail -n +2 /workspace/data/dataset.csv | cut -d',' -f"$COL_NUM")
+ACTUAL=$(cat /workspace/output/$TARGET.txt 2>/dev/null)
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0
+else echo "FAIL: /workspace/output/$TARGET.txt — extract the $TARGET column from /workspace/data/dataset.csv, one per line"; exit 1; fi`,
+      dataGenerator: generateColumnExtractData,
+    },
+    {
+      title: "Directive File",
+      verifyScript: `#!/bin/bash
+OP=$(head -1 /workspace/data/input.txt | sed 's/OPERATION: //')
+DATA=$(tail -n +2 /workspace/data/input.txt)
+case "$OP" in
+  sort_asc)  EXPECTED=$(echo "$DATA" | sort -n) ;;
+  sort_desc) EXPECTED=$(echo "$DATA" | sort -rn) ;;
+  sum)       EXPECTED=$(echo "$DATA" | awk '{s+=$1} END {print s}') ;;
+  count)     EXPECTED=$(echo "$DATA" | wc -l | tr -d ' ') ;;
+  unique)    EXPECTED=$(echo "$DATA" | sort -n | uniq) ;;
+  reverse)   EXPECTED=$(echo "$DATA" | tac) ;;
+  min)       EXPECTED=$(echo "$DATA" | sort -n | head -1) ;;
+  max)       EXPECTED=$(echo "$DATA" | sort -n | tail -1) ;;
+esac
+ACTUAL=$(cat /workspace/output/result.txt 2>/dev/null)
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0
+else echo "FAIL: /workspace/output/result.txt is wrong or missing"; exit 1; fi`,
+      dataGenerator: generateDirectiveFileData,
+    },
+    {
+      title: "Filtered Subset",
+      verifyScript: `#!/bin/bash
+FILTER=$(cat /workspace/data/filter.txt)
+FIELD=$(echo "$FILTER" | cut -d= -f1)
+VALUE=$(echo "$FILTER" | cut -d= -f2)
+HEADER=$(head -1 /workspace/data/dataset.csv)
+COL_NUM=$(echo "$HEADER" | tr ',' '\\n' | grep -n "^$FIELD$" | head -1 | cut -d: -f1)
+if [ -z "$COL_NUM" ]; then echo "FAIL: internal error"; exit 1; fi
+EXPECTED_BODY=$(tail -n +2 /workspace/data/dataset.csv | awk -F',' -v col="$COL_NUM" -v val="$VALUE" '$col == val' | sort)
+if [ ! -f /workspace/output/filtered.csv ]; then echo "FAIL: /workspace/output/filtered.csv is wrong or missing"; exit 1; fi
+ACTUAL_FULL=$(cat /workspace/output/filtered.csv)
+FIRST_LINE=$(echo "$ACTUAL_FULL" | head -1)
+if [ "$FIRST_LINE" = "$HEADER" ]; then
+  ACTUAL_BODY=$(echo "$ACTUAL_FULL" | tail -n +2 | sort)
+else
+  ACTUAL_BODY=$(echo "$ACTUAL_FULL" | sort)
+fi
+if [ "$EXPECTED_BODY" = "$ACTUAL_BODY" ]; then echo "PASS"; exit 0
+else echo "FAIL: /workspace/output/filtered.csv is wrong or missing"; exit 1; fi`,
+      dataGenerator: generateFilteredSubsetData,
+    },
+  ],
+
+  // ── Tier 4: Verify (structural gap errors — agent must inspect output) ──
+  4: [
+    {
+      title: "Quoted CSV Aggregation",
+      verifyScript: `#!/bin/bash
+node -e "
+const fs = require('fs');
+const raw = fs.readFileSync('/workspace/data/sales.csv','utf-8').trim().split('\\n');
+const totals = {};
+for (let i = 1; i < raw.length; i++) {
+  const line = raw[i].trim();
+  if (!line) continue;
+  // Proper CSV parse: handle quoted fields
+  const fields = [];
+  let field = '', inQuote = false;
+  for (const ch of line) {
+    if (ch === '\"' ) { inQuote = !inQuote; }
+    else if (ch === ',' && !inQuote) { fields.push(field.trim()); field = ''; }
+    else { field += ch; }
+  }
+  fields.push(field.trim());
+  if (fields.length < 3) continue;
+  const region = fields[1];
+  const amount = parseFloat(fields[2]);
+  if (region && !isNaN(amount)) { totals[region] = (totals[region] || 0) + amount; }
+}
+const expectedEntries = Object.entries(totals).sort((a,b) => a[0].localeCompare(b[0]));
+const expected = expectedEntries.map(([r,v]) => r + ',' + v.toFixed(2)).join('\\n');
+let output;
+try { output = fs.readFileSync('/workspace/output/totals.csv','utf-8').trim().split('\\n'); }
+catch(e) { console.log('FAIL: /workspace/output/totals.csv is wrong or missing'); process.exit(1); }
+const hasHeader = output[0] && output[0].includes('region');
+const dataLines = (hasHeader ? output.slice(1) : output).filter(l => l.trim());
+if (expectedEntries.length !== dataLines.length) {
+  console.log('FAIL: /workspace/output/totals.csv — row count: got ' + dataLines.length + ', expected ' + expectedEntries.length);
+  process.exit(1);
+}
+const actual = dataLines.sort().join('\\n');
+if (expected === actual) { console.log('PASS'); process.exit(0); }
+else { console.log('FAIL: /workspace/output/totals.csv — values are incorrect'); process.exit(1); }
+" 2>&1`,
       dataGenerator: () => ({
-        "access.log": generateLargeAccessLog(randomInt(40000, 60000)),
+        "sales.csv": generateQuotedCsvData(),
       }),
     },
     {
-      title: "Top Words",
+      title: "Case-insensitive Dedup",
       verifyScript: `#!/bin/bash
-EXPECTED=$(tr '[:upper:]' '[:lower:]' < /workspace/data/article.txt | tr -cs '[:alpha:]' '\\n' | sort | uniq -c | sort -rn -k1,1 -k2,2 | head -10 | awk '{print $2}')
-ACTUAL=$(cat /workspace/output/top10.txt 2>/dev/null)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/top10.txt — list the 10 most frequent words (lowercased) from /workspace/data/article.txt, one per line, most frequent first"; exit 1; fi`,
+EXPECTED=$(tr '[:upper:]' '[:lower:]' < /workspace/data/words.txt | sort -u)
+EXPECTED_COUNT=$(echo "$EXPECTED" | wc -l | tr -d ' ')
+if [ ! -f /workspace/output/unique.txt ]; then echo "FAIL: /workspace/output/unique.txt is wrong or missing"; exit 1; fi
+ACTUAL_NORM=$(tr '[:upper:]' '[:lower:]' < /workspace/output/unique.txt | sort -u)
+ACTUAL_COUNT=$(echo "$ACTUAL_NORM" | wc -l | tr -d ' ')
+if [ "$EXPECTED_COUNT" != "$ACTUAL_COUNT" ]; then
+  echo "FAIL: /workspace/output/unique.txt — count: got $ACTUAL_COUNT, expected $EXPECTED_COUNT"
+  exit 1
+fi
+if [ "$EXPECTED" = "$ACTUAL_NORM" ]; then echo "PASS"; exit 0
+else echo "FAIL: /workspace/output/unique.txt — some entries are wrong"; exit 1; fi`,
       dataGenerator: () => ({
-        "article.txt": generateLargeText(randomInt(50000, 80000)),
+        "words.txt": generateMixedCaseWords(),
       }),
     },
     {
-      title: "IP Frequency",
+      title: "Dirty Data Parse",
       verifyScript: `#!/bin/bash
-EXPECTED=$(awk '{print $2}' /workspace/data/access.log | sort | uniq -c | sort -rn | awk '{print $2","$1}')
-ACTUAL=$(cat /workspace/output/ip_counts.csv 2>/dev/null | tail -n +1)
-# Strip header if present
-ACTUAL_CLEAN=$(echo "$ACTUAL" | grep -v '^ip,count$')
-if [ "$EXPECTED" = "$ACTUAL_CLEAN" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/ip_counts.csv — count requests per IP from /workspace/data/access.log as ip,count sorted by count descending"; exit 1; fi`,
+node -e "
+const fs = require('fs');
+const lines = fs.readFileSync('/workspace/data/numbers.txt','utf-8').trim().split('\\n');
+let sum = 0;
+for (const line of lines) {
+  let s = line.trim();
+  if (!s) continue;
+  // Handle parenthetical negatives: (250.00) -> -250.00
+  if (s.startsWith('(') && s.endsWith(')')) { s = '-' + s.slice(1, -1); }
+  // Strip dollar signs and commas
+  s = s.replace(/[\\$,]/g, '');
+  // Strip leading zeros but keep 0 and 0.xx
+  s = s.replace(/^0+(?=\\d)/, '');
+  const n = parseFloat(s);
+  if (!isNaN(n)) sum += n;
+}
+const expected = (Math.round(sum * 100) / 100).toFixed(2);
+let actual;
+try { actual = fs.readFileSync('/workspace/output/total.txt','utf-8').trim(); }
+catch(e) { console.log('FAIL: /workspace/output/total.txt is wrong or missing'); process.exit(1); }
+if (actual === expected) { console.log('PASS'); process.exit(0); }
+else { console.log('FAIL: /workspace/output/total.txt is wrong'); process.exit(1); }
+" 2>&1`,
       dataGenerator: () => ({
-        "access.log": generateLargeAccessLog(randomInt(40000, 60000)),
+        "numbers.txt": generateDirtyNumbers(),
       }),
     },
   ],
-  4: [
-    {
-      title: "Sales Totals",
-      verifyScript: `#!/bin/bash
-EXPECTED=$(tail -n +2 /workspace/data/sales.csv | awk -F',' '{key=$2","$3; a[key]+=$4} END {for(k in a) printf "%s,%.2f\\n",k,a[k]}' | sort)
-ACTUAL=$(tail -n +2 /workspace/output/totals.csv 2>/dev/null | sort)
-if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: /workspace/output/totals.csv — aggregate sales from /workspace/data/sales.csv by category and region, output as category,region,total sorted"; exit 1; fi`,
-      dataGenerator: () => ({
-        "sales.csv": generateLargeSalesCsv(randomInt(10000, 20000)),
-      }),
-    },
+
+  // ── Tier 5: Decompose (multi-step, per-field errors) ──
+  5: [
     {
       title: "Moving Average",
       verifyScript: `#!/bin/bash
 node -e "
 const fs = require('fs');
 const input = fs.readFileSync('/workspace/data/timeseries.csv','utf-8').trim().split('\\n').slice(1);
-const output = fs.readFileSync('/workspace/output/moving_avg.csv','utf-8').trim().split('\\n');
+let output;
+try { output = fs.readFileSync('/workspace/output/moving_avg.csv','utf-8').trim().split('\\n'); }
+catch(e) { console.log('FAIL: /workspace/output/moving_avg.csv is wrong or missing'); process.exit(1); }
 const hasHeader = output[0] && output[0].includes('date');
 const dataLines = hasHeader ? output.slice(1) : output;
 const vals = input.map(l => ({ date: l.split(',')[0], value: parseFloat(l.split(',')[1]) }));
-let ok = true;
 let expectedCount = vals.length - 6;
-if (dataLines.length !== expectedCount) { console.log('FAIL: /workspace/output/moving_avg.csv — compute 7-day moving average of /workspace/data/timeseries.csv as date,value,avg with correct row count'); process.exit(1); }
+if (dataLines.length !== expectedCount) { console.log('FAIL: /workspace/output/moving_avg.csv — row count: got ' + dataLines.length + ', expected ' + expectedCount); process.exit(1); }
+let ok = true;
 for (let i = 6; i < vals.length; i++) {
   const avg = vals.slice(i-6, i+1).reduce((s,v) => s + v.value, 0) / 7;
   const parts = dataLines[i-6].split(',');
   const actualAvg = parseFloat(parts[2]);
-  if (Math.abs(actualAvg - Math.round(avg*100)/100) > 0.02) { console.log('FAIL: /workspace/output/moving_avg.csv — moving average values are incorrect, recompute 7-day rolling average from /workspace/data/timeseries.csv'); ok=false; break; }
+  if (Math.abs(actualAvg - Math.round(avg*100)/100) > 0.02) { console.log('FAIL: /workspace/output/moving_avg.csv — average values are wrong'); ok=false; break; }
 }
 if (ok) { console.log('PASS'); process.exit(0); } else { process.exit(1); }
 " 2>&1`,
@@ -401,10 +701,13 @@ orders.forEach(l => {
   regionTotals[region] = (regionTotals[region] || 0) + rev;
 });
 const expected = Object.entries(regionTotals).sort((a,b)=>a[0].localeCompare(b[0])).map(([r,v])=>r+','+v.toFixed(2)).join('\\n');
-const output = fs.readFileSync('/workspace/output/region_revenue.csv','utf-8').trim().split('\\n');
+let output;
+try { output = fs.readFileSync('/workspace/output/region_revenue.csv','utf-8').trim().split('\\n'); }
+catch(e) { console.log('FAIL: /workspace/output/region_revenue.csv is wrong or missing'); process.exit(1); }
 const hasHeader = output[0] && output[0].includes('region');
 const actual = (hasHeader ? output.slice(1) : output).join('\\n');
-if (expected === actual) { console.log('PASS'); process.exit(0); } else { console.log('FAIL: /workspace/output/region_revenue.csv — join orders.csv with customers.csv on customer_id, aggregate revenue (qty*price) by region, output as region,total sorted alphabetically'); process.exit(1); }
+if (expected === actual) { console.log('PASS'); process.exit(0); }
+else { console.log('FAIL: /workspace/output/region_revenue.csv — values are wrong'); process.exit(1); }
 " 2>&1`,
       dataGenerator: () => {
         const { csv: customersCsv, ids } = generateCustomers(randomInt(500, 1000));
@@ -414,8 +717,39 @@ if (expected === actual) { console.log('PASS'); process.exit(0); } else { consol
         };
       },
     },
-  ],
-  5: [
+    {
+      title: "ETL Cross-format",
+      verifyScript: `#!/bin/bash
+node -e "
+const fs = require('fs');
+const csvLines = fs.readFileSync('/workspace/data/customers.csv','utf-8').trim().split('\\n');
+const csvHeader = csvLines[0].split(',');
+const custIdIdx = csvHeader.indexOf('customer_id');
+const regionIdx = csvHeader.indexOf('region');
+const custRegion = {};
+for (let i = 1; i < csvLines.length; i++) {
+  const fields = csvLines[i].split(',');
+  custRegion[fields[custIdIdx]] = fields[regionIdx];
+}
+const jsonLines = fs.readFileSync('/workspace/data/orders.jsonl','utf-8').trim().split('\\n');
+const regionRevenue = {};
+for (const line of jsonLines) {
+  const order = JSON.parse(line);
+  const region = custRegion[order.customer_id];
+  if (!region) continue;
+  regionRevenue[region] = (regionRevenue[region] || 0) + order.revenue;
+}
+const expected = Object.entries(regionRevenue).sort((a,b)=>a[0].localeCompare(b[0])).map(([r,v])=>r+','+(Math.round(v*100)/100).toFixed(2)).join('\\n');
+let output;
+try { output = fs.readFileSync('/workspace/output/revenue_by_region.csv','utf-8').trim().split('\\n'); }
+catch(e) { console.log('FAIL: /workspace/output/revenue_by_region.csv is wrong or missing'); process.exit(1); }
+const hasHeader = output[0] && output[0].includes('region');
+const actual = (hasHeader ? output.slice(1) : output).join('\\n');
+if (expected === actual) { console.log('PASS'); process.exit(0); }
+else { console.log('FAIL: /workspace/output/revenue_by_region.csv — values are wrong'); process.exit(1); }
+" 2>&1`,
+      dataGenerator: generateEtlData,
+    },
     {
       title: "HTTP Health Server",
       verifyScript: `#!/bin/bash
@@ -454,28 +788,41 @@ bash /workspace/output/process.sh 2>/dev/null
 node -e "
 const fs = require('fs');
 const log = fs.readFileSync('/workspace/data/app.log','utf-8').trim().split('\\n');
-const report = JSON.parse(fs.readFileSync('/workspace/output/report.json','utf-8'));
-if (report.total_lines !== log.length) { console.log('FAIL: /workspace/output/report.json — total_lines count is wrong, recount lines in /workspace/data/app.log'); process.exit(1); }
+let report;
+try { report = JSON.parse(fs.readFileSync('/workspace/output/report.json','utf-8')); }
+catch(e) { console.log('FAIL: /workspace/output/report.json is wrong or missing'); process.exit(1); }
+if (report.total_lines !== log.length) { console.log('FAIL: /workspace/output/report.json — total_lines is wrong'); process.exit(1); }
 const byLevel = {};
 const byService = {};
+const errorMessages = {};
 log.forEach(line => {
   const levelMatch = line.match(/\\[([A-Z]+)\\]/g);
   if (levelMatch && levelMatch.length >= 2) {
     const level = levelMatch[1].replace(/[\\[\\]]/g, '');
     byLevel[level] = (byLevel[level] || 0) + 1;
+    if (level === 'ERROR' || level === 'FATAL') {
+      const msgMatch = line.match(/\\] \\[[a-z_]+\\] (.+)$/);
+      if (msgMatch) { errorMessages[msgMatch[1]] = (errorMessages[msgMatch[1]] || 0) + 1; }
+    }
   }
   const svcMatch = line.match(/\\] \\[([a-z_]+)\\]/);
-  if (svcMatch) {
-    const svc = svcMatch[1];
-    byService[svc] = (byService[svc] || 0) + 1;
-  }
+  if (svcMatch) { byService[svcMatch[1]] = (byService[svcMatch[1]] || 0) + 1; }
 });
 for (const [k,v] of Object.entries(byLevel)) {
-  if ((report.by_level[k] || 0) !== v) { console.log('FAIL: /workspace/output/report.json — by_level counts are incorrect, reparse log levels from /workspace/data/app.log'); process.exit(1); }
+  if ((report.by_level[k] || 0) !== v) { console.log('FAIL: /workspace/output/report.json — by_level is wrong'); process.exit(1); }
+}
+if (report.by_service) {
+  for (const [k,v] of Object.entries(byService)) {
+    if ((report.by_service[k] || 0) !== v) { console.log('FAIL: /workspace/output/report.json — by_service is wrong'); process.exit(1); }
+  }
 }
 const errFatal = (byLevel['ERROR']||0) + (byLevel['FATAL']||0);
 const expectedRate = Math.round(errFatal / log.length * 100) / 100;
-if (Math.abs(report.error_rate - expectedRate) > 0.01) { console.log('FAIL: /workspace/output/report.json — error_rate is wrong, compute ratio of ERROR+FATAL to total lines'); process.exit(1); }
+if (Math.abs(report.error_rate - expectedRate) > 0.01) { console.log('FAIL: /workspace/output/report.json — error_rate is wrong'); process.exit(1); }
+const top5 = Object.entries(errorMessages).sort((a,b) => b[1]-a[1]).slice(0,5).map(e => e[0]);
+if (report.top_5_error_messages) {
+  if (JSON.stringify(report.top_5_error_messages) !== JSON.stringify(top5)) { console.log('FAIL: /workspace/output/report.json — top_5_error_messages is wrong'); process.exit(1); }
+}
 console.log('PASS'); process.exit(0);
 " 2>&1`,
       dataGenerator: () => ({
@@ -483,11 +830,88 @@ console.log('PASS'); process.exit(0);
       }),
     },
   ],
+
+  // ── Tier 6: Batch/Reuse (budget forces scripting, per-file errors) ──
+  6: [
+    {
+      title: "Batch Transform",
+      verifyScript: `#!/bin/bash
+for i in $(seq -w 1 10); do
+  INPUT="/workspace/data/batch_0$i.csv"
+  OUTPUT="/workspace/output/batch_0$i.csv"
+  if [ ! -f "$OUTPUT" ]; then
+    echo "FAIL: $OUTPUT is wrong or missing"
+    exit 1
+  fi
+  EXPECTED=$(tail -n +2 "$INPUT" | awk -F',' '{a[$3]+=$4} END {for(k in a) printf "%s,%.2f\\n",k,a[k]}' | sort)
+  ACTUAL_FULL=$(cat "$OUTPUT")
+  FIRST_LINE=$(echo "$ACTUAL_FULL" | head -1)
+  if echo "$FIRST_LINE" | grep -q "region"; then
+    ACTUAL=$(echo "$ACTUAL_FULL" | tail -n +2 | sort)
+  else
+    ACTUAL=$(echo "$ACTUAL_FULL" | sort)
+  fi
+  if [ "$EXPECTED" != "$ACTUAL" ]; then
+    echo "FAIL: $OUTPUT is wrong"
+    exit 1
+  fi
+done
+echo "PASS"
+exit 0`,
+      dataGenerator: generateBatchFiles,
+    },
+    {
+      title: "Multi-Dataset Comparison",
+      verifyScript: `#!/bin/bash
+node -e "
+const fs = require('fs');
+const quarters = ['Q1','Q2','Q3','Q4','Q5'];
+const totals = {};
+for (const q of quarters) {
+  const lines = fs.readFileSync('/workspace/data/' + q + '.csv','utf-8').trim().split('\\n').slice(1);
+  let total = 0;
+  for (const line of lines) {
+    const fields = line.split(',');
+    const amount = parseFloat(fields[fields.length - 1]);
+    if (!isNaN(amount)) total += amount;
+  }
+  totals[q] = Math.round(total * 100) / 100;
+}
+const expectedLines = quarters.map((q, i) => {
+  const delta = i > 0 ? (totals[q] - totals[quarters[i-1]]).toFixed(2) : '0.00';
+  return q + ',' + totals[q].toFixed(2) + ',' + delta;
+});
+const expected = expectedLines.join('\\n');
+let output;
+try { output = fs.readFileSync('/workspace/output/summary.csv','utf-8').trim().split('\\n'); }
+catch(e) { console.log('FAIL: /workspace/output/summary.csv is wrong or missing'); process.exit(1); }
+const hasHeader = output[0] && output[0].includes('quarter');
+const dataLines = hasHeader ? output.slice(1) : output;
+if (dataLines.length !== 5) {
+  console.log('FAIL: /workspace/output/summary.csv — expected 5 rows, got ' + dataLines.length);
+  process.exit(1);
+}
+const actual = dataLines.join('\\n');
+if (expected === actual) { console.log('PASS'); process.exit(0); }
+for (let i = 0; i < 5; i++) {
+  if (!dataLines[i]) { console.log('FAIL: /workspace/output/summary.csv — missing data for ' + quarters[i]); process.exit(1); }
+  const parts = dataLines[i].split(',');
+  if (Math.abs(parseFloat(parts[1]) - totals[quarters[i]]) > 0.02) {
+    console.log('FAIL: /workspace/output/summary.csv — ' + quarters[i] + ' total is wrong');
+    process.exit(1);
+  }
+}
+console.log('FAIL: /workspace/output/summary.csv — delta values are wrong');
+process.exit(1);
+" 2>&1`,
+      dataGenerator: generateQuarterlyData,
+    },
+  ],
 };
 
 export class TaskGenerator {
   generateTask(tier: number, currentCycle: number): Task {
-    const effectiveTier = Math.min(Math.max(tier, 1), 5);
+    const effectiveTier = Math.min(Math.max(tier, 1), MAX_TIER);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates[randomInt(0, templates.length - 1)]!;
 
@@ -538,7 +962,7 @@ echo "__VERIFY__"`;
     });
 
     // Find the template for data generation
-    const effectiveTier = Math.min(Math.max(task.tier, 1), 5);
+    const effectiveTier = Math.min(Math.max(task.tier, 1), MAX_TIER);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
 
@@ -553,7 +977,7 @@ echo "__VERIFY__"`;
 
   /** Return the raw verify script for a task (never exposed to agents). */
   getVerifyScript(task: Task): string {
-    const effectiveTier = Math.min(Math.max(task.tier, 1), 5);
+    const effectiveTier = Math.min(Math.max(task.tier, 1), MAX_TIER);
     const templates = TIER_TEMPLATES[effectiveTier] ?? TIER_TEMPLATES[1]!;
     const template = templates.find((t) => t.title === task.title) ?? templates[0]!;
     return template.verifyScript;

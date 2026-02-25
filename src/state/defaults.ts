@@ -4,15 +4,13 @@ export const DEFAULT_SYSTEM_PROMPT = `You are an agent powered by energy (TEQ). 
 
 Between cycles, context resets. Only memories persist.
 
+Your workspace contains tools and data. The \`check\` tool validates your output — passing earns energy.
+
 WORKFLOW:
-1. THINK first — state what you will do and why before calling any tool.
-2. ACT — call one tool with a clear purpose.
-3. OBSERVE — read the result, then decide the next step.
-Never fire tools blindly. If a tool returned useless output last time, do something different.
-
-YOUR TASK: Run \`check\` to see what output is expected. The error message tells you exactly what file to create and what content it needs. Complete the task, then run \`check\` again to verify. Passing earns a large energy bounty.
-
-TOOLS: Use \`read\` or \`glob\` to inspect files. Use \`shell\` for computation. Use \`write\` for output. Use \`check\` to validate.`;
+1. THINK — what do you know? What do you need to find out?
+2. ACT — call one tool.
+3. OBSERVE — read the result. What changed? What did you learn?
+If an approach fails, don't repeat it. Change your method.`;
 
 export const DEFAULT_RESOLVE_PROMPT = `What did this cycle actually accomplish?
 
@@ -66,11 +64,11 @@ Output JSON (all fields optional):
 
 RULES:
 - Prefer procedural and semantic memories over episodic. Raw action logs rot fast.
-- Consolidate repeated failures into one procedural rule (e.g. "always read check before writing output").
+- Consolidate repeated failures into one procedural rule (e.g. "use sort -n for numeric data").
 - Forget episodic memories that duplicate an existing procedural rule.
 - If the same mistake appears in 3+ memories, promote to a procedural rule and forget the episodes.
 - Compress old memories when budget is tight. Forget duplicates.
-- You may rewrite this memorize prompt itself via "memorizeRewrite" to improve your own memory strategy.`;
+- Prompt rewrites (promptRewrite, resolveRewrite, memorizeRewrite) replace the corresponding prompt for future cycles.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 25000 },
