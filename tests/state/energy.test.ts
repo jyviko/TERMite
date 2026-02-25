@@ -96,10 +96,12 @@ describe("EnergyLedger", () => {
     expect(e.active).toBe(false);
   });
 
-  it("active is false when spent >= budget", () => {
+  it("active depends on reserves, not budget (agents earn their way)", () => {
+    // Budget is a starting allocation, not a lifetime cap.
+    // Agents that earn income keep running as long as reserves > 0.
     const e = new EnergyLedger({ budget: 100, reserves: 10000, capacity: 10000 });
-    e.burn(HAIKU, usage(100)); // costs 500, spent=500 >= budget=100
-    expect(e.active).toBe(false);
+    e.burn(HAIKU, usage(100)); // costs 500, spent=500 >= budget=100, but reserves=9500
+    expect(e.active).toBe(true); // still active — has reserves
   });
 
   it("baseCost computation matches formula", () => {
