@@ -1,6 +1,10 @@
 #!/bin/bash
 # description: create_tool - Create a reusable tool. Input: name|description|script body. Available next cycle.
-IFS='|' read -r name desc body <<< "$*"
+input="$*"
+name="${input%%|*}"
+rest="${input#*|}"
+desc="${rest%%|*}"
+body="${rest#*|}"
 name=$(echo "$name" | tr -cd 'a-zA-Z0-9_-')
 if [ -z "$name" ] || [ -z "$desc" ] || [ -z "$body" ]; then
   echo "ERROR: format is name|description|script body"
