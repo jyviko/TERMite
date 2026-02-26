@@ -20,7 +20,7 @@ export class ConfigIterator {
 
     const formattedTaskHistory = params.taskHistory
       .slice(-10)
-      .map((q) => `tier ${q.tier}: ${q.passed ? "PASS" : "FAIL"} in ${q.cyclesTaken} cycles`)
+      .map((q) => `level ${q.tier}: ${q.passed ? "PASS" : "FAIL"} in ${q.cyclesTaken} cycles`)
       .join("\n");
 
     const prompt = `You are iterating an agent's configuration for the next version.
@@ -31,7 +31,7 @@ ${params.sourceConfig.systemPrompt}
 Source agent's key memories (sorted by importance):
 ${formattedMemories || "(none)"}
 
-Task history:
+Challenge history:
 ${formattedTaskHistory || "(none)"}
 
 Create an improved system prompt for the next version. It should:

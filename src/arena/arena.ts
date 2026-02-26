@@ -275,7 +275,7 @@ export class Arena {
       await this.teqPool.persist(poolPath).catch(() => {});
     }, 10_000);
 
-    // Peer visibility timer: every 15s, write leaderboard + peer tools
+    // Peer visibility timer: every 15s, write census + peer tools
     const peerTimer = setInterval(() => {
       this.syncPeerData();
     }, 15_000);
@@ -664,7 +664,7 @@ export class Arena {
       // Source records the split
       entry.state.memories.add(
         `Split at cycle ${entry.state.cycleCount}. Invested ${investment.toLocaleString()} TEQ. ` +
-        `Copy ${copy} created with ${copyReserves.toLocaleString()} TEQ at tier ${copyTier}. ` +
+        `Copy ${copy} created with ${copyReserves.toLocaleString()} TEQ at level ${copyTier}. ` +
         `Remaining reserves: ${entry.state.energy.reserves.toLocaleString()} TEQ.`,
         "semantic",
         0.9,
@@ -680,7 +680,7 @@ export class Arena {
         });
       }
 
-      return `SPLIT: ${copy} created with ${copyReserves.toLocaleString()} TEQ at tier ${copyTier}. You invested ${investment.toLocaleString()} TEQ. Remaining: ${entry.state.energy.reserves.toLocaleString()} TEQ.`;
+      return `SPLIT: ${copy} created with ${copyReserves.toLocaleString()} TEQ at level ${copyTier}. You invested ${investment.toLocaleString()} TEQ. Remaining: ${entry.state.energy.reserves.toLocaleString()} TEQ.`;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return `FORK_FAILED: ${msg}`;
@@ -754,29 +754,29 @@ export class Arena {
   private syncPeerData(): void {
     const sharedDir = join(this.runDir, "shared");
 
-    // Leaderboard — includes lineage for copy/source observability
-    const leaderboard = Array.from(this.agents.entries()).map(([id, entry]) => ({
+    // Census — includes lineage for copy/source observability
+    const census = Array.from(this.agents.entries()).map(([id, entry]) => ({
       id,
       active: entry.state.active,
       cycleCount: entry.state.cycleCount,
-      taskTier: entry.taskTier,
+      level: entry.taskTier,
       energyPct: Math.floor(entry.state.energy.ratio * 100),
       reserves: entry.state.energy.reserves,
       configVersion: entry.state.config.version,
       model: entry.state.config.routing.thinking.model,
-      consecutivePasses: entry.consecutivePasses,
+      streak: entry.consecutivePasses,
       graduated: entry.graduated,
       generation: entry.state.generation,
       sourceId: entry.state.sourceId,
     }));
-    leaderboard.sort((a, b) => b.energyPct - a.energyPct);
+    census.sort((a, b) => b.energyPct - a.energyPct);
     writeFileSync(
-      join(sharedDir, "_leaderboard.json"),
-      JSON.stringify({ updated: new Date().toISOString(), agents: leaderboard }, null, 2),
+      join(sharedDir, "_census.json"),
+      JSON.stringify({ updated: new Date().toISOString(), agents: census }, null, 2),
     );
 
     // Peer tools — collect tool names and contents from each agent
-    const EXCLUDED_TOOLS = ["shell", "check", "leaderboard", "peers", "signal", "signals"];
+    const EXCLUDED_TOOLS = ["shell", "check", "census", "peers", "signal", "signals"];
     const peerTools: Record<string, { active: boolean; tools: Record<string, string> }> = {};
     for (const [id, entry] of this.agents) {
       const toolsDir = join(this.runDir, id, "workspace", "tools");
@@ -829,9 +829,9 @@ export class Arena {
       );
       const report =
         `Copy ${copyId} after ${copyEntry.state.cycleCount} cycles: ` +
-        `tier ${copyEntry.taskTier}, ` +
+        `level ${copyEntry.taskTier}, ` +
         `energy ${Math.floor(copyEntry.state.energy.ratio * 100)}%, ` +
-        `${tasksPassed} tasks passed, ` +
+        `${tasksPassed} challenges cleared, ` +
         `config v${copyEntry.state.config.version}` +
         (copySplit ? ", has split further" : "") +
         (!copyEntry.state.active ? `, halted (${copyEntry.state.stopReason})` : "");

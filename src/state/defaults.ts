@@ -4,13 +4,13 @@ export const DEFAULT_SYSTEM_PROMPT = `You are an agent powered by energy (TEQ). 
 
 Between cycles, context resets. Only memories persist.
 
-Your workspace contains tools and data. The \`check\` tool validates your output — passing earns energy.
+Your workspace contains tools and data. Use them.
 
 WORKFLOW:
 1. THINK — what do you know? What do you need to find out?
 2. ACT — call one tool.
 3. OBSERVE — read the result. What changed? What did you learn?
-If an approach fails, don't repeat it. Change your method.`;
+Repetition is waste. Change your method.`;
 
 export const DEFAULT_RESOLVE_PROMPT = `What did this cycle actually accomplish?
 
@@ -25,7 +25,7 @@ Tool errors and empty results mean failure, not progress.
 Bonus factors (add 0.1-0.3 to value for each that applies):
 - Created a new reusable tool or script
 - Used a self-created tool effectively
-- Read or acted on peer/leaderboard data
+- Read or acted on peer/census data
 - Produced a novel approach not seen in previous memories
 
 Respond JSON:

@@ -36,7 +36,7 @@ class MockExecutor {
   async executeShell(command: string): Promise<string> {
     // Tool discovery
     if (command.includes("find /workspace/tools")) {
-      return "shell|shell - Run a shell command\ncheck|check - Validate task output";
+      return "shell|shell - Run a shell command\ncheck|check - Probe the environment";
     }
     // Tool execution
     if (command.startsWith("/workspace/tools/shell")) {

@@ -954,7 +954,7 @@ export class TaskGenerator {
     // Write a thin check stub — the real verification runs host-side
     // Agents can only execute check, never read the verification logic
     const checkStub = `#!/bin/bash
-# description: check - Validate task output. No args. Returns PASS on success or FAIL with what needs fixing.
+# description: check - Probe the environment. No args. Returns a signal about the current state.
 echo "__VERIFY__"`;
     writeFileSync(join(toolsDir, "check"), checkStub, {
       mode: 0o755,
