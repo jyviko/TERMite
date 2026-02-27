@@ -1,11 +1,9 @@
 import type { Outcome } from "../types/index.js";
-import type { LLM, TokenUsage } from "../llm/index.js";
+import { ZERO_USAGE, type LLM, type TokenUsage } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
 import type { Config } from "../state/config.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 import { TIER_EXPECTED_COST } from "../arena/task-generator.js";
-
-const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
 export interface ResolveResult {
   outcome: Outcome;
@@ -16,7 +14,7 @@ export interface ResolveResult {
   usage: TokenUsage;
 }
 
-const FALLBACK_RESULT: ResolveResult = {
+const RESOLVE_ERROR_DEFAULT: ResolveResult = {
   outcome: "uncertain",
   lesson: "",
   goalRelevance: 0,
@@ -51,7 +49,7 @@ export class Resolver {
 
       return { ...parseResolveResponse(text), usage: response.usage };
     } catch {
-      return FALLBACK_RESULT;
+      return RESOLVE_ERROR_DEFAULT;
     }
   }
 }
@@ -59,7 +57,7 @@ export class Resolver {
 function parseResolveResponse(text: string): Omit<ResolveResult, "usage"> {
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return FALLBACK_RESULT;
+    if (!jsonMatch) return RESOLVE_ERROR_DEFAULT;
 
     const parsed = JSON.parse(jsonMatch[0]);
     return {
@@ -70,7 +68,7 @@ function parseResolveResponse(text: string): Omit<ResolveResult, "usage"> {
       goalComplete: parsed.goalComplete === true || parsed.goal_complete === true,
     };
   } catch {
-    return FALLBACK_RESULT;
+    return RESOLVE_ERROR_DEFAULT;
   }
 }
 
@@ -105,6 +103,18 @@ export function lookupBountyMultiplier(model: string): number {
   return 1.0;
 }
 
+// Base income grants — credited directly, never drawn from pool.
+const BASE_SUCCESS_INCOME = 5000;
+const BASE_PARTIAL_INCOME = 2000;
+const MAX_RELEVANCE_INCOME = 2500;
+
+/**
+ * Compute per-cycle income: base grants (direct) + bounty (from pool).
+ *
+ * Base income rewards outcome quality and goal relevance — granted directly.
+ * Bounty is the task reward withdrawn from the shared TEQ pool, scaled by
+ * model cost multiplier and efficiency ratio.
+ */
 export async function computeIncome(
   goalRelevance: number,
   outcome: Outcome,
@@ -120,13 +130,13 @@ export async function computeIncome(
   // Base income — granted directly, not from pool
   let base = 0;
   if (outcome === "success") {
-    base += 5000;
-    sources.push("success:5000");
+    base += BASE_SUCCESS_INCOME;
+    sources.push(`success:${BASE_SUCCESS_INCOME}`);
   } else if (outcome === "partial") {
-    base += 2000;
-    sources.push("partial:2000");
+    base += BASE_PARTIAL_INCOME;
+    sources.push(`partial:${BASE_PARTIAL_INCOME}`);
   }
-  const relevanceIncome = Math.floor(2500 * goalRelevance);
+  const relevanceIncome = Math.floor(MAX_RELEVANCE_INCOME * goalRelevance);
   if (relevanceIncome > 0) {
     base += relevanceIncome;
     sources.push(`relevance:${relevanceIncome}`);

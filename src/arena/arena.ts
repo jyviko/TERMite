@@ -232,7 +232,14 @@ export class Arena {
       const statePath = join(this.runDir, dir, "state.json");
       const entryPath = join(this.runDir, dir, "entry.json");
 
-      if (!existsSync(statePath)) continue;
+      if (!existsSync(statePath) || !existsSync(entryPath)) continue;
+
+      let entryData: ArenaEntryData;
+      try {
+        entryData = JSON.parse(readFileSync(entryPath, "utf-8"));
+      } catch {
+        continue; // Corrupted entry.json — skip agent
+      }
 
       const state = await AgentStateManager.load(statePath);
 
@@ -250,23 +257,6 @@ export class Arena {
       state.active = true;
       state.stopReason = null;
       state.mode = "active";
-
-      // Load arena entry metadata
-      let entryData: ArenaEntryData = {
-        taskTier: 1,
-        currentTask: null,
-        taskHistory: [],
-        consecutivePasses: 0,
-        consecutiveFails: 0,
-        graduated: false,
-      };
-      if (existsSync(entryPath)) {
-        try {
-          entryData = JSON.parse(readFileSync(entryPath, "utf-8"));
-        } catch {
-          // Corrupted entry.json — use defaults
-        }
-      }
 
       candidates.push({ dir, state, entryData });
     }
@@ -395,19 +385,9 @@ export class Arena {
     const saves = Array.from(this.agents.entries()).map(async ([id, entry]) => {
       try {
         await entry.state.save(join(this.runDir, id, "state.json"));
-        // Persist arena-level entry metadata for resume
-        const entryData: ArenaEntryData = {
-          taskTier: entry.taskTier,
-          currentTask: entry.currentTask,
-          taskHistory: entry.taskHistory,
-          consecutivePasses: entry.consecutivePasses,
-          consecutiveFails: entry.consecutiveFails,
-          graduated: entry.graduated,
-          graduationData: entry.graduationData,
-        };
         writeFileSync(
           join(this.runDir, id, "entry.json"),
-          JSON.stringify(entryData, null, 2),
+          JSON.stringify(this.buildEntryData(entry), null, 2),
         );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -559,16 +539,7 @@ export class Arena {
 
       // Preserve workspace + arena metadata (stopped agent)
       await entry.state.save(join(this.runDir, id, "state.json"));
-      const entryData: ArenaEntryData = {
-        taskTier: entry.taskTier,
-        currentTask: entry.currentTask,
-        taskHistory: entry.taskHistory,
-        consecutivePasses: entry.consecutivePasses,
-        consecutiveFails: entry.consecutiveFails,
-        graduated: entry.graduated,
-        graduationData: entry.graduationData,
-      };
-      writeFileSync(join(this.runDir, id, "entry.json"), JSON.stringify(entryData, null, 2));
+      writeFileSync(join(this.runDir, id, "entry.json"), JSON.stringify(this.buildEntryData(entry), null, 2));
       await entry.executor.stop().catch(() => {});
       this.calibratePool();
     }
@@ -581,7 +552,7 @@ export class Arena {
 
     // Verify using host-side script (agent never sees this)
     const verifyScript = this.taskGenerator.getVerifyScript(task);
-    const result = await this.taskVerifier.verify(task, entry.executor, verifyScript);
+    const result = await this.taskVerifier.verify(entry.executor, verifyScript);
     if (!result.passed) return;
 
     // Credit energy
@@ -911,18 +882,9 @@ export class Arena {
     for (const [id, entry] of this.agents) {
       if (!entry.state.active) continue;
       try {
-        const entryData: ArenaEntryData = {
-          taskTier: entry.taskTier,
-          currentTask: entry.currentTask,
-          taskHistory: entry.taskHistory,
-          consecutivePasses: entry.consecutivePasses,
-          consecutiveFails: entry.consecutiveFails,
-          graduated: entry.graduated,
-          graduationData: entry.graduationData,
-        };
         writeFileSync(
           join(this.runDir, id, "entry.json"),
-          JSON.stringify(entryData, null, 2),
+          JSON.stringify(this.buildEntryData(entry), null, 2),
         );
       } catch {
         // Non-critical — will retry next sync
@@ -962,6 +924,18 @@ export class Arena {
 
       console.log(`[ARENA] Split report: ${sourceId} ← ${copyId} (${copyEntry.state.cycleCount} cycles)`);
     }
+  }
+
+  private buildEntryData(entry: AgentEntry): ArenaEntryData {
+    return {
+      taskTier: entry.taskTier,
+      currentTask: entry.currentTask,
+      taskHistory: entry.taskHistory,
+      consecutivePasses: entry.consecutivePasses,
+      consecutiveFails: entry.consecutiveFails,
+      graduated: entry.graduated,
+      graduationData: entry.graduationData,
+    };
   }
 
   private logEvent(id: string, mode: string, event: AgentEvent): void {

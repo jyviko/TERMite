@@ -49,8 +49,8 @@ export class AgentStateMachine {
   private signalHandler: ((message: string) => Promise<string>) | null = null;
 
   // Current cycle
-  private cur = freshCycle();
-  private lastToolCount = 0;
+  private cycleCtx = freshCycle();
+  private availableToolCount = 0;
 
   constructor(
     llm: LLM,
@@ -72,7 +72,7 @@ export class AgentStateMachine {
       this.state.energy.burnBaseCost();
       if (!this.state.checkVitalSigns()) break;
 
-      this.cur = freshCycle();
+      this.cycleCtx = freshCycle();
       yield* this.cycle();
       yield* this.finalizeCycle();
       await this.state.save(this.savePath);
@@ -105,8 +105,8 @@ export class AgentStateMachine {
     }
 
     // Update cycle context from resolve
-    this.cur.outcome = resolveResult.outcome;
-    this.cur.relevance = resolveResult.goalRelevance;
+    this.cycleCtx.outcome = resolveResult.outcome;
+    this.cycleCtx.relevance = resolveResult.goalRelevance;
 
     // 2. Store cycle as user/agent memory pair (SHORT TERM — accumulates)
     const context = `Cycle ${this.state.cycleCount}. Goal: ${goal}. Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`;
@@ -124,12 +124,12 @@ export class AgentStateMachine {
       this.teqPool,
       this.state.energy.currentCycleCost,
       this.taskTier ?? undefined,
-      this.cur.model,
+      this.cycleCtx.model,
       this.state.id,
     );
     if (income.base > 0) this.state.energy.credit(income.base);
     if (income.bounty > 0) this.state.energy.creditFromPool(income.bounty);
-    this.cur.sources.push(...income.sources);
+    this.cycleCtx.sources.push(...income.sources);
 
     // Clear one-time task reward
     this.taskReward = null;
@@ -160,23 +160,23 @@ export class AgentStateMachine {
     if (tokensSaved > 0) {
       const bonus = Math.floor(tokensSaved * 2);
       this.state.energy.credit(bonus);
-      this.cur.sources.push(`consolidation:${bonus}`);
+      this.cycleCtx.sources.push(`consolidation:${bonus}`);
     }
 
     // 6. End cycle — push CycleRecord to history (after memorize so its cost is included)
     this.state.energy.endCycle(
       this.state.cycleCount,
-      this.cur.outcome,
-      this.cur.sources.join(", "),
-      this.cur.relevance,
-      this.cur.model,
+      this.cycleCtx.outcome,
+      this.cycleCtx.sources.join(", "),
+      this.cycleCtx.relevance,
+      this.cycleCtx.model,
     );
 
     // 6b. Append to metrics.jsonl — SSoT for per-cycle history
     this.appendMetrics();
 
     // 7. Housekeeping
-    this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.lastToolCount);
+    this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.availableToolCount);
     this.state.drives.update(
       this.state.energy,
       this.state.memories.memories,
@@ -190,11 +190,11 @@ export class AgentStateMachine {
 
   private async *cycle(): AsyncGenerator<AgentEvent> {
     const route = this.state.config.routing.thinking;
-    this.cur.model = route.model;
+    this.cycleCtx.model = route.model;
 
     const tools = await this.buildTools();
     const toolNames = tools.map((t) => t.name);
-    this.lastToolCount = tools.length;
+    this.availableToolCount = tools.length;
     yield { type: "tools_available", tools: toolNames } as AgentEvent;
 
     const executor: ToolExecutor = async (name, input) => {
@@ -241,7 +241,7 @@ export class AgentStateMachine {
   private trackEvent(event: AgentEvent): AgentEvent | null {
     switch (event.type) {
       case "tool_start": {
-        this.cur.actions.push(`→ ${event.name}`);
+        this.cycleCtx.actions.push(`→ ${event.name}`);
         return { type: "phase_change", phase: "executing" as const };
       }
       case "tool_use": {
@@ -249,22 +249,22 @@ export class AgentStateMachine {
         const raw = event.input?.input;
         const inputStr = typeof raw === "string" ? raw.slice(0, 200) : "";
         if (inputStr) {
-          const lastIdx = this.cur.actions.length - 1;
-          if (lastIdx >= 0 && this.cur.actions[lastIdx]!.startsWith("→")) {
-            this.cur.actions[lastIdx] = `→ ${event.name}(${inputStr})`;
+          const lastIdx = this.cycleCtx.actions.length - 1;
+          if (lastIdx >= 0 && this.cycleCtx.actions[lastIdx]!.startsWith("→")) {
+            this.cycleCtx.actions[lastIdx] = `→ ${event.name}(${inputStr})`;
           }
         }
         return null;
       }
       case "tool_result":
-        this.cur.actions.push(`← ${event.name}: ${event.result.slice(0, 300)}`);
+        this.cycleCtx.actions.push(`← ${event.name}: ${event.result.slice(0, 300)}`);
 
         return null;
       case "text":
-        this.cur.actions.push(event.text.slice(0, 300));
+        this.cycleCtx.actions.push(event.text.slice(0, 300));
         return null;
       case "usage":
-        this.state.energy.burn(this.cur.model, event);
+        this.state.energy.burn(this.cycleCtx.model, event);
         return null;
       default:
         return null;
@@ -364,8 +364,8 @@ export class AgentStateMachine {
   }
 
   private summarizeRecentActions(): string {
-    if (this.cur.actions.length === 0) return "(no actions taken)";
-    return this.cur.actions.slice(-30).join("\n");
+    if (this.cycleCtx.actions.length === 0) return "(no actions taken)";
+    return this.cycleCtx.actions.slice(-30).join("\n");
   }
 
   /** Derive the metrics.jsonl path from the save path (sibling file). */

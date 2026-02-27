@@ -7,6 +7,8 @@ export interface TokenUsage {
   cacheRead: number;
 }
 
+export const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
+
 export interface LLMResponse {
   content: Anthropic.ContentBlock[];
   stopReason: "end_turn" | "tool_use" | "max_tokens";
@@ -17,6 +19,7 @@ export interface LLMConfig {
   apiKey?: string;
   baseUrl?: string;
   timeout?: number;
+  maxConcurrency?: number;
 }
 
 export interface ChatParams {
@@ -28,24 +31,43 @@ export interface ChatParams {
   temperature?: number;
 }
 
-const MAX_RETRIES = 3;
-const RETRY_DELAYS = [1000, 2000, 4000];
+const MAX_RETRIES = 5;
+const BASE_RETRY_MS = 1000;
+const MAX_RETRY_MS = 60_000;
 
 function isRetryable(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+/**
+ * Concurrency-limited LLM client with adaptive rate limiting.
+ *
+ * - Caps in-flight requests via a semaphore (default 10).
+ * - On 429, reads `retry-after` header; if absent uses exponential backoff
+ *   with jitter. All waiters are paused during a 429 cooldown so only one
+ *   retry fires at a time.
+ * - On 529 (overloaded), applies the same backoff logic.
+ */
 export class LLM {
   private client: Anthropic;
+
+  // Concurrency semaphore
+  private maxConcurrency: number;
+  private inflight = 0;
+  private waitQueue: (() => void)[] = [];
+
+  // Global 429 cooldown — when set, all new requests wait until this time
+  private cooldownUntil = 0;
 
   constructor(config: LLMConfig = {}) {
     const baseURL = config.baseUrl ?? process.env.ANTHROPIC_BASE_URL;
     console.log(`[LLM] baseURL=${baseURL ?? "(default)"}`);
     this.client = new Anthropic({
-      defaultHeaders: { 'X-Api-Key': null },
+      defaultHeaders: { "X-Api-Key": null },
       baseURL,
       timeout: config.timeout ?? 120_000,
     });
+    this.maxConcurrency = config.maxConcurrency ?? 10;
   }
 
   async chat(params: ChatParams): Promise<LLMResponse> {
@@ -56,7 +78,24 @@ export class LLM {
     const tools = params.tools ? this.withCacheControl(params.tools) : undefined;
     const messages = this.withMessageCacheBreakpoint(params.messages);
 
+    await this.acquireSlot();
+    try {
+      return await this.chatWithRetry(systemBlocks, messages, tools, params);
+    } finally {
+      this.releaseSlot();
+    }
+  }
+
+  private async chatWithRetry(
+    systemBlocks: Anthropic.TextBlockParam[],
+    messages: Anthropic.MessageParam[],
+    tools: Anthropic.Tool[] | undefined,
+    params: ChatParams,
+  ): Promise<LLMResponse> {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      // Respect global cooldown before each attempt
+      await this.waitForCooldown();
+
       try {
         const response = await this.client.messages.create({
           model: params.model,
@@ -82,7 +121,14 @@ export class LLM {
         if (err instanceof Anthropic.APIError) {
           if (err.status === 401 || err.status === 400) throw err;
           if (isRetryable(err.status) && attempt < MAX_RETRIES - 1) {
-            await sleep(RETRY_DELAYS[attempt]!);
+            const waitMs = this.computeBackoff(err, attempt);
+            // Set global cooldown so other concurrent requests also back off
+            this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + waitMs);
+            console.log(
+              `[LLM] ${err.status} on attempt ${attempt + 1}/${MAX_RETRIES}, ` +
+              `backing off ${Math.round(waitMs / 1000)}s (inflight: ${this.inflight}/${this.maxConcurrency})`,
+            );
+            await sleep(waitMs);
             continue;
           }
         }
@@ -90,6 +136,49 @@ export class LLM {
       }
     }
     throw new Error("LLM: max retries exhausted");
+  }
+
+  private computeBackoff(err: InstanceType<typeof Anthropic.APIError>, attempt: number): number {
+    // Check for retry-after header (Anthropic sends this on 429)
+    const retryAfter = err.headers?.get?.("retry-after") ?? undefined;
+    if (retryAfter) {
+      const seconds = parseFloat(retryAfter);
+      if (!isNaN(seconds) && seconds > 0) {
+        return Math.min(seconds * 1000, MAX_RETRY_MS);
+      }
+    }
+    // Exponential backoff with jitter: 1s, 2s, 4s, 8s, 16s + up to 1s jitter
+    const base = Math.min(BASE_RETRY_MS * Math.pow(2, attempt), MAX_RETRY_MS);
+    const jitter = Math.random() * 1000;
+    return base + jitter;
+  }
+
+  private async waitForCooldown(): Promise<void> {
+    const remaining = this.cooldownUntil - Date.now();
+    if (remaining > 0) {
+      await sleep(remaining);
+    }
+  }
+
+  // --- Concurrency semaphore ---
+
+  private acquireSlot(): Promise<void> {
+    if (this.inflight < this.maxConcurrency) {
+      this.inflight++;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.waitQueue.push(() => {
+        this.inflight++;
+        resolve();
+      });
+    });
+  }
+
+  private releaseSlot(): void {
+    this.inflight--;
+    const next = this.waitQueue.shift();
+    if (next) next();
   }
 
   /**

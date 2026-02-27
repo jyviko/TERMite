@@ -21,7 +21,7 @@ export interface LoopConfig {
 }
 
 const DEFAULT_MAX_ITERATIONS = 99;
-const MICRO_COMPACT_KEEP_LAST = 6;
+const TOOL_RESULT_RETENTION_COUNT = 6;
 
 export class AgenticLoop {
   constructor(private llm: LLM) {}
@@ -43,7 +43,7 @@ export class AgenticLoop {
       if (iteration > 0 && config.shouldStop?.()) break;
 
       // Micro-compact old tool results to manage context
-      microCompact(messages, MICRO_COMPACT_KEEP_LAST);
+      stubOldToolResults(messages, TOOL_RESULT_RETENTION_COUNT);
 
       let response: LLMResponse;
       try {
@@ -163,7 +163,7 @@ export class AgenticLoop {
  * Preserves tool_use_id (required by Anthropic API).
  * Never orphans tool results from their assistant message.
  */
-function microCompact(messages: Anthropic.MessageParam[], keepLast: number): void {
+function stubOldToolResults(messages: Anthropic.MessageParam[], keepLast: number): void {
   // Find all user messages that contain tool_result blocks
   const toolResultIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {

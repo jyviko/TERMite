@@ -1,10 +1,8 @@
 import type { MemoryType } from "../types/index.js";
-import type { LLM, TokenUsage } from "../llm/index.js";
+import { ZERO_USAGE, type LLM, type TokenUsage } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
 import type { Config } from "../state/config.js";
 import type { MemoryStore } from "../state/memory.js";
-
-const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
 // ── Operation types ─────────────────────────────────────────────────
 

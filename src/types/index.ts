@@ -11,6 +11,9 @@ export type DriveName = (typeof DRIVE_NAMES)[number];
 // Memory types
 export type MemoryType = "episodic" | "semantic" | "procedural";
 
+// Prompt phases (the three rewritable prompts)
+export type PromptPhase = "systemPrompt" | "resolvePrompt" | "memorizePrompt";
+
 export interface Drive {
   name: DriveName;
   level: number; // 0.0 - 1.0
@@ -81,7 +84,7 @@ export interface RoutingConfig {
 }
 
 export interface PromptRewrite {
-  phase: string;
+  phase: PromptPhase;
   oldPrompt: string;
   newPrompt: string;
   timestamp: number;

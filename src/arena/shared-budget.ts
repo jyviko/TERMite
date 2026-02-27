@@ -7,10 +7,6 @@ export class SharedBudget {
     this.spent = 0;
   }
 
-  spend(amount: number): void {
-    this.spent += amount;
-  }
-
   get available(): number {
     return Math.max(0, this.total - this.spent);
   }
