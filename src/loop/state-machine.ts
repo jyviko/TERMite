@@ -21,10 +21,11 @@ interface CycleContext {
   relevance: number;
   actions: string[];
   model: string;
+  memoryOps: string[];
 }
 
 function freshCycle(): CycleContext {
-  return { sources: [], outcome: null, relevance: 0, actions: [], model: "" };
+  return { sources: [], outcome: null, relevance: 0, actions: [], model: "", memoryOps: [] };
 }
 
 // ── State machine ───────────────────────────────────────────────────
@@ -51,6 +52,7 @@ export class AgentStateMachine {
   // Current cycle
   private cycleCtx = freshCycle();
   private availableToolCount = 0;
+  private lastTaskTier = 0;
 
   constructor(
     llm: LLM,
@@ -131,6 +133,9 @@ export class AgentStateMachine {
     if (income.bounty > 0) this.state.energy.creditFromPool(income.bounty);
     this.cycleCtx.sources.push(...income.sources);
 
+    // Capture tier for fingerprint before clearing
+    this.lastTaskTier = this.taskTier ?? this.lastTaskTier;
+
     // Clear one-time task reward
     this.taskReward = null;
     this.taskTier = null;
@@ -154,7 +159,7 @@ export class AgentStateMachine {
 
     // 5. Apply memory operations (compress, forget, consolidate, promptRewrite)
     const oldTokens = this.state.memories.totalTokenCost;
-    applyMemorizeOperations(memorizeResult.ops, this.state.memories, this.state.config);
+    this.cycleCtx.memoryOps = applyMemorizeOperations(memorizeResult.ops, this.state.memories, this.state.config);
     const newTokens = this.state.memories.totalTokenCost;
     const tokensSaved = oldTokens - newTokens;
     if (tokensSaved > 0) {
@@ -378,10 +383,34 @@ export class AgentStateMachine {
     const history = this.state.energy.cycleHistory;
     if (history.length === 0) return;
     const record = history[history.length - 1]!;
-    const line: CycleRecord & { agentId: string; reserves: number } = {
+
+    // Count memories by type for strategy fingerprint
+    const mems = this.state.memories.memories;
+    const memCounts = { episodic: 0, semantic: 0, procedural: 0 };
+    for (const m of mems) memCounts[m.type as keyof typeof memCounts]++;
+
+    const line = {
       ...record,
       agentId: this.state.id,
       reserves: this.state.energy.remaining,
+      fingerprint: {
+        memEpisodic: memCounts.episodic,
+        memSemantic: memCounts.semantic,
+        memProcedural: memCounts.procedural,
+        memTotalTokens: this.state.memories.totalTokenCost,
+        promptVersion: this.state.config.version,
+        toolCount: this.availableToolCount,
+        tier: this.lastTaskTier,
+        baseCost: this.state.energy.baseCost,
+        drives: {
+          explore: this.state.drives.drives.explore.level,
+          acquire: this.state.drives.drives.acquire.level,
+          grow: this.state.drives.drives.grow.level,
+          coordinate: this.state.drives.drives.coordinate.level,
+        },
+        generation: this.state.generation,
+      },
+      memoryOps: this.cycleCtx.memoryOps,
     };
     try {
       appendFileSync(this.metricsPath, JSON.stringify(line) + "\n");
