@@ -115,8 +115,12 @@ async function main() {
   console.log("  quit                 — exit\n");
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let closed = false;
+  rl.on("close", () => { closed = true; });
 
-  const prompt = () => rl.question("> ", async (input) => {
+  const prompt = () => {
+    if (closed) return;
+    rl.question("> ", async (input) => {
     const trimmed = input.trim();
     if (!trimmed || trimmed === "quit" || trimmed === "exit") {
       rl.close();
@@ -157,6 +161,7 @@ async function main() {
     console.log();
     prompt();
   });
+  };
 
   prompt();
 }
