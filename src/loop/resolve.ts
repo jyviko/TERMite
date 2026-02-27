@@ -3,7 +3,7 @@ import { ZERO_USAGE, type LLM, type TokenUsage } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
 import type { Config } from "../state/config.js";
 import type { TEQPool } from "../arena/teq-pool.js";
-import { TIER_EXPECTED_COST } from "../arena/task-generator.js";
+import { DIFFICULTY_EXPECTED_COST } from "../arena/challenge-generator.js";
 
 export interface ResolveResult {
   outcome: Outcome;
@@ -162,7 +162,7 @@ export async function computeIncome(
     // Efficiency bonus: amplify bounty for agents that use tools over in-context reasoning
     // Floor at 1.0 — never reduces bounty, only amplifies for efficient agents
     if (taskTier && cycleCost && cycleCost > 0) {
-      const expectedCost = TIER_EXPECTED_COST[taskTier] ?? cycleCost;
+      const expectedCost = DIFFICULTY_EXPECTED_COST[taskTier] ?? cycleCost;
       const efficiencyRatio = Math.max(1.0, Math.min(3.0, expectedCost / cycleCost));
       bountyRequested = Math.floor(bountyRequested * efficiencyRatio);
       sources.push(`efficiency:${efficiencyRatio.toFixed(2)}x`);

@@ -1,101 +1,112 @@
 import { describe, it, expect } from "vitest";
-import { TaskGenerator, TIER_EXPECTED_COST, TIER_REWARDS } from "../../src/arena/task-generator.js";
-import { mkdirSync, readFileSync, existsSync, rmSync, statSync } from "node:fs";
+import { ChallengeGenerator, DIFFICULTY_EXPECTED_COST, DIFFICULTY_REWARDS } from "../../src/arena/challenge-generator.js";
+import { ChallengePool } from "../../src/arena/challenge-pool.js";
+import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-describe("TaskGenerator", () => {
-  const gen = new TaskGenerator();
+describe("ChallengeGenerator", () => {
+  const gen = new ChallengeGenerator();
 
-  it("generates a tier 1 task", () => {
-    const task = gen.generateTask(1, 0);
-    expect(task.tier).toBe(1);
-    expect(task.id).toMatch(/^task-/);
-    expect(task.reward).toBeGreaterThan(0);
-    expect(task.deadlineCycles).toBeGreaterThan(0);
+  it("generates a difficulty 1 challenge", () => {
+    const result = gen.generate(1, 0);
+    expect(result.challenge.difficulty).toBe(1);
+    expect(result.challenge.id).toMatch(/^c-/);
+    expect(result.challenge.baseReward).toBeGreaterThan(0);
+    expect(result.challenge.expiresAtCycle).toBeGreaterThan(0);
+    expect(result.challenge.verifyScript).toBeTruthy();
+    expect(Object.keys(result.dataFiles).length).toBeGreaterThan(0);
   });
 
-  it("generates tasks at different tiers", () => {
-    for (const tier of [1, 2, 3, 4, 5, 6]) {
-      const task = gen.generateTask(tier, 0);
-      expect(task.tier).toBe(tier);
+  it("generates challenges at different difficulties", () => {
+    for (const diff of [1, 2, 3, 4, 5]) {
+      const result = gen.generate(diff, 0);
+      expect(result.challenge.difficulty).toBe(diff);
     }
   });
 
-  it("clamps tier to 6 maximum", () => {
-    const task = gen.generateTask(99, 0);
-    expect(task.tier).toBeLessThanOrEqual(6);
-    expect(task.tier).toBeGreaterThanOrEqual(1);
+  it("clamps difficulty to valid range", () => {
+    const high = gen.generate(99, 0);
+    expect(high.challenge.difficulty).toBeLessThanOrEqual(5);
+    expect(high.challenge.difficulty).toBeGreaterThanOrEqual(1);
+
+    const low = gen.generate(-5, 0);
+    expect(low.challenge.difficulty).toBe(1);
   });
 
-  it("clamps tier to 1 minimum", () => {
-    const task = gen.generateTask(-5, 0);
-    expect(task.tier).toBe(1);
+  it("rewards scale with difficulty", () => {
+    expect(DIFFICULTY_REWARDS[3]!).toBeGreaterThan(DIFFICULTY_REWARDS[1]!);
+    expect(DIFFICULTY_REWARDS[5]!).toBeGreaterThan(DIFFICULTY_REWARDS[3]!);
   });
 
-  it("writes task to workspace correctly", () => {
-    const workspace = join(tmpdir(), `termite-test-${Date.now()}`);
-    mkdirSync(workspace, { recursive: true });
-
-    const task = gen.generateTask(1, 0);
-    gen.writeTaskToWorkspace(task, workspace);
-
-    expect(existsSync(join(workspace, "tools", "check"))).toBe(true);
-    expect(existsSync(join(workspace, "tools", "shell"))).toBe(true);
-    expect(existsSync(join(workspace, "data"))).toBe(true);
-    expect(task.id).toBeTruthy();
-
-    // Cleanup
-    rmSync(workspace, { recursive: true, force: true });
-  });
-
-  it("rewards scale with tier", () => {
-    const t1 = gen.generateTask(1, 0);
-    const t3 = gen.generateTask(3, 0);
-    const t5 = gen.generateTask(5, 0);
-    const t6 = gen.generateTask(6, 0);
-    expect(t3.reward).toBeGreaterThan(t1.reward);
-    expect(t5.reward).toBeGreaterThan(t3.reward);
-    expect(t6.reward).toBeGreaterThan(t5.reward);
-  });
-
-  it("TIER_EXPECTED_COST has entries for tiers 1-6", () => {
-    for (const tier of [1, 2, 3, 4, 5, 6]) {
-      expect(TIER_EXPECTED_COST[tier]).toBeDefined();
-      expect(TIER_EXPECTED_COST[tier]).toBeGreaterThan(0);
+  it("DIFFICULTY_EXPECTED_COST has entries for difficulties 1-5", () => {
+    for (const diff of [1, 2, 3, 4, 5]) {
+      expect(DIFFICULTY_EXPECTED_COST[diff]).toBeDefined();
+      expect(DIFFICULTY_EXPECTED_COST[diff]).toBeGreaterThan(0);
     }
-    expect(TIER_EXPECTED_COST[7]).toBeUndefined();
   });
 
-  it("TIER_REWARDS has entries for tiers 1-6", () => {
-    for (const tier of [1, 2, 3, 4, 5, 6]) {
-      expect(TIER_REWARDS[tier]).toBeDefined();
-      expect(TIER_REWARDS[tier]).toBeGreaterThan(0);
+  it("DIFFICULTY_REWARDS has entries for difficulties 1-5", () => {
+    for (const diff of [1, 2, 3, 4, 5]) {
+      expect(DIFFICULTY_REWARDS[diff]).toBeDefined();
+      expect(DIFFICULTY_REWARDS[diff]).toBeGreaterThan(0);
     }
-    expect(TIER_REWARDS[7]).toBeUndefined();
   });
 
-  it("data generators produce files of expected sizes", () => {
-    const workspace = join(tmpdir(), `termite-test-data-${Date.now()}`);
-    mkdirSync(workspace, { recursive: true });
-
-    // Tier 2 task with data should produce large files
-    // Run multiple times to cover different task types
-    for (let i = 0; i < 3; i++) {
-      const task = gen.generateTask(2, 0);
-      gen.writeTaskToWorkspace(task, workspace);
-
-      if (task.dataFiles && task.dataFiles.length > 0) {
-        for (const file of task.dataFiles) {
-          const filePath = join(workspace, "data", file);
-          expect(existsSync(filePath)).toBe(true);
-          const stat = statSync(filePath);
-          // Tier 2 data should be substantial (at least 50KB)
-          expect(stat.size).toBeGreaterThan(50_000);
-        }
-      }
+  it("generateWeighted produces valid challenges", () => {
+    // Run multiple times to exercise distribution
+    for (let i = 0; i < 10; i++) {
+      const result = gen.generateWeighted(i);
+      expect(result.challenge.difficulty).toBeGreaterThanOrEqual(1);
+      expect(result.challenge.difficulty).toBeLessThanOrEqual(5);
+      expect(result.challenge.baseReward).toBeGreaterThan(0);
     }
+  });
+});
 
-    rmSync(workspace, { recursive: true, force: true });
+describe("ChallengePool", () => {
+  it("refresh populates pool to target count", () => {
+    const sharedDir = join(tmpdir(), `termite-pool-test-${Date.now()}`);
+    mkdirSync(join(sharedDir, "challenges"), { recursive: true });
+    const pool = new ChallengePool(sharedDir, new ChallengeGenerator());
+
+    pool.refresh(0, 4); // 3 + floor(sqrt(4)) = 5
+    expect(pool.size).toBe(5);
+
+    rmSync(sharedDir, { recursive: true, force: true });
+  });
+
+  it("scan returns formatted challenge list", () => {
+    const sharedDir = join(tmpdir(), `termite-pool-scan-${Date.now()}`);
+    mkdirSync(join(sharedDir, "challenges"), { recursive: true });
+    const pool = new ChallengePool(sharedDir, new ChallengeGenerator());
+
+    pool.refresh(0, 1);
+    const scanOutput = pool.scan();
+    expect(scanOutput).toContain("Challenges:");
+    expect(scanOutput).toContain("difficulty");
+    expect(scanOutput).toContain("reward");
+
+    rmSync(sharedDir, { recursive: true, force: true });
+  });
+
+  it("persist and restore round-trips pool state", () => {
+    const sharedDir = join(tmpdir(), `termite-pool-persist-${Date.now()}`);
+    mkdirSync(join(sharedDir, "challenges"), { recursive: true });
+    const gen = new ChallengeGenerator();
+    const pool = new ChallengePool(sharedDir, gen);
+
+    pool.refresh(5, 2);
+    const originalSize = pool.size;
+    const originalIds = pool.ids;
+
+    const statePath = join(sharedDir, "challenges", "_state.json");
+    pool.persist(statePath);
+
+    const restored = ChallengePool.restore(statePath, sharedDir, gen);
+    expect(restored.size).toBe(originalSize);
+    expect(restored.ids.sort()).toEqual(originalIds.sort());
+
+    rmSync(sharedDir, { recursive: true, force: true });
   });
 });

@@ -41,8 +41,8 @@ export class AgentStateMachine {
   private taskReward: number | null = null;
   private taskTier: number | null = null;
 
-  // Internal verify script — never exposed to agents
-  private verifyScript: string | null = null;
+  // Challenge handler — provided by arena, routes check tool calls
+  private challengeHandler: ((input: string) => Promise<string>) | null = null;
 
   // Fork handler — provided by arena, called when agent uses fork tool
   private forkHandler: (() => Promise<string>) | null = null;
@@ -59,7 +59,10 @@ export class AgentStateMachine {
   // Current cycle
   private cycleCtx = freshCycle();
   private availableToolCount = 0;
-  private lastTaskTier = 0;
+
+  // Challenge tracking for fingerprint
+  private challengesSolved = 0;
+  private lastChallengeDifficulty = 0;
 
   constructor(
     llm: LLM,
@@ -141,9 +144,6 @@ export class AgentStateMachine {
     if (income.base > 0) this.state.energy.credit(income.base);
     if (income.bounty > 0) this.state.energy.creditFromPool(income.bounty);
     this.cycleCtx.sources.push(...income.sources);
-
-    // Capture tier for fingerprint before clearing
-    this.lastTaskTier = this.taskTier ?? this.lastTaskTier;
 
     // Clear one-time task reward
     this.taskReward = null;
@@ -296,10 +296,9 @@ export class AgentStateMachine {
   private async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const toolInput = String(input.input ?? "");
 
-    // check is an internal tool — verify script runs host-side, never on agent's filesystem
-    if (name === "check" && this.verifyScript) {
-      const b64 = Buffer.from(this.verifyScript).toString("base64");
-      return this.executor.executeShell(`echo '${b64}' | base64 -d | bash 2>&1`);
+    // check is an internal tool — challenge handler routes scan/verify, never on agent's filesystem
+    if (name === "check" && this.challengeHandler) {
+      return this.challengeHandler(toolInput);
     }
 
     // fork is an internal tool — arena handles the actual split
@@ -414,7 +413,8 @@ export class AgentStateMachine {
         memTotalTokens: this.state.memories.totalTokenCost,
         promptVersion: this.state.config.version,
         toolCount: this.availableToolCount,
-        tier: this.lastTaskTier,
+        challengesSolved: this.challengesSolved,
+        preferredDifficulty: this.lastChallengeDifficulty,
         baseCost: this.state.energy.baseCost,
         cacheWriteCost: record.cacheWriteCost ?? 0,
         drives: {
@@ -447,14 +447,16 @@ export class AgentStateMachine {
     }
   }
 
-  setTaskReward(reward: number, tier: number): void {
+  setTaskReward(reward: number, difficulty: number): void {
     this.taskReward = reward;
-    this.taskTier = tier;
+    this.taskTier = difficulty;
+    this.challengesSolved++;
+    this.lastChallengeDifficulty = difficulty;
   }
 
-  /** Set the internal verify script (run host-side, never visible to agent). */
-  setVerifyScript(script: string): void {
-    this.verifyScript = script;
+  /** Set the challenge handler (provided by arena, routes check tool calls). */
+  setChallengeHandler(handler: (input: string) => Promise<string>): void {
+    this.challengeHandler = handler;
   }
 
   /** Set the fork handler (provided by arena, executed when agent calls fork tool). */

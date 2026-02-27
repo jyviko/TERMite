@@ -175,8 +175,7 @@ function loadAgents(): AgentData[] {
       const id = String(state.id ?? state.agent_id ?? "");
       const cEntry = census.get(id);
       if (cEntry) {
-        state._taskTier = gn(cEntry, "level");
-        state._graduated = Boolean(g(cEntry, "graduated"));
+        state._challengesSolved = gn(cEntry, "challengesSolved");
       }
       agents.push(state);
     } catch {
@@ -375,19 +374,18 @@ function drawCard(buf: string[], org: AgentData, r0: number, c0: number, colW: n
   safe(buf, r, c0, ` Life: ${fmtSigned(lifetime)}`, lc);
   r++;
 
-  // Row 11: tier + tools
-  const tier = gn(org, "_taskTier");
-  const grad = Boolean(g(org, "_graduated"));
-  const tierLabel = grad ? "G" : `T${tier || "?"}`;
+  // Row 11: challenges solved + tools
+  const solved = gn(org, "_challengesSolved");
+  const solvedLabel = `C:${solved}`;
   const tools = g(org, "tool_registry", "toolRegistry");
   const toolNames = Array.isArray(tools) && tools.length > 0
     ? tools.map((t: AgentData) => gs(t, "name")).join(",")
     : "";
-  const tierColor = tier >= 5 ? GREEN : tier >= 3 ? YELLOW : "";
+  const solvedColor = solved >= 10 ? GREEN : solved >= 5 ? YELLOW : "";
   if (toolNames) {
-    safe(buf, r, c0, ` ${tierLabel} ${toolNames}`.slice(0, colW - 1), `${tierColor}`);
+    safe(buf, r, c0, ` ${solvedLabel} ${toolNames}`.slice(0, colW - 1), `${solvedColor}`);
   } else {
-    safe(buf, r, c0, ` ${tierLabel}`, tierColor);
+    safe(buf, r, c0, ` ${solvedLabel}`, solvedColor);
   }
   r++;
 
@@ -422,7 +420,7 @@ function render(): string {
   const allOrgs = loadAgents();
   let orgs = hideDead ? allOrgs.filter((o) => Boolean(g(o, "active"))) : allOrgs;
   if (tierFilter !== null) {
-    orgs = orgs.filter((o) => gn(o, "_taskTier") === tierFilter);
+    orgs = orgs.filter((o) => gn(o, "_challengesSolved") >= (tierFilter ?? 0));
   }
   const deadCount = allOrgs.length - allOrgs.filter((o) => Boolean(g(o, "active"))).length;
 

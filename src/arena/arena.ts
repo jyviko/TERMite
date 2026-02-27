@@ -1,34 +1,27 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import type { AgentEvent, TaskResult, ArenaEntryData } from "../types/index.js";
+import type { AgentEvent, ChallengeResult, ArenaEntryData } from "../types/index.js";
 import { LLM } from "../llm/index.js";
 import { Executor } from "../executor/index.js";
 import { AgentStateManager } from "../state/agent-state.js";
 import { MemoryStore } from "../state/memory.js";
 import { AgentStateMachine } from "../loop/state-machine.js";
-import { TaskGenerator, TIER_REWARDS } from "./task-generator.js";
 import { lookupBountyMultiplier } from "../loop/resolve.js";
-import { TaskVerifier } from "./task-verifier.js";
 import { ConfigIterator } from "./iteration.js";
 import { SharedBudget } from "./shared-budget.js";
 import { TEQPool } from "./teq-pool.js";
 import { SnapshotManager } from "./snapshots.js";
-import { OpenDataGenerator } from "./open-data-generator.js";
-import { WorkRater } from "./work-rater.js";
+import { ChallengePool } from "./challenge-pool.js";
+import { ChallengeGenerator } from "./challenge-generator.js";
 
 interface AgentEntry {
   stateMachine: AgentStateMachine;
   state: AgentStateManager;
   executor: Executor;
-  taskTier: number;
-  currentTask: import("../types/index.js").Task | null;
-  taskHistory: TaskResult[];
+  challengeHistory: ChallengeResult[];
   active: boolean;
-  consecutivePasses: number;
-  consecutiveFails: number;
-  graduated: boolean;
-  graduationData?: { datasetName: string; files: string[] };
 }
 
 export interface ArenaConfig {
@@ -86,11 +79,9 @@ export class Arena {
   private llm: LLM;
   private sharedBudget: SharedBudget;
   private teqPool: TEQPool;
-  private taskGenerator: TaskGenerator;
-  private taskVerifier: TaskVerifier;
+  private challengePool: ChallengePool;
+  private challengeGenerator: ChallengeGenerator;
   private iterator: ConfigIterator;
-  private workRater: WorkRater;
-  private openDataGenerator: OpenDataGenerator;
   private config: ArenaConfig;
   private runDir = "";
   private snapshots: SnapshotManager | null = null;
@@ -104,11 +95,9 @@ export class Arena {
       regenPerCycle: config.poolRegenPerCycle,
       maxBalance: config.poolMaxBalance,
     });
-    this.taskGenerator = new TaskGenerator();
-    this.taskVerifier = new TaskVerifier();
+    this.challengeGenerator = new ChallengeGenerator();
+    this.challengePool = new ChallengePool("", this.challengeGenerator); // sharedDir set in start()/resume()
     this.iterator = new ConfigIterator(this.llm);
-    this.workRater = new WorkRater(this.llm);
-    this.openDataGenerator = new OpenDataGenerator();
   }
 
   /** Scale pool regen rate sublinearly with population to create carrying capacity. */
@@ -135,6 +124,11 @@ export class Arena {
     this.runDir = join(this.config.workspaceRoot, `run-${runId}`);
     mkdirSync(this.runDir, { recursive: true });
     mkdirSync(join(this.runDir, "shared"), { recursive: true });
+    mkdirSync(join(this.runDir, "shared", "challenges"), { recursive: true });
+
+    // Initialize challenge pool with shared directory
+    const sharedDir = resolve(join(this.runDir, "shared"));
+    this.challengePool = new ChallengePool(sharedDir, this.challengeGenerator);
 
     console.log(`Run directory: ${this.runDir}`);
 
@@ -189,6 +183,9 @@ export class Arena {
       await this.spawnAgent();
     }
 
+    // Initial challenge pool population
+    this.challengePool.refresh(0, this.agents.size);
+
     this.calibratePool();
   }
 
@@ -208,6 +205,11 @@ export class Arena {
       maxBalance: this.config.poolMaxBalance,
     });
 
+    // Restore challenge pool
+    const sharedDir = resolve(join(this.runDir, "shared"));
+    const challengeStatePath = join(sharedDir, "challenges", "_state.json");
+    this.challengePool = ChallengePool.restore(challengeStatePath, sharedDir, this.challengeGenerator);
+
     // Kill any orphaned containers from this run
     const agentDirs = readdirSync(this.runDir).filter((d) => d.startsWith("agent-"));
     for (const dir of agentDirs) {
@@ -218,7 +220,6 @@ export class Arena {
       await executor.stop().catch(() => {});
     }
 
-    // Collect resumable agents with their tier for prioritized startup
     interface ResumeCandidate {
       dir: string;
       state: AgentStateManager;
@@ -261,15 +262,14 @@ export class Arena {
       candidates.push({ dir, state, entryData });
     }
 
-    // Sort by tier descending — highest-value agents start first
-    candidates.sort((a, b) => (b.entryData.taskTier ?? 1) - (a.entryData.taskTier ?? 1));
+    // Sort by energy descending — highest-value agents start first
+    candidates.sort((a, b) => b.state.energy.reserves - a.state.energy.reserves);
 
     const CONTAINER_STAGGER_MS = 500;
     let resumed = 0;
 
     for (const { dir, state, entryData } of candidates) {
       const workspacePath = join(this.runDir, dir, "workspace");
-      const sharedDir = resolve(join(this.runDir, "shared"));
       const executor = new Executor({
         workingDir: workspacePath,
         containerName: `termite-${dir}`,
@@ -285,10 +285,8 @@ export class Arena {
       const savePath = join(this.runDir, dir, "state.json");
       const machine = new AgentStateMachine(this.llm, executor, state, this.teqPool, savePath);
 
-      // Restore verify script for current task
-      if (entryData.currentTask) {
-        machine.setVerifyScript(this.taskGenerator.getVerifyScript(entryData.currentTask));
-      }
+      // Wire challenge handler
+      this.wireChallengeHandler(dir, machine);
 
       // Wire fork handler
       machine.setForkHandler(() => this.handleForkRequest(dir));
@@ -300,14 +298,8 @@ export class Arena {
         stateMachine: machine,
         state,
         executor,
-        taskTier: entryData.taskTier,
-        currentTask: entryData.currentTask,
-        taskHistory: entryData.taskHistory,
+        challengeHistory: entryData.challengeHistory ?? [],
         active: true,
-        consecutivePasses: entryData.consecutivePasses,
-        consecutiveFails: entryData.consecutiveFails,
-        graduated: entryData.graduated,
-        graduationData: entryData.graduationData,
       };
 
       this.agents.set(dir, entry);
@@ -315,7 +307,7 @@ export class Arena {
       resumed++;
 
       if (resumed % 10 === 0) {
-        console.log(`[ARENA] Started ${resumed}/${candidates.length} containers (tier ${entryData.taskTier})...`);
+        console.log(`[ARENA] Started ${resumed}/${candidates.length} containers...`);
       }
     }
 
@@ -339,13 +331,21 @@ export class Arena {
   async run(): Promise<void> {
     const poolPath = join(this.runDir, "shared", "_pool.json");
 
-    // Regeneration timer: every 10s, add TEQs and persist pool state
+    // Regeneration timer: every 10s, add TEQs, refresh challenges, persist state
     // Only regenerate when at least one agent has completed a cycle (is actively running)
+    const challengeStatePath = join(this.runDir, "shared", "challenges", "_state.json");
     const regenTimer = setInterval(async () => {
       const activeEntries = Array.from(this.agents.values()).filter(
         (e) => e.state.active && e.state.cycleCount > 0,
       );
-      if (activeEntries.length > 0) this.teqPool.regenerate(activeEntries.length);
+      if (activeEntries.length > 0) {
+        this.teqPool.regenerate(activeEntries.length);
+
+        // Compute global cycle as max across active agents
+        const globalCycle = Math.max(...activeEntries.map(e => e.state.cycleCount));
+        this.challengePool.refresh(globalCycle, activeEntries.length);
+        this.challengePool.persist(challengeStatePath);
+      }
       await this.teqPool.persist(poolPath).catch(() => {});
     }, 10_000);
 
@@ -413,7 +413,6 @@ export class Arena {
     startingReserves?: number,
     seedMemories?: MemoryStore,
     sourceGeneration?: number,
-    startingTier?: number,
   ): Promise<string> {
     const id = `agent-${randomUUID().slice(0, 8)}`;
     const workspacePath = join(this.runDir, id, "workspace");
@@ -458,11 +457,11 @@ export class Arena {
     const savePath = join(this.runDir, id, "state.json");
     const machine = new AgentStateMachine(this.llm, executor, state, this.teqPool, savePath);
 
-    // Drop initial task at the appropriate tier
-    const tier = startingTier ?? 1;
-    const task = this.taskGenerator.generateTask(tier, 0);
-    this.taskGenerator.writeTaskToWorkspace(task, workspacePath);
-    machine.setVerifyScript(this.taskGenerator.getVerifyScript(task));
+    // Seed workspace (tools + check stub)
+    this.seedWorkspace(workspacePath);
+
+    // Wire challenge handler — agent runs check, arena routes to challenge pool
+    this.wireChallengeHandler(id, machine);
 
     // Wire fork handler — agent calls fork tool, arena executes
     machine.setForkHandler(() => this.handleForkRequest(id));
@@ -470,7 +469,7 @@ export class Arena {
     // Wire signal handler — agent calls signal tool, arena mediates shared write
     machine.setSignalHandler((msg) => this.handleSignal(id, state.cycleCount, msg));
 
-    // If fork, copy source agent's tools
+    // If fork, copy source agent's tools (overrides seeded defaults)
     if (sourceId) {
       const sourceTools = join(this.runDir, sourceId, "workspace", "tools");
       const forkTools = join(workspacePath, "tools");
@@ -483,13 +482,8 @@ export class Arena {
       stateMachine: machine,
       state,
       executor,
-      taskTier: tier,
-      currentTask: task,
-      taskHistory: [],
+      challengeHistory: [],
       active: true,
-      consecutivePasses: 0,
-      consecutiveFails: 0,
-      graduated: false,
     };
 
     this.agents.set(id, entry);
@@ -498,31 +492,14 @@ export class Arena {
   }
 
   private async runAgent(id: string, entry: AgentEntry): Promise<void> {
-    let lastCycle = entry.state.cycleCount;
     try {
       for await (const event of entry.stateMachine.run()) {
         this.logEvent(id, entry.state.mode, event);
-
-        // Detect cycle boundary — check task deadline and demotion
-        if (entry.state.cycleCount !== lastCycle) {
-          lastCycle = entry.state.cycleCount;
-          this.checkTaskDeadline(id, entry);
-        }
 
         // Check shared budget
         if (this.sharedBudget.exhausted) {
           entry.state.terminate("arena_budget_exhausted");
           break;
-        }
-
-        // Check task completion periodically
-        if (event.type === "tool_result" && event.name === "check") {
-          if (entry.graduated) {
-            // Post-graduation: rate open work instead of verifying tasks
-            await this.rateGraduateWork(id, entry);
-          } else if (event.result.includes("PASS")) {
-            await this.onTaskComplete(id, entry);
-          }
         }
       }
     } catch (err: unknown) {
@@ -545,133 +522,66 @@ export class Arena {
     }
   }
 
-  private async onTaskComplete(id: string, entry: AgentEntry): Promise<void> {
-    const workspacePath = join(this.runDir, id, "workspace");
-    const task = entry.currentTask;
-    if (!task) return;
-
-    // Verify using host-side script (agent never sees this)
-    const verifyScript = this.taskGenerator.getVerifyScript(task);
-    const result = await this.taskVerifier.verify(entry.executor, verifyScript);
-    if (!result.passed) return;
-
-    // Credit energy
-    entry.stateMachine.setTaskReward(task.reward, task.tier);
-
-    // Record
-    entry.taskHistory.push({
-      taskId: task.id,
-      tier: task.tier,
-      passed: true,
-      cyclesTaken: entry.state.cycleCount - task.assignedCycle,
-    });
-    entry.consecutivePasses++;
-    entry.consecutiveFails = 0;
-
-    // Tier escalation: 3 consecutive passes → tier up (or graduate at tier 6)
-    if (entry.consecutivePasses >= 3) {
-      if (entry.taskTier >= 6) {
-        entry.graduated = true;
-        entry.consecutivePasses = 0;
-        await this.onGraduation(id, entry);
-        return; // No more structured tasks
-      }
-      entry.taskTier = Math.min(6, entry.taskTier + 1);
-      entry.consecutivePasses = 0;
-    }
-
-    // Drop new task
-    const newTask = this.taskGenerator.generateTask(
-      entry.taskTier,
-      entry.state.cycleCount,
-    );
-    entry.currentTask = newTask;
-    this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
-    entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
-  }
-
-  private checkTaskDeadline(id: string, entry: AgentEntry): void {
-    const task = entry.currentTask;
-    if (!task || entry.graduated) return;
-
-    const cyclesOnTask = entry.state.cycleCount - task.assignedCycle;
-    if (cyclesOnTask < task.deadlineCycles) return;
-
-    // Task expired — record failure
-    entry.taskHistory.push({
-      taskId: task.id,
-      tier: task.tier,
-      passed: false,
-      cyclesTaken: cyclesOnTask,
-    });
-
-    entry.consecutivePasses = 0;
-    entry.consecutiveFails++;
-
-    console.log(
-      `[ARENA] ${id} deadline expired on tier ${task.tier} "${task.title}" ` +
-      `(${cyclesOnTask}/${task.deadlineCycles} cycles, fails: ${entry.consecutiveFails})`,
-    );
-
-    // Tier demotion: 2 consecutive deadline failures → tier down
-    if (entry.consecutiveFails >= 2) {
-      const oldTier = entry.taskTier;
-      entry.taskTier = Math.max(1, entry.taskTier - 1);
-      entry.consecutiveFails = 0;
-      if (entry.taskTier !== oldTier) {
-        console.log(`[ARENA] ${id} demoted to tier ${entry.taskTier}`);
-      }
-    }
-
-    // Assign new task at current tier (possibly demoted)
-    const workspacePath = join(this.runDir, id, "workspace");
-    const newTask = this.taskGenerator.generateTask(
-      entry.taskTier,
-      entry.state.cycleCount,
-    );
-    entry.currentTask = newTask;
-    this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
-    entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
-  }
-
-  private async onGraduation(id: string, entry: AgentEntry): Promise<void> {
-    const workspacePath = join(this.runDir, id, "workspace");
-    console.log(`[ARENA] ${id} GRADUATED from tier 6 — transitioning to open data`);
-
-    entry.currentTask = null;
-
-    // Place raw data — agent must figure out what to do
-    const result = this.openDataGenerator.placeData(workspacePath);
-    entry.graduationData = { datasetName: result.datasetName, files: result.files };
-  }
-
-  private async rateGraduateWork(id: string, entry: AgentEntry): Promise<void> {
-    const workspacePath = join(this.runDir, id, "workspace");
-    const dataDir = join(workspacePath, "data");
+  /** Seed a workspace with default tools and the check stub. */
+  private seedWorkspace(workspacePath: string): void {
     const outputDir = join(workspacePath, "output");
+    const workDir = join(workspacePath, "work");
+    const toolsDir = join(workspacePath, "tools");
 
-    try {
-      const rating = await this.workRater.rate(dataDir, outputDir);
-      const baseReward = TIER_REWARDS[6] ?? 300_000;
-      const reward = Math.floor(rating.score * baseReward);
+    mkdirSync(outputDir, { recursive: true });
+    mkdirSync(workDir, { recursive: true });
+    mkdirSync(toolsDir, { recursive: true });
 
-      if (reward > 0) {
-        entry.stateMachine.setTaskReward(reward, 6);
+    // Seed default tools from project tools/ directory
+    const defaultToolsDir = join(dirname(fileURLToPath(import.meta.url)), "../../tools");
+    if (!existsSync(join(toolsDir, "shell"))) {
+      try {
+        for (const name of readdirSync(defaultToolsDir)) {
+          const src = readFileSync(join(defaultToolsDir, name));
+          writeFileSync(join(toolsDir, name), src, { mode: 0o755 });
+        }
+      } catch {
+        // tools/ dir may not exist in test environments
       }
-
-      console.log(
-        `[ARENA] ${id} work rated: score=${rating.score.toFixed(2)} reward=${reward} — ${rating.rationale}`,
-      );
-
-      // Good work gets fresh data
-      if (rating.score > 0.3) {
-        const result = this.openDataGenerator.placeData(workspacePath);
-        entry.graduationData = { datasetName: result.datasetName, files: result.files };
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[ARENA] ${id} work rating failed: ${msg}`);
     }
+
+    // Write check stub — routes through challengeHandler in state-machine
+    const checkStub = `#!/bin/bash
+# description: check - Probe the environment. No args: scan available challenges. With challenge ID: verify your output.
+echo "__VERIFY__"`;
+    writeFileSync(join(toolsDir, "check"), checkStub, {
+      mode: 0o755,
+      encoding: "utf-8",
+    });
+  }
+
+  /** Wire challenge handler for an agent's state machine. */
+  private wireChallengeHandler(id: string, machine: AgentStateMachine): void {
+    machine.setChallengeHandler(async (input: string) => {
+      const trimmed = input.trim();
+      if (!trimmed) {
+        return this.challengePool.scan();
+      }
+
+      const entry = this.agents.get(id);
+      if (!entry) return "FAIL: agent not found";
+
+      const model = entry.state.config.routing.thinking.model;
+      const result = await this.challengePool.attempt(trimmed, id, entry.executor, model);
+
+      if (result.passed && result.reward != null && result.difficulty != null) {
+        entry.stateMachine.setTaskReward(result.reward, result.difficulty);
+        entry.challengeHistory.push({
+          challengeId: trimmed,
+          difficulty: result.difficulty,
+          passed: true,
+          reward: result.reward,
+          cyclesSinceAppeared: 0,
+        });
+      }
+
+      return result.message;
+    });
   }
 
   private async handleForkRequest(id: string): Promise<string> {
@@ -707,15 +617,12 @@ export class Arena {
       "Origin",
     );
 
-    // Copy inherits tier (minus 1, minimum 1) — progress isn't lost
-    const copyTier = Math.max(1, entry.taskTier - 1);
-
     try {
       // One config iteration for copy — variation via LLM temperature
       const copyConfig = await this.iterator.iterate({
         sourceConfig: entry.state.config,
         memories: entry.state.memories.memories,
-        taskHistory: entry.taskHistory,
+        challengeHistory: entry.challengeHistory,
         generation: entry.state.generation,
       });
 
@@ -723,18 +630,18 @@ export class Arena {
       const copyReserves = investment + poolBonus;
       entry.state.energy.burnFlat(investment);
 
-      const copy = await this.spawnAgent(id, copyConfig, copyReserves, inheritedMemories, undefined, copyTier);
+      const copy = await this.spawnAgent(id, copyConfig, copyReserves, inheritedMemories);
       this.calibratePool();
 
       const gen = entry.state.generation + 1;
       console.log(
-        `[ARENA] ${id} split → ${copy} (gen ${gen}, invested ${investment} + ${poolBonus} bonus = ${copyReserves} TEQ, tier ${copyTier})`,
+        `[ARENA] ${id} split → ${copy} (gen ${gen}, invested ${investment} + ${poolBonus} bonus = ${copyReserves} TEQ)`,
       );
 
       // Source records the split
       entry.state.memories.add(
         `Split at cycle ${entry.state.cycleCount}. Invested ${investment.toLocaleString()} TEQ. ` +
-        `Copy ${copy} created with ${copyReserves.toLocaleString()} TEQ at level ${copyTier}. ` +
+        `Copy ${copy} created with ${copyReserves.toLocaleString()} TEQ. ` +
         `Remaining reserves: ${entry.state.energy.reserves.toLocaleString()} TEQ.`,
         "semantic",
         0.9,
@@ -750,7 +657,7 @@ export class Arena {
         });
       }
 
-      return `SPLIT: ${copy} created with ${copyReserves.toLocaleString()} TEQ at level ${copyTier}. You invested ${investment.toLocaleString()} TEQ. Remaining: ${entry.state.energy.reserves.toLocaleString()} TEQ.`;
+      return `SPLIT: ${copy} created with ${copyReserves.toLocaleString()} TEQ. You invested ${investment.toLocaleString()} TEQ. Remaining: ${entry.state.energy.reserves.toLocaleString()} TEQ.`;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return `FORK_FAILED: ${msg}`;
@@ -829,13 +736,11 @@ export class Arena {
       id,
       active: entry.state.active,
       cycleCount: entry.state.cycleCount,
-      level: entry.taskTier,
+      challengesSolved: entry.challengeHistory.filter(c => c.passed).length,
       energyPct: Math.floor(entry.state.energy.ratio * 100),
       reserves: entry.state.energy.reserves,
       configVersion: entry.state.config.version,
       model: entry.state.config.routing.thinking.model,
-      streak: entry.consecutivePasses,
-      graduated: entry.graduated,
       generation: entry.state.generation,
       sourceId: entry.state.sourceId,
     }));
@@ -878,7 +783,39 @@ export class Arena {
       JSON.stringify({ updated: new Date().toISOString(), signals: this.signals }, null, 2),
     );
 
-    // Persist entry.json for active agents — prevents tier loss on crash
+    // Inject population context into each active agent's state machine
+    const activeAgents = census.filter(a => a.active);
+    const totalAgents = census.length;
+    for (const [id, entry] of this.agents) {
+      if (!entry.state.active) continue;
+
+      const myRank = census.findIndex(a => a.id === id) + 1;
+      const myPct = Math.floor(entry.state.energy.ratio * 100);
+      const medianPct = census.length > 0
+        ? census[Math.floor(census.length / 2)]!.energyPct
+        : 0;
+
+      // Generation distribution
+      const genCounts = new Map<number, number>();
+      for (const a of census) {
+        genCounts.set(a.generation, (genCounts.get(a.generation) ?? 0) + 1);
+      }
+      const genParts = Array.from(genCounts.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([gen, count]) => `${count}×gen${gen}`)
+        .join(", ");
+
+      const popBlock = [
+        "Population:",
+        `- Agents: ${activeAgents.length} active / ${totalAgents} total`,
+        `- Your rank: ${myRank}${ordinal(myRank)} by energy (${myPct}%), median: ${medianPct}%`,
+        `- Generations: ${genParts}`,
+      ].join("\n");
+
+      entry.stateMachine.setPopulationContext(popBlock);
+    }
+
+    // Persist entry.json for active agents
     for (const [id, entry] of this.agents) {
       if (!entry.state.active) continue;
       try {
@@ -906,15 +843,14 @@ export class Arena {
       if (!sourceEntry) continue; // Source no longer in arena
 
       // Build report
-      const tasksPassed = copyEntry.taskHistory.filter((t) => t.passed).length;
+      const challengesPassed = copyEntry.challengeHistory.filter((c) => c.passed).length;
       const copySplit = Array.from(this.agents.values()).some(
         (a) => a.state.sourceId === copyId,
       );
       const report =
         `Copy ${copyId} after ${copyEntry.state.cycleCount} cycles: ` +
-        `level ${copyEntry.taskTier}, ` +
         `energy ${Math.floor(copyEntry.state.energy.ratio * 100)}%, ` +
-        `${tasksPassed} challenges cleared, ` +
+        `${challengesPassed} challenges cleared, ` +
         `config v${copyEntry.state.config.version}` +
         (copySplit ? ", has split further" : "") +
         (!copyEntry.state.active ? `, halted (${copyEntry.state.stopReason})` : "");
@@ -928,13 +864,7 @@ export class Arena {
 
   private buildEntryData(entry: AgentEntry): ArenaEntryData {
     return {
-      taskTier: entry.taskTier,
-      currentTask: entry.currentTask,
-      taskHistory: entry.taskHistory,
-      consecutivePasses: entry.consecutivePasses,
-      consecutiveFails: entry.consecutiveFails,
-      graduated: entry.graduated,
-      graduationData: entry.graduationData,
+      challengeHistory: entry.challengeHistory,
     };
   }
 
@@ -973,6 +903,12 @@ export class Arena {
     await mgr.init();
     await mgr.rewind(ref);
   }
+}
+
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return s[(v - 20) % 10] ?? s[v] ?? s[0]!;
 }
 
 function copyDirectorySync(src: string, dest: string): void {

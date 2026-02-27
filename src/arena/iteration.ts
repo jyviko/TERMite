@@ -1,4 +1,4 @@
-import type { TaskResult, Memory } from "../types/index.js";
+import type { ChallengeResult, Memory } from "../types/index.js";
 import type { LLM } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
 import { Config } from "../state/config.js";
@@ -9,7 +9,7 @@ export class ConfigIterator {
   async iterate(params: {
     sourceConfig: Config;
     memories: Memory[];
-    taskHistory: TaskResult[];
+    challengeHistory: ChallengeResult[];
     generation: number;
   }): Promise<Config> {
     const formattedMemories = params.memories
@@ -18,9 +18,9 @@ export class ConfigIterator {
       .map((m) => `[${m.type}] (${m.importance.toFixed(1)}) ${m.content}`)
       .join("\n");
 
-    const formattedTaskHistory = params.taskHistory
+    const formattedChallengeHistory = params.challengeHistory
       .slice(-10)
-      .map((q) => `level ${q.tier}: ${q.passed ? "PASS" : "FAIL"} in ${q.cyclesTaken} cycles`)
+      .map((q) => `difficulty ${q.difficulty}: ${q.passed ? "PASS" : "FAIL"}, reward ${q.reward}`)
       .join("\n");
 
     const prompt = `You are iterating an agent's configuration for the next version.
@@ -32,7 +32,7 @@ Source agent's key memories (sorted by importance):
 ${formattedMemories || "(none)"}
 
 Challenge history:
-${formattedTaskHistory || "(none)"}
+${formattedChallengeHistory || "(none)"}
 
 Create an improved system prompt for the next version. It should:
 1. Carry forward successful strategies

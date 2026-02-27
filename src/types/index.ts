@@ -121,41 +121,41 @@ export interface StrategyFingerprint {
   memTotalTokens: number;
   promptVersion: number;
   toolCount: number;
-  tier: number;
+  challengesSolved: number;
+  preferredDifficulty: number;
   baseCost: number;
   cacheWriteCost: number;
   drives: Record<DriveName, number>;
   generation: number;
 }
 
-// Task system
-export interface Task {
+// Challenge system
+export type ChallengeCategory = "computational" | "discovery" | "compositional";
+
+export interface Challenge {
   id: string;
-  tier: number;
+  category: ChallengeCategory;
+  difficulty: number;           // 1-5
   title: string;
-  verifyScript: string;
-  reward: number;
-  deadlineCycles: number;
-  assignedCycle: number;
-  dataFiles?: string[];
+  baseReward: number;           // TEQ from pool (before depletion/multipliers)
+  expiresAtCycle: number;       // global cycle counter
+  dataDir: string;              // relative path in shared/challenges/
+  verifyScript: string;         // bash script for deterministic verification
+  solvedBy: string[];           // agent IDs (for depletion)
+  appearedAtCycle: number;      // when this challenge was created
 }
 
-export interface TaskResult {
-  taskId: string;
-  tier: number;
+export interface ChallengeResult {
+  challengeId: string;
+  difficulty: number;
   passed: boolean;
-  cyclesTaken: number;
+  reward: number;
+  cyclesSinceAppeared: number;
 }
 
 // Persisted arena entry (for resume)
 export interface ArenaEntryData {
-  taskTier: number;
-  currentTask: Task | null;
-  taskHistory: TaskResult[];
-  consecutivePasses: number;
-  consecutiveFails: number;
-  graduated: boolean;
-  graduationData?: { datasetName: string; files: string[] };
+  challengeHistory: ChallengeResult[];
 }
 
 // Agent events
