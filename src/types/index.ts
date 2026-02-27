@@ -45,6 +45,7 @@ export interface EnergyLedgerData {
 
 export interface CycleRecord {
   cycle: number;
+  timestamp?: string;   // ISO wall-clock time
   cost: number;
   income: number;
   net: number;

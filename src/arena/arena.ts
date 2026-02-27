@@ -13,6 +13,7 @@ import { TaskVerifier } from "./task-verifier.js";
 import { ConfigIterator } from "./iteration.js";
 import { SharedBudget } from "./shared-budget.js";
 import { TEQPool } from "./teq-pool.js";
+import { SnapshotManager } from "./snapshots.js";
 import { OpenDataGenerator } from "./open-data-generator.js";
 import { WorkRater } from "./work-rater.js";
 
@@ -41,6 +42,8 @@ export interface ArenaConfig {
   poolInitialBalance?: number;
   poolRegenPerCycle?: number;
   poolMaxBalance?: number;
+  snapshotIntervalMs?: number;
+  noSnapshots?: boolean;
 }
 
 // ANSI color palette for per-agent log coloring
@@ -90,6 +93,7 @@ export class Arena {
   private openDataGenerator: OpenDataGenerator;
   private config: ArenaConfig;
   private runDir = "";
+  private snapshots: SnapshotManager | null = null;
 
   constructor(config: ArenaConfig) {
     this.config = config;
@@ -133,6 +137,18 @@ export class Arena {
     mkdirSync(join(this.runDir, "shared"), { recursive: true });
 
     console.log(`Run directory: ${this.runDir}`);
+
+    // Initialize snapshots
+    if (!this.config.noSnapshots) {
+      this.snapshots = new SnapshotManager({
+        runDir: this.runDir,
+        intervalMs: this.config.snapshotIntervalMs,
+      });
+      await this.snapshots.init();
+    }
+
+    // Initialize pool ledger
+    this.teqPool.setLedger(join(this.runDir, "shared", "_pool_ledger.jsonl"));
 
     // Seed agents from previous runs — config + distilled memories carry over, fresh energy
     let seeded = 0;
@@ -202,13 +218,19 @@ export class Arena {
       await executor.stop().catch(() => {});
     }
 
-    let resumed = 0;
+    // Collect resumable agents with their tier for prioritized startup
+    interface ResumeCandidate {
+      dir: string;
+      state: AgentStateManager;
+      entryData: ArenaEntryData;
+    }
+
+    const candidates: ResumeCandidate[] = [];
     let skipped = 0;
 
     for (const dir of agentDirs) {
       const statePath = join(this.runDir, dir, "state.json");
       const entryPath = join(this.runDir, dir, "entry.json");
-      const workspacePath = join(this.runDir, dir, "workspace");
 
       if (!existsSync(statePath)) continue;
 
@@ -242,7 +264,17 @@ export class Arena {
         }
       }
 
-      // Spin fresh container on existing workspace
+      candidates.push({ dir, state, entryData });
+    }
+
+    // Sort by tier descending — highest-value agents start first
+    candidates.sort((a, b) => (b.entryData.taskTier ?? 1) - (a.entryData.taskTier ?? 1));
+
+    const CONTAINER_STAGGER_MS = 500;
+    let resumed = 0;
+
+    for (const { dir, state, entryData } of candidates) {
+      const workspacePath = join(this.runDir, dir, "workspace");
       const sharedDir = resolve(join(this.runDir, "shared"));
       const executor = new Executor({
         workingDir: workspacePath,
@@ -250,6 +282,11 @@ export class Arena {
         extraVolumes: [`${sharedDir}:/shared:ro`],
       });
       await executor.start();
+
+      // Stagger container startups to avoid Docker resource exhaustion
+      if (resumed > 0) {
+        await new Promise((r) => setTimeout(r, CONTAINER_STAGGER_MS));
+      }
 
       const savePath = join(this.runDir, dir, "state.json");
       const machine = new AgentStateMachine(this.llm, executor, state, this.teqPool, savePath);
@@ -282,9 +319,25 @@ export class Arena {
       this.agents.set(dir, entry);
       this.agentColors.set(dir, AGENT_COLORS[(this.agents.size - 1) % AGENT_COLORS.length]!);
       resumed++;
+
+      if (resumed % 10 === 0) {
+        console.log(`[ARENA] Started ${resumed}/${candidates.length} containers (tier ${entryData.taskTier})...`);
+      }
     }
 
     console.log(`[ARENA] Resumed ${resumed} agents, skipped ${skipped} dead agents from ${runDir}`);
+
+    // Initialize snapshots (may already have .jj/.git from prior run)
+    if (!this.config.noSnapshots) {
+      this.snapshots = new SnapshotManager({
+        runDir: this.runDir,
+        intervalMs: this.config.snapshotIntervalMs,
+      });
+      await this.snapshots.init();
+    }
+
+    // Initialize pool ledger (appends to existing file)
+    this.teqPool.setLedger(join(this.runDir, "shared", "_pool_ledger.jsonl"));
 
     this.calibratePool();
   }
@@ -293,8 +346,12 @@ export class Arena {
     const poolPath = join(this.runDir, "shared", "_pool.json");
 
     // Regeneration timer: every 10s, add TEQs and persist pool state
+    // Only regenerate when at least one agent has completed a cycle (is actively running)
     const regenTimer = setInterval(async () => {
-      this.teqPool.regenerate();
+      const activeEntries = Array.from(this.agents.values()).filter(
+        (e) => e.state.active && e.state.cycleCount > 0,
+      );
+      if (activeEntries.length > 0) this.teqPool.regenerate(activeEntries.length);
       await this.teqPool.persist(poolPath).catch(() => {});
     }, 10_000);
 
@@ -303,6 +360,9 @@ export class Arena {
       this.syncPeerData();
     }, 15_000);
     this.syncPeerData(); // initial write
+
+    // Start periodic snapshots
+    this.snapshots?.start();
 
     try {
       const promises = Array.from(this.agents.entries()).map(([id, entry]) =>
@@ -313,6 +373,7 @@ export class Arena {
       clearInterval(regenTimer);
       clearInterval(peerTimer);
       await this.teqPool.persist(poolPath).catch(() => {});
+      await this.snapshots?.stop("run-complete").catch(() => {});
     }
   }
 
@@ -350,6 +411,15 @@ export class Arena {
       }
     });
     await Promise.allSettled(saves);
+
+    // Final snapshot before stopping containers
+    if (this.snapshots) {
+      await this.snapshots.snapshotSync("shutdown").catch(() => {});
+    }
+
+    // Close ledger
+    this.teqPool.closeLedger();
+
     await this.stop();
   }
 
@@ -480,7 +550,7 @@ export class Arena {
       // Return pool-sourced TEQs on stop
       const returnAmount = entry.state.energy.earnedFromPrizes;
       if (returnAmount > 0) {
-        this.teqPool.deposit(returnAmount);
+        this.teqPool.deposit(returnAmount, id);
       }
 
       // Preserve workspace + arena metadata (stopped agent)
@@ -645,7 +715,7 @@ export class Arena {
 
     // Pool bonus — environment subsidizes splits via TEQ pool
     const requestedBonus = Math.floor(reserves * BONUS_RATIO);
-    const poolBonus = await this.teqPool.withdraw(requestedBonus);
+    const poolBonus = await this.teqPool.withdraw(requestedBonus, id);
 
     // Inherit procedural + semantic memories (episodic is context-specific)
     const inheritedMemories = new MemoryStore(
@@ -833,6 +903,28 @@ export class Arena {
       JSON.stringify({ updated: new Date().toISOString(), signals: this.signals }, null, 2),
     );
 
+    // Persist entry.json for active agents — prevents tier loss on crash
+    for (const [id, entry] of this.agents) {
+      if (!entry.state.active) continue;
+      try {
+        const entryData: ArenaEntryData = {
+          taskTier: entry.taskTier,
+          currentTask: entry.currentTask,
+          taskHistory: entry.taskHistory,
+          consecutivePasses: entry.consecutivePasses,
+          consecutiveFails: entry.consecutiveFails,
+          graduated: entry.graduated,
+          graduationData: entry.graduationData,
+        };
+        writeFileSync(
+          join(this.runDir, id, "entry.json"),
+          JSON.stringify(entryData, null, 2),
+        );
+      } catch {
+        // Non-critical — will retry next sync
+      }
+    }
+
     // Split reports — inject feedback into source agents after copies stabilize
     this.injectSplitReports();
   }
@@ -888,6 +980,20 @@ export class Arena {
         console.error(`${prefix} \x1b[31mERROR: ${event.message}${RESET}`);
         break;
     }
+  }
+
+  /** List snapshots for a run directory. */
+  static async listSnapshots(runDir: string): Promise<import("./snapshots.js").SnapshotRef[]> {
+    const mgr = new SnapshotManager({ runDir });
+    await mgr.init();
+    return mgr.list();
+  }
+
+  /** Rewind a run directory to a previous snapshot. */
+  static async rewindRun(runDir: string, ref: string): Promise<void> {
+    const mgr = new SnapshotManager({ runDir });
+    await mgr.init();
+    await mgr.rewind(ref);
   }
 }
 

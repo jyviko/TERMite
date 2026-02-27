@@ -19,10 +19,41 @@ const { values } = parseArgs({
     "pool-balance": { type: "string" },
     "pool-regen": { type: "string" },
     "pool-max": { type: "string" },
+    "snapshot-interval": { type: "string" },
+    "no-snapshots": { type: "boolean", default: false },
+    "list-snapshots": { type: "boolean", default: false },
+    rewind: { type: "string" },
   },
 });
 
 async function main() {
+  const workspaceRoot = values.workspace ?? "./arena-workspace";
+
+  // Snapshot-only commands (no arena startup needed)
+  if (values["list-snapshots"]) {
+    const resumeDir = resolveResumeDir(values.resume, workspaceRoot);
+    if (!resumeDir) throw new Error("--list-snapshots requires --resume <run>");
+    const snapshots = await Arena.listSnapshots(resumeDir);
+    if (snapshots.length === 0) {
+      console.log("No snapshots found.");
+    } else {
+      console.log(`Snapshots for ${resumeDir}:\n`);
+      for (const s of snapshots) {
+        console.log(`  ${s.id}  ${s.timestamp}  ${s.description}`);
+      }
+    }
+    return;
+  }
+
+  if (values.rewind) {
+    const resumeDir = resolveResumeDir(values.resume, workspaceRoot);
+    if (!resumeDir) throw new Error("--rewind requires --resume <run>");
+    console.log(`Rewinding ${resumeDir} to ${values.rewind}...`);
+    await Arena.rewindRun(resumeDir, values.rewind);
+    console.log("Rewind complete. You can now --resume this run.");
+    return;
+  }
+
   const agentCount = parseInt(values.agents ?? "3", 10);
   const totalBudget = parseInt(values.budget ?? "500000", 10);
 
@@ -34,9 +65,12 @@ async function main() {
   const modelArg = values.model;
   const model = modelArg ? MODEL_IDS[modelArg] ?? modelArg : undefined;
 
-  const workspaceRoot = values.workspace ?? "./arena-workspace";
   const resumeDir = resolveResumeDir(values.resume, workspaceRoot);
   const seedPaths = resumeDir ? [] : (values.seed ?? []).map((s) => resolveSeedPath(s, workspaceRoot));
+
+  const snapshotIntervalMs = values["snapshot-interval"]
+    ? parseInt(values["snapshot-interval"], 10) * 1000
+    : undefined;
 
   const arena = new Arena({
     agentCount: agentCount,
@@ -49,6 +83,8 @@ async function main() {
     poolInitialBalance: values["pool-balance"] ? parseInt(values["pool-balance"], 10) : undefined,
     poolRegenPerCycle: values["pool-regen"] ? parseInt(values["pool-regen"], 10) : undefined,
     poolMaxBalance: values["pool-max"] ? parseInt(values["pool-max"], 10) : undefined,
+    snapshotIntervalMs,
+    noSnapshots: values["no-snapshots"],
   });
 
   const shutdown = async () => {

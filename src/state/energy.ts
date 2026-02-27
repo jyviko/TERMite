@@ -161,6 +161,7 @@ export class EnergyLedger {
     const actualIncome = this.cycleIncome;
     this.cycleHistory.push({
       cycle,
+      timestamp: new Date().toISOString(),
       cost: this.cycleCost,
       income: actualIncome,
       net: actualIncome - this.cycleCost,

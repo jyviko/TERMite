@@ -123,6 +123,7 @@ export class AgentStateMachine {
       this.state.energy.currentCycleCost,
       this.taskTier ?? undefined,
       this.cur.model,
+      this.state.id,
     );
     if (income.base > 0) this.state.energy.credit(income.base);
     if (income.bounty > 0) this.state.energy.creditFromPool(income.bounty);

@@ -113,6 +113,7 @@ export async function computeIncome(
   cycleCost?: number,
   taskTier?: number,
   model?: string,
+  agentId?: string,
 ): Promise<{ bounty: number; base: number; requested: number; sources: string[] }> {
   const sources: string[] = [];
 
@@ -156,7 +157,7 @@ export async function computeIncome(
     }
   }
 
-  const bounty = bountyRequested > 0 ? await pool.withdraw(bountyRequested) : 0;
+  const bounty = bountyRequested > 0 ? await pool.withdraw(bountyRequested, agentId) : 0;
   const requested = bountyRequested + base;
 
   return { bounty, base, requested, sources };
