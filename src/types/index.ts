@@ -112,6 +112,20 @@ export interface AgentState {
   config: Config;
 }
 
+// Strategy fingerprint — appended to metrics.jsonl for post-hoc ALife analysis
+export interface StrategyFingerprint {
+  memEpisodic: number;
+  memSemantic: number;
+  memProcedural: number;
+  memTotalTokens: number;
+  promptVersion: number;
+  toolCount: number;
+  tier: number;
+  baseCost: number;
+  drives: Record<DriveName, number>;
+  generation: number;
+}
+
 // Task system
 export interface Task {
   id: string;
