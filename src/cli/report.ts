@@ -65,7 +65,21 @@ function loadAgents(runDir: string): AgentState[] {
     if (!entry.isDirectory() || entry.name === "shared") continue;
     const statePath = join(runDir, entry.name, "state.json");
     try {
-      agents.push(JSON.parse(readFileSync(statePath, "utf-8")));
+      const state = JSON.parse(readFileSync(statePath, "utf-8"));
+      // Restore cycle history from metrics.jsonl (SSoT) if state.json has none
+      if (!state.energy?.cycleHistory?.length) {
+        const metricsPath = join(runDir, entry.name, "metrics.jsonl");
+        try {
+          const raw = readFileSync(metricsPath, "utf-8");
+          state.energy.cycleHistory = raw
+            .split("\n")
+            .filter((l: string) => l.trim().length > 0)
+            .map((l: string) => JSON.parse(l));
+        } catch {
+          // No metrics file yet
+        }
+      }
+      agents.push(state);
     } catch {
       // State file not written yet — skip
     }

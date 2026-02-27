@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AgentEvent, Outcome } from "../types/index.js";
+import { appendFileSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import type { AgentEvent, CycleRecord, Outcome } from "../types/index.js";
 import type { LLM } from "../llm/index.js";
 import type { Executor } from "../executor/index.js";
 import type { DriveSystem } from "../state/drives.js";
@@ -169,6 +171,9 @@ export class AgentStateMachine {
       this.cur.relevance,
       this.cur.model,
     );
+
+    // 6b. Append to metrics.jsonl — SSoT for per-cycle history
+    this.appendMetrics();
 
     // 7. Housekeeping
     this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.lastToolCount);
@@ -361,6 +366,41 @@ export class AgentStateMachine {
   private summarizeRecentActions(): string {
     if (this.cur.actions.length === 0) return "(no actions taken)";
     return this.cur.actions.slice(-30).join("\n");
+  }
+
+  /** Derive the metrics.jsonl path from the save path (sibling file). */
+  private get metricsPath(): string {
+    return join(dirname(this.savePath), "metrics.jsonl");
+  }
+
+  /** Append the latest CycleRecord to the per-agent metrics.jsonl (SSoT for cycle history). */
+  private appendMetrics(): void {
+    const history = this.state.energy.cycleHistory;
+    if (history.length === 0) return;
+    const record = history[history.length - 1]!;
+    const line: CycleRecord & { agentId: string; reserves: number } = {
+      ...record,
+      agentId: this.state.id,
+      reserves: this.state.energy.remaining,
+    };
+    try {
+      appendFileSync(this.metricsPath, JSON.stringify(line) + "\n");
+    } catch {
+      // Non-critical — metrics is observability, not correctness
+    }
+  }
+
+  /** Load cycle history from a metrics.jsonl file. Returns parsed CycleRecords. */
+  static loadMetrics(metricsPath: string): CycleRecord[] {
+    try {
+      const raw = readFileSync(metricsPath, "utf-8");
+      return raw
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as CycleRecord);
+    } catch {
+      return [];
+    }
   }
 
   setTaskReward(reward: number, tier: number): void {

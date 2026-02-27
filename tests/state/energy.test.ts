@@ -160,6 +160,9 @@ describe("EnergyLedger", () => {
     expect(restored.spent).toBe(e.spent);
     expect(restored.reserves).toBe(e.reserves);
     expect(restored.earned).toBe(e.earned);
-    expect(restored.cycleHistory).toHaveLength(1);
+    // cycleHistory is omitted from toJSON — metrics.jsonl is the SSoT
+    expect(restored.cycleHistory).toHaveLength(0);
+    // In-memory history still works
+    expect(e.cycleHistory).toHaveLength(1);
   });
 });

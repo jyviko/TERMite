@@ -236,6 +236,13 @@ export class Arena {
 
       const state = await AgentStateManager.load(statePath);
 
+      // Restore cycle history from metrics.jsonl (SSoT)
+      const metricsPath = join(this.runDir, dir, "metrics.jsonl");
+      const cycleHistory = AgentStateMachine.loadMetrics(metricsPath);
+      if (cycleHistory.length > 0) {
+        state.energy.cycleHistory = cycleHistory;
+      }
+
       // Skip dead agents
       if (state.energy.remaining <= 0) {
         skipped++;

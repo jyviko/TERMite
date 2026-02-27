@@ -209,6 +209,7 @@ export class EnergyLedger {
   }
 
   toJSON(): EnergyLedgerData {
+    // cycleHistory omitted — metrics.jsonl is the SSoT for per-cycle records
     return {
       budget: this.budget,
       spent: this.spent,
@@ -217,7 +218,7 @@ export class EnergyLedger {
       earned: this.earned,
       earnedFromPrizes: this.earnedFromPrizes,
       baseCost: this.baseCost,
-      cycleHistory: this.cycleHistory,
+      cycleHistory: [],
     };
   }
 

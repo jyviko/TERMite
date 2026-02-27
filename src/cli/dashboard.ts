@@ -156,6 +156,20 @@ function loadAgents(): AgentData[] {
     const statePath = join(SAVES_DIR, entry.name, "state.json");
     try {
       const state = JSON.parse(readFileSync(statePath, "utf-8"));
+      // Restore cycle history from metrics.jsonl (SSoT) if state.json has none
+      const energyObj = state.energy ?? {};
+      if (!energyObj.cycleHistory?.length) {
+        const metricsPath = join(SAVES_DIR, entry.name, "metrics.jsonl");
+        try {
+          const raw = readFileSync(metricsPath, "utf-8");
+          energyObj.cycleHistory = raw
+            .split("\n")
+            .filter((l: string) => l.trim().length > 0)
+            .map((l: string) => JSON.parse(l));
+        } catch {
+          // No metrics file yet
+        }
+      }
       // Merge live tier from census (entry.json only exists after death/shutdown)
       const id = String(state.id ?? state.agent_id ?? "");
       const cEntry = census.get(id);
