@@ -95,7 +95,7 @@ const MODEL_BOUNTY_MULTIPLIER: Record<string, number> = {
   "claude-opus-4-5": 5.0,
 };
 
-function lookupBountyMultiplier(model: string): number {
+export function lookupBountyMultiplier(model: string): number {
   // Exact match first
   if (MODEL_BOUNTY_MULTIPLIER[model] !== undefined) return MODEL_BOUNTY_MULTIPLIER[model];
   // Prefix match (handles version suffixes like -20251001)

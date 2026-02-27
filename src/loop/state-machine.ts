@@ -132,19 +132,7 @@ export class AgentStateMachine {
     this.taskReward = null;
     this.taskTier = null;
 
-    // Snapshot cycle cost before memorize (memorize cost is maintenance overhead)
-    const cycleCost = this.state.energy.currentCycleCost;
-
-    // 4. End cycle — push CycleRecord to history
-    this.state.energy.endCycle(
-      this.state.cycleCount,
-      this.cur.outcome,
-      this.cur.sources.join(", "),
-      this.cur.relevance,
-      this.cur.model,
-    );
-
-    // 5. Memorize — cheap LLM call to manage memory (MID TERM compression + LONG TERM promotion)
+    // 4. Memorize — cheap LLM call to manage memory (MID TERM compression + LONG TERM promotion)
     yield { type: "phase_change", phase: "memorizing" };
     const memorizeBudget = BASE_MEMORY_TOKEN_BUDGET + Math.floor(this.state.energy.earned / 200);
     const memorizeResult = await runMemorizePhase(
@@ -156,12 +144,12 @@ export class AgentStateMachine {
       memorizeBudget,
     );
 
-    // Burn memorize cost (maintenance overhead, tracked in next cycle)
+    // Burn memorize cost (now captured in the current cycle, not the next one)
     if (memorizeResult.usage.output > 0) {
       this.state.energy.burn(this.state.config.routing.memorize.model, memorizeResult.usage);
     }
 
-    // 6. Apply memory operations (compress, forget, consolidate, promptRewrite)
+    // 5. Apply memory operations (compress, forget, consolidate, promptRewrite)
     const oldTokens = this.state.memories.totalTokenCost;
     applyMemorizeOperations(memorizeResult.ops, this.state.memories, this.state.config);
     const newTokens = this.state.memories.totalTokenCost;
@@ -171,6 +159,15 @@ export class AgentStateMachine {
       this.state.energy.credit(bonus);
       this.cur.sources.push(`consolidation:${bonus}`);
     }
+
+    // 6. End cycle — push CycleRecord to history (after memorize so its cost is included)
+    this.state.energy.endCycle(
+      this.state.cycleCount,
+      this.cur.outcome,
+      this.cur.sources.join(", "),
+      this.cur.relevance,
+      this.cur.model,
+    );
 
     // 7. Housekeeping
     this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.lastToolCount);

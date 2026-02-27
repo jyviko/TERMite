@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { Task } from "../types/index.js";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 // Default tools live in <project-root>/tools/ as editable, committable files.
@@ -938,6 +938,7 @@ export class TaskGenerator {
     const workDir = join(workspacePath, "work");
     const toolsDir = join(workspacePath, "tools");
 
+    rmSync(dataDir, { recursive: true, force: true });
     mkdirSync(dataDir, { recursive: true });
     mkdirSync(outputDir, { recursive: true });
     mkdirSync(workDir, { recursive: true });

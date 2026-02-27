@@ -84,6 +84,11 @@ export class TEQPool {
     this.totalDeposited += amount;
   }
 
+  /** Update the regen rate at runtime (e.g. to scale with population × model multiplier). */
+  setRegenRate(rate: number): void {
+    this.regenPerCycle = rate;
+  }
+
   /** Called on a timer — adds regenPerCycle TEQs, capped at maxBalance. */
   regenerate(): void {
     const added = Math.min(this.regenPerCycle, this.maxBalance - this.balance);

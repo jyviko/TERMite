@@ -8,6 +8,7 @@ import { AgentStateManager } from "../state/agent-state.js";
 import { MemoryStore } from "../state/memory.js";
 import { AgentStateMachine } from "../loop/state-machine.js";
 import { TaskGenerator, TIER_REWARDS } from "./task-generator.js";
+import { lookupBountyMultiplier } from "../loop/resolve.js";
 import { TaskVerifier } from "./task-verifier.js";
 import { ConfigIterator } from "./iteration.js";
 import { SharedBudget } from "./shared-budget.js";
@@ -106,6 +107,21 @@ export class Arena {
     this.openDataGenerator = new OpenDataGenerator();
   }
 
+  /** Scale pool regen rate to population size × average model multiplier. */
+  private calibratePool(): void {
+    const BASE_REGEN_PER_AGENT = 50_000;
+    const entries = Array.from(this.agents.values());
+    if (entries.length === 0) return;
+
+    const totalMultiplier = entries.reduce((sum, e) => {
+      return sum + lookupBountyMultiplier(e.state.config.routing.thinking.model);
+    }, 0);
+    const avgMultiplier = totalMultiplier / entries.length;
+
+    const scaledRegen = Math.floor(BASE_REGEN_PER_AGENT * entries.length * avgMultiplier);
+    this.teqPool.setRegenRate(scaledRegen);
+  }
+
   async start(): Promise<void> {
     // Each run gets its own timestamped directory under workspaceRoot
     const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -153,6 +169,8 @@ export class Arena {
     for (let i = seeded; i < this.config.agentCount; i++) {
       await this.spawnAgent();
     }
+
+    this.calibratePool();
   }
 
   /** Resume a previously stopped run. Loads agent state + arena metadata, spins fresh containers on existing workspaces. */
@@ -264,6 +282,8 @@ export class Arena {
     }
 
     console.log(`[ARENA] Resumed ${resumed} agents, skipped ${skipped} dead agents from ${runDir}`);
+
+    this.calibratePool();
   }
 
   async run(): Promise<void> {
@@ -655,6 +675,7 @@ export class Arena {
       entry.state.energy.burnFlat(investment);
 
       const copy = await this.spawnAgent(id, copyConfig, copyReserves, inheritedMemories, undefined, copyTier);
+      this.calibratePool();
 
       const gen = entry.state.generation + 1;
       console.log(
