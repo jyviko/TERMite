@@ -1,10 +1,6 @@
 #!/bin/bash
 # description: read - Read a file or list a directory. Input: file or directory path. Returns contents or listing.
-if [ -n "$1" ]; then
-  TARGET="$1"
-else
-  TARGET="$(cat)"
-fi
+TARGET="$(cat)"
 
 if [ -z "$TARGET" ]; then
   echo "Error: no path provided"

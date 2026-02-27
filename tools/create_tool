@@ -1,10 +1,6 @@
 #!/bin/bash
 # description: create_tool - Create a reusable tool. Input: name|description|script body. Available next cycle.
-if [ $# -gt 0 ]; then
-  input="$*"
-else
-  input="$(cat)"
-fi
+input="$(cat)"
 name="${input%%|*}"
 rest="${input#*|}"
 desc="${rest%%|*}"

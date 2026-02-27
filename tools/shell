@@ -1,7 +1,3 @@
 #!/bin/bash
 # description: shell - Run a shell command. Input: the command string.
-if [ $# -gt 0 ]; then
-  eval "$*"
-else
-  eval "$(cat)"
-fi
+eval "$(cat)"

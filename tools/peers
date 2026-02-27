@@ -9,7 +9,7 @@ except Exception as e:
     print(f"Peer tools not available: {e}")
     sys.exit(0)
 
-arg = sys.argv[1].strip() if len(sys.argv) > 1 else (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
+arg = sys.stdin.read().strip()
 agents = data.get("agents", {})
 
 if not arg:
