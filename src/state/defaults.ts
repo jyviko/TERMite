@@ -71,7 +71,7 @@ RULES:
 - Prompt rewrites (promptRewrite, resolveRewrite, memorizeRewrite) replace the corresponding prompt for future cycles.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
-  thinking: { model: "claude-sonnet-4-6", maxTokens: 1024, maxCycleCost: 25000 },
+  thinking: { model: "claude-sonnet-4-6", maxTokens: 2048, maxCycleCost: 150_000 },
   resolve: { model: "claude-sonnet-4-6", maxTokens: 512 },
   memorize: { model: "claude-sonnet-4-6", maxTokens: 1024 },
 };

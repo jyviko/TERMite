@@ -88,6 +88,7 @@ export class EnergyLedger {
 
   private cycleCost = 0;
   private cycleIncome = 0;
+  private cycleCacheWriteCost = 0;
   private cycleInputTokens = 0;
   private cycleOutputTokens = 0;
   private cycleCacheCreation = 0;
@@ -110,6 +111,10 @@ export class EnergyLedger {
     this.spent += cost;
     this.cycleCost += cost;
     if (this.reserves < 0) this.reserves = 0;
+
+    // Track cache write cost separately — it's infrastructure, not cognition
+    const pricing = lookupPricing(model);
+    this.cycleCacheWriteCost += Math.ceil(usage.cacheCreation * pricing.cacheWrite);
 
     // Track raw token breakdown for observability
     this.cycleInputTokens += usage.input;
@@ -163,6 +168,7 @@ export class EnergyLedger {
       cycle,
       timestamp: new Date().toISOString(),
       cost: this.cycleCost,
+      cacheWriteCost: this.cycleCacheWriteCost,
       income: actualIncome,
       net: actualIncome - this.cycleCost,
       outcome,
@@ -176,6 +182,7 @@ export class EnergyLedger {
     });
     this.cycleCost = 0;
     this.cycleIncome = 0;
+    this.cycleCacheWriteCost = 0;
     this.cycleInputTokens = 0;
     this.cycleOutputTokens = 0;
     this.cycleCacheCreation = 0;
@@ -202,6 +209,15 @@ export class EnergyLedger {
 
   get currentCycleCost(): number {
     return this.cycleCost;
+  }
+
+  /** Cycle cost excluding cache writes — used by shouldStop to avoid penalizing memory. */
+  get currentCycleVariableCost(): number {
+    return this.cycleCost - this.cycleCacheWriteCost;
+  }
+
+  get currentCycleCacheWriteCost(): number {
+    return this.cycleCacheWriteCost;
   }
 
   get ratio(): number {

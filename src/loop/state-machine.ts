@@ -401,7 +401,7 @@ export class AgentStateMachine {
         toolCount: this.availableToolCount,
         tier: this.lastTaskTier,
         baseCost: this.state.energy.baseCost,
-        cacheWriteCost: this.state.energy.currentCycleCacheWriteCost,
+        cacheWriteCost: record.cacheWriteCost ?? 0,
         drives: {
           explore: this.state.drives.drives.explore.level,
           acquire: this.state.drives.drives.acquire.level,

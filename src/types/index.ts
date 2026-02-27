@@ -50,6 +50,7 @@ export interface CycleRecord {
   cycle: number;
   timestamp?: string;   // ISO wall-clock time
   cost: number;
+  cacheWriteCost?: number;  // cache write TEQ — infrastructure, excluded from shouldStop
   income: number;
   net: number;
   outcome: Outcome | null;
@@ -122,6 +123,7 @@ export interface StrategyFingerprint {
   toolCount: number;
   tier: number;
   baseCost: number;
+  cacheWriteCost: number;
   drives: Record<DriveName, number>;
   generation: number;
 }

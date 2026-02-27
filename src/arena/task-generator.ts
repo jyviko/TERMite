@@ -15,13 +15,15 @@ interface TaskTemplate {
 }
 
 // Expected TEQ cost for a code-writing agent. Used by efficiency bonus.
+// Expected variable TEQ cost per tier (cache writes excluded).
+// Calibrated for 3-4 Sonnet iterations at 2048 max output tokens.
 export const TIER_EXPECTED_COST: Record<number, number> = {
-  1: 20_000,
-  2: 40_000,
-  3: 70_000,
-  4: 120_000,
-  5: 180_000,
-  6: 250_000,
+  1: 80_000,
+  2: 120_000,
+  3: 180_000,
+  4: 250_000,
+  5: 350_000,
+  6: 500_000,
 };
 
 // Rewards in TEQ. Calibrated so code-writing agents earn surplus,

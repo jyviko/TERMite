@@ -131,6 +131,46 @@ describe("EnergyLedger", () => {
     expect(record.cacheReadTokens).toBe(500);
   });
 
+  it("tracks cache write cost separately from total cycle cost", () => {
+    const e = new EnergyLedger({ budget: 500000 });
+    // Sonnet: 6000 cache creation × 3.75 = 22500 TEQ cache write
+    // Uncached input: (6200 - 6000) = 200 × 3 = 600 TEQ
+    // Output: 200 × 15 = 3000 TEQ
+    // Total: 22500 + 600 + 3000 = 26100
+    e.burn(SONNET, usage(200, 6200, 6000, 0));
+    expect(e.currentCycleCost).toBe(26100);
+    expect(e.currentCycleCacheWriteCost).toBe(22500);
+    expect(e.currentCycleVariableCost).toBe(3600);
+  });
+
+  it("variable cost accumulates across multiple burns in same cycle", () => {
+    const e = new EnergyLedger({ budget: 500000 });
+    // First burn: cache write (infrastructure)
+    e.burn(SONNET, usage(100, 6100, 6000, 0));
+    // cache write: 6000 × 3.75 = 22500, uncached input: 100 × 3 = 300, output: 100 × 15 = 1500
+    // total = 24300, cache write = 22500, variable = 1800
+
+    // Second burn: cache read (cheap) + output (cognition)
+    e.burn(SONNET, usage(500, 5000, 0, 5000));
+    // cache read: 5000 × 0.3 = 1500, output: 500 × 15 = 7500
+    // total = 9000, cache write = 0, variable = 9000
+
+    expect(e.currentCycleCacheWriteCost).toBe(22500);
+    expect(e.currentCycleVariableCost).toBe(24300 + 9000 - 22500);
+  });
+
+  it("endCycle persists cacheWriteCost in CycleRecord and resets accumulators", () => {
+    const e = new EnergyLedger({ budget: 500000 });
+    e.burn(SONNET, usage(200, 6200, 6000, 0));
+    e.endCycle(0, "success", "test");
+    const record = e.cycleHistory[0]!;
+    expect(record.cacheWriteCost).toBe(22500);
+    // Accumulators reset
+    expect(e.currentCycleCost).toBe(0);
+    expect(e.currentCycleCacheWriteCost).toBe(0);
+    expect(e.currentCycleVariableCost).toBe(0);
+  });
+
   it("avgCycleCost computes correctly", () => {
     const e = new EnergyLedger({ budget: 100000 });
     e.burn(HAIKU, usage(100)); // 500
