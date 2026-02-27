@@ -65,13 +65,39 @@ describe("ChallengeGenerator", () => {
 });
 
 describe("ChallengePool", () => {
-  it("refresh populates pool to target count", () => {
+  it("first refresh seeds half the target count", () => {
     const sharedDir = join(tmpdir(), `termite-pool-test-${Date.now()}`);
     mkdirSync(join(sharedDir, "challenges"), { recursive: true });
     const pool = new ChallengePool(sharedDir, new ChallengeGenerator());
 
-    pool.refresh(0, 4); // 3 + floor(sqrt(4)) = 5
-    expect(pool.size).toBe(5);
+    // target = 4 + floor(sqrt(4)) = 6, first refresh seeds ceil(6/2) = 3
+    pool.refresh(0, 4);
+    expect(pool.size).toBe(3);
+
+    rmSync(sharedDir, { recursive: true, force: true });
+  });
+
+  it("subsequent refreshes eventually fill to target (stochastic trickle)", () => {
+    const sharedDir = join(tmpdir(), `termite-pool-test-stagger-${Date.now()}`);
+    mkdirSync(join(sharedDir, "challenges"), { recursive: true });
+    const pool = new ChallengePool(sharedDir, new ChallengeGenerator());
+
+    // target = 4 + floor(sqrt(4)) = 6, first refresh seeds 3
+    pool.refresh(0, 4);
+    expect(pool.size).toBe(3);
+
+    // Subsequent refreshes are stochastic — each tick may add 0, 1, or 2.
+    // After enough ticks, pool should reach target. Never exceed it.
+    for (let cycle = 1; cycle <= 50; cycle++) {
+      pool.refresh(cycle, 4);
+      expect(pool.size).toBeLessThanOrEqual(6);
+    }
+    // After 50 ticks with 40% chance each, pool should have filled
+    expect(pool.size).toBe(6);
+
+    // Extra refresh at target: no overshoot
+    pool.refresh(51, 4);
+    expect(pool.size).toBe(6);
 
     rmSync(sharedDir, { recursive: true, force: true });
   });

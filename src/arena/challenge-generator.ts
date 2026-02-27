@@ -404,6 +404,863 @@ function generateQuarterlyData(): Record<string, string> {
   return files;
 }
 
+// ── Code fixing data generators ──
+
+function generateFixPythonData(): Record<string, string> {
+  const variants = [
+    () => {
+      const a = randomInt(1, 20);
+      const b = a + randomInt(5, 30);
+      const expected = ((b - a + 1) * (a + b)) / 2;
+      return {
+        script: `def sum_range(start, end):\n    total = 0\n    for i in range(start, end):\n        total += i\n    return total\n\nprint(sum_range(${a}, ${b}))`,
+        expected: String(expected),
+      };
+    },
+    () => {
+      const nums = Array.from({ length: randomInt(5, 15) }, () => randomInt(1, 100));
+      const expected = Math.max(...nums);
+      return {
+        script: `def find_max(numbers):\n    result = numbers[0]\n    for n in numbers:\n        if n < result:\n            result = n\n    return result\n\nprint(find_max(${JSON.stringify(nums)}))`,
+        expected: String(expected),
+      };
+    },
+    () => {
+      const n = randomInt(5, 12);
+      let factorial = 1;
+      for (let i = 2; i <= n; i++) factorial *= i;
+      return {
+        script: `def factorial(n):\n    if n <= 1:\n        return 1\n    factorial(n - 1) * n\n\nprint(factorial(${n}))`,
+        expected: String(factorial),
+      };
+    },
+    () => {
+      const items = Array.from({ length: randomInt(8, 20) }, () => randomInt(1, 50));
+      const expected = items.filter(x => x % 2 === 0).reduce((a, b) => a + b, 0);
+      return {
+        script: `def sum_even(lst):\n    total = 0\n    for x in lst:\n        if x % 2 == 1:\n            total += x\n    return total\n\nprint(sum_even(${JSON.stringify(items)}))`,
+        expected: String(expected),
+      };
+    },
+  ];
+  const v = variants[randomInt(0, variants.length - 1)]!();
+  return { "script.py": v.script, ".expected": v.expected };
+}
+
+function generateFixBashData(): Record<string, string> {
+  const variants = [
+    () => {
+      const items = Array.from({ length: randomInt(5, 15) }, () => `item ${randomInt(1, 100)}`);
+      return {
+        script: `#!/bin/bash\ncount=0\nfor f in ${items.join(" ")}; do\n  count=$((count + 1))\ndone\necho $count`,
+        expected: String(items.length),
+      };
+    },
+    () => {
+      const n = randomInt(5, 20);
+      const expected = ((n * (n + 1)) / 2);
+      return {
+        script: `#!/bin/bash\nsum=0\nfor i in $(seq 1 ${n}); do\n  sum=$((sum + i))\ndone\necho "$sum"`,
+        expected: String(expected),
+      };
+    },
+    () => {
+      const values = Array.from({ length: randomInt(5, 10) }, () => randomInt(1, 100));
+      let max = values[0]!;
+      for (const v of values) if (v > max) max = v;
+      return {
+        script: `#!/bin/bash\nvalues=(${values.join(" ")})\nmax=\${values[0]}\nfor v in "\${values[@]}"; do\n  if [ $v -gt $max ]; then\n    max=$v\n  fi\ndone\necho $max`,
+        expected: String(max),
+      };
+    },
+  ];
+  const v = variants[randomInt(0, variants.length - 1)]!();
+  return { "script.sh": v.script, ".expected": v.expected };
+}
+
+function generateFixNodeData(): Record<string, string> {
+  const variants = [
+    () => {
+      const nums = Array.from({ length: randomInt(5, 12) }, () => randomInt(1, 50));
+      const expected = [...nums].sort((a, b) => a - b);
+      return {
+        script: `const nums = ${JSON.stringify(nums)};\nconst sorted = nums.sort();\nconsole.log(sorted.join(","));`,
+        expected: expected.join(","),
+      };
+    },
+    () => {
+      const strings = ["10", "9", "20", "3", "15", "7", "100", "1"];
+      const expected = strings.map(s => parseInt(s, 10)).filter(n => n > 5);
+      return {
+        script: `const data = ${JSON.stringify(strings)};\nconst result = data.map(s => parseInt(s)).filter(n => n > 5);\nconsole.log(result.join(","));`,
+        expected: expected.join(","),
+      };
+    },
+    () => {
+      const items = Array.from({ length: randomInt(6, 12) }, (_, i) => ({ id: i + 1, val: randomInt(1, 100) }));
+      const expected = items.reduce((s, x) => s + x.val, 0);
+      return {
+        script: `const items = ${JSON.stringify(items)};\nlet sum = 0;\nfor (let i = 0; i <= items.length; i++) {\n  sum += items[i].val;\n}\nconsole.log(sum);`,
+        expected: String(expected),
+      };
+    },
+  ];
+  const v = variants[randomInt(0, variants.length - 1)]!();
+  return { "script.js": v.script, ".expected": v.expected };
+}
+
+function generateMissingFunctionData(): Record<string, string> {
+  const variants = [
+    () => {
+      const nums = Array.from({ length: randomInt(5, 15) }, () => randomInt(1, 100));
+      const expected = nums.filter(n => n % 2 === 0);
+      return {
+        main: `from helpers import filter_even\n\nnums = ${JSON.stringify(nums)}\nresult = filter_even(nums)\nprint(",".join(str(x) for x in result))`,
+        helpers: `# helpers.py\n# TODO: implement filter_even(lst) -> list of even numbers\n`,
+        expected: expected.join(","),
+      };
+    },
+    () => {
+      const words = ["hello", "world", "foo", "bar", "baz", "python", "code"];
+      const shuffled = [...words].sort(() => Math.random() - 0.5).slice(0, randomInt(4, 6));
+      const expected = [...shuffled].sort().join(",");
+      return {
+        main: `from helpers import sort_words\n\nwords = ${JSON.stringify(shuffled)}\nresult = sort_words(words)\nprint(",".join(result))`,
+        helpers: `# helpers.py\n# TODO: implement sort_words(words) -> sorted list of words\n`,
+        expected,
+      };
+    },
+    () => {
+      const text = "the quick brown fox jumps over the lazy dog";
+      const counts: Record<string, number> = {};
+      for (const w of text.split(" ")) counts[w] = (counts[w] || 0) + 1;
+      const expected = Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([k, v]) => `${k}:${v}`).join(",");
+      return {
+        main: `from helpers import count_words\n\ntext = "${text}"\nresult = count_words(text)\nfor k in sorted(result.keys()):\n    print(f"{k}:{result[k]}", end=",")\nprint()`,
+        helpers: `# helpers.py\n# TODO: implement count_words(text) -> dict mapping word to count\n`,
+        expected: expected + ",",
+      };
+    },
+  ];
+  const v = variants[randomInt(0, variants.length - 1)]!();
+  return { "main.py": v.main, "helpers.py": v.helpers, ".expected": v.expected };
+}
+
+function generateDebugMultifileData(): Record<string, string> {
+  const nums = Array.from({ length: randomInt(5, 10) }, () => randomInt(1, 50));
+  const doubled = nums.map(n => n * 2);
+  const sumDoubled = doubled.reduce((a, b) => a + b, 0);
+  const expected = `${doubled.join(",")}\n${sumDoubled}`;
+
+  return {
+    "main.py": `from transform import double_list\nfrom aggregate import total\nimport sys\n\nnums = ${JSON.stringify(nums)}\nresult = double_list(nums)\nprint(",".join(str(x) for x in result))\nprint(total(result))`,
+    "transform.py": `def double_list(lst):\n    return [x * 3 for x in lst]\n`,
+    "aggregate.py": `def total(lst):\n    s = 0\n    for x in lst:\n        s += x\n    return s - 1\n`,
+    ".expected": expected,
+  };
+}
+
+function generateFixAndExtendData(): Record<string, string> {
+  const items = Array.from({ length: randomInt(8, 15) }, () => randomInt(1, 100));
+  const sorted = [...items].sort((a, b) => a - b);
+  const median = sorted.length % 2 === 1
+    ? sorted[Math.floor(sorted.length / 2)]!
+    : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2;
+  const mean = items.reduce((a, b) => a + b, 0) / items.length;
+  const expected = `mean:${mean.toFixed(2)}\nmedian:${Number(median).toFixed(2)}`;
+
+  return {
+    "stats.py": `def compute_mean(nums):\n    return sum(nums) / (len(nums) + 1)\n\ndef compute_stats(nums):\n    return {"mean": compute_mean(nums)}\n`,
+    "SPEC.md": `# Stats Module\n\nThe stats.py module has bugs and is missing features.\n\n## Bugs\n- compute_mean divides by wrong value\n\n## New Features\n- Add compute_median(nums) function\n- compute_stats should return both mean and median\n\n## Expected Output\nRun main.py to produce:\nmean:<value>\nmedian:<value>\nBoth formatted to 2 decimal places.\n`,
+    "main.py": `from stats import compute_stats\n\nnums = ${JSON.stringify(items)}\nresult = compute_stats(nums)\nprint(f"mean:{result['mean']:.2f}")\nprint(f"median:{result['median']:.2f}")`,
+    ".expected": expected,
+  };
+}
+
+// ── Image/Visual data generators ──
+
+function generatePpmPixelCountData(): Record<string, string> {
+  const w = randomInt(15, 30);
+  const h = randomInt(15, 30);
+  const bgR = 255, bgG = 255, bgB = 255;
+  let nonBgCount = 0;
+  const pixels: string[] = [];
+  for (let y = 0; y < h; y++) {
+    const row: string[] = [];
+    for (let x = 0; x < w; x++) {
+      if (Math.random() < 0.3) {
+        row.push(`${randomInt(0, 200)} ${randomInt(0, 200)} ${randomInt(0, 200)}`);
+        nonBgCount++;
+      } else {
+        row.push(`${bgR} ${bgG} ${bgB}`);
+      }
+    }
+    pixels.push(row.join(" "));
+  }
+  const ppm = `P3\n${w} ${h}\n255\n${pixels.join("\n")}`;
+  return { "image.ppm": ppm, ".expected": String(nonBgCount) };
+}
+
+const ASCII_LETTERS: Record<string, string[]> = {
+  A: ["  #  ", " # # ", "#####", "#   #", "#   #"],
+  B: ["#### ", "#   #", "#### ", "#   #", "#### "],
+  C: [" ####", "#    ", "#    ", "#    ", " ####"],
+  D: ["#### ", "#   #", "#   #", "#   #", "#### "],
+  E: ["#####", "#    ", "#### ", "#    ", "#####"],
+  F: ["#####", "#    ", "#### ", "#    ", "#    "],
+  H: ["#   #", "#   #", "#####", "#   #", "#   #"],
+  I: ["#####", "  #  ", "  #  ", "  #  ", "#####"],
+  L: ["#    ", "#    ", "#    ", "#    ", "#####"],
+  O: [" ### ", "#   #", "#   #", "#   #", " ### "],
+  T: ["#####", "  #  ", "  #  ", "  #  ", "  #  "],
+  X: ["#   #", " # # ", "  #  ", " # # ", "#   #"],
+};
+
+function generateAsciiArtData(): Record<string, string> {
+  const letters = Object.keys(ASCII_LETTERS);
+  const wordLen = randomInt(3, 5);
+  const chosen: string[] = [];
+  for (let i = 0; i < wordLen; i++) {
+    chosen.push(letters[randomInt(0, letters.length - 1)]!);
+  }
+  const word = chosen.join("");
+
+  const rows: string[] = [];
+  for (let row = 0; row < 5; row++) {
+    const parts: string[] = [];
+    for (const letter of chosen) {
+      parts.push(ASCII_LETTERS[letter]![row]!);
+    }
+    rows.push(parts.join("  "));
+  }
+
+  return { "art.txt": rows.join("\n"), ".expected": word };
+}
+
+function generatePpmColorHistogramData(): Record<string, string> {
+  const w = randomInt(20, 40);
+  const h = randomInt(20, 40);
+  const palette = [
+    [255, 0, 0], [0, 255, 0], [0, 0, 255],
+    [255, 255, 0], [255, 0, 255], [0, 255, 255],
+    [0, 0, 0], [255, 255, 255],
+  ];
+  const counts: Record<string, number> = {};
+  const pixels: string[] = [];
+  for (let y = 0; y < h; y++) {
+    const row: string[] = [];
+    for (let x = 0; x < w; x++) {
+      const c = palette[randomInt(0, palette.length - 1)]!;
+      const key = `${c[0]},${c[1]},${c[2]}`;
+      counts[key] = (counts[key] || 0) + 1;
+      row.push(`${c[0]} ${c[1]} ${c[2]}`);
+    }
+    pixels.push(row.join(" "));
+  }
+  const ppm = `P3\n${w} ${h}\n255\n${pixels.join("\n")}`;
+  const expected = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([color, count]) => `${color},${count}`)
+    .join("\n");
+  return { "image.ppm": ppm, ".expected": expected };
+}
+
+function generateSvgDataExtractData(): Record<string, string> {
+  const operations = ["sum", "max", "min", "average"];
+  const op = operations[randomInt(0, operations.length - 1)]!;
+  const values: number[] = [];
+  const textElements: string[] = [];
+  const count = randomInt(4, 8);
+  for (let i = 0; i < count; i++) {
+    const v = randomInt(10, 500);
+    values.push(v);
+    const x = 50 + i * 80;
+    textElements.push(`  <text x="${x}" y="100" data-value="${v}">${v}</text>`);
+  }
+
+  let result: number;
+  switch (op) {
+    case "sum": result = values.reduce((a, b) => a + b, 0); break;
+    case "max": result = Math.max(...values); break;
+    case "min": result = Math.min(...values); break;
+    case "average": result = Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100; break;
+    default: result = 0;
+  }
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="800" height="200" data-operation="${op}">\n${textElements.join("\n")}\n</svg>`;
+  return { "data.svg": svg, ".expected": String(result) };
+}
+
+function generatePpmEncodeMessageData(): Record<string, string> {
+  const words = ["HELLO", "AGENT", "CODE", "DATA", "TEST", "PIXEL", "BYTE"];
+  const message = words[randomInt(0, words.length - 1)]!;
+  const w = 40;
+  const h = 10;
+
+  const spec = `# LSB Steganography Spec\n\nEncode the message from message.txt into image.ppm using LSB encoding.\n\n## Algorithm\n1. Read the message as ASCII bytes\n2. For each bit of each byte (MSB first), modify the LSB of the RED channel\n   of consecutive pixels (left-to-right, top-to-bottom)\n3. After all message bits, set the next 8 pixel red LSBs to 0 (null terminator)\n4. Leave all other pixels unchanged\n\nWrite the result to output as encoded.ppm (P3 format).\n`;
+
+  const pixels: number[][] = [];
+  for (let i = 0; i < w * h; i++) {
+    pixels.push([randomInt(0, 127) * 2, randomInt(0, 255), randomInt(0, 255)]);
+  }
+  const ppmRows: string[] = [];
+  for (let y = 0; y < h; y++) {
+    const row: string[] = [];
+    for (let x = 0; x < w; x++) {
+      const p = pixels[y * w + x]!;
+      row.push(`${p[0]} ${p[1]} ${p[2]}`);
+    }
+    ppmRows.push(row.join(" "));
+  }
+  const ppm = `P3\n${w} ${h}\n255\n${ppmRows.join("\n")}`;
+
+  return {
+    "image.ppm": ppm,
+    "message.txt": message,
+    "SPEC.md": spec,
+    ".expected": message,
+  };
+}
+
+// ── File system data generators ──
+
+function generateFindFilesData(): Record<string, string> {
+  const extensions = ["txt", "csv", "log", "json", "md"];
+  const targetExt = extensions[randomInt(0, extensions.length - 1)]!;
+  const dirs = ["a", "a/b", "a/b/c", "d", "d/e", "f"];
+  const files: Record<string, string> = {};
+  let count = 0;
+  for (const dir of dirs) {
+    const numFiles = randomInt(2, 6);
+    for (let i = 0; i < numFiles; i++) {
+      const ext = extensions[randomInt(0, extensions.length - 1)]!;
+      const name = `tree/${dir}/file${i}.${ext}`;
+      files[name] = `content of ${name}`;
+      if (ext === targetExt) count++;
+    }
+  }
+  files[".meta"] = targetExt;
+  files[".expected"] = String(count);
+  return files;
+}
+
+function generateDirectorySizeData(): Record<string, string> {
+  const dirs = ["data/logs", "data/cache", "data/config", "data/tmp"];
+  const files: Record<string, string> = {};
+  const dirSizes: Record<string, number> = {};
+  for (const dir of dirs) {
+    dirSizes[dir] = 0;
+    const numFiles = randomInt(3, 8);
+    for (let i = 0; i < numFiles; i++) {
+      const size = randomInt(10, 500);
+      const content = "x".repeat(size);
+      files[`tree/${dir}/file${i}.dat`] = content;
+      dirSizes[dir] += size;
+    }
+  }
+  const expected = Object.entries(dirSizes)
+    .sort((a, b) => b[1] - a[1])
+    .map(([dir, size]) => `${dir},${size}`)
+    .join("\n");
+  files[".expected"] = expected;
+  return files;
+}
+
+function generateShatteredFileData(): Record<string, string> {
+  const sentences = [
+    "The quick brown fox jumps over the lazy dog.",
+    "Pack my box with five dozen liquor jugs.",
+    "How vexingly quick daft zebras jump.",
+    "The five boxing wizards jump quickly.",
+    "Bright vixens jump; dozy fowl quack.",
+  ];
+  const fullText = sentences.slice(0, randomInt(3, 5)).join("\n");
+  const chunks = fullText.match(/.{1,40}/g) ?? [fullText];
+  const files: Record<string, string> = {};
+  const dirs = ["chunks/alpha", "chunks/beta", "chunks/gamma"];
+  for (let i = 0; i < chunks.length; i++) {
+    const dir = dirs[randomInt(0, dirs.length - 1)]!;
+    files[`${dir}/chunk_${String(i + 1).padStart(3, "0")}.txt`] = chunks[i]!;
+  }
+  files[".expected"] = fullText;
+  return files;
+}
+
+// ── String/Encoding data generators ──
+
+function generateBase64Data(): Record<string, string> {
+  const messages = [
+    "Hello, World! This is a test of base64 encoding.",
+    "The answer to life, the universe, and everything is 42.",
+    "All your base are belong to us.",
+    "To be or not to be, that is the question.",
+    "Elementary, my dear Watson.",
+  ];
+  const message = messages[randomInt(0, messages.length - 1)]!;
+  const encoded = Buffer.from(message).toString("base64");
+  return { "encoded.txt": encoded, ".expected": message };
+}
+
+function generateHexDumpData(): Record<string, string> {
+  const messages = [
+    "Secret message hidden in hex",
+    "Decode this hexadecimal data",
+    "Binary to text conversion test",
+    "Agent found the hidden text",
+  ];
+  const message = messages[randomInt(0, messages.length - 1)]!;
+  const hex = Array.from(Buffer.from(message)).map(b => b.toString(16).padStart(2, "0")).join(" ");
+  return { "hexdump.txt": hex, ".expected": message };
+}
+
+function generateChecksumData(): Record<string, string> {
+  const lines: string[] = [];
+  const checksums: string[] = [];
+  const badLines: number[] = [];
+  const lineCount = randomInt(10, 20);
+  for (let i = 0; i < lineCount; i++) {
+    const line = `Line ${i + 1}: data_${randomInt(1000, 9999)}`;
+    lines.push(line);
+    // Simple checksum: sum of char codes mod 10000
+    const checksum = Array.from(line).reduce((s, c) => s + c.charCodeAt(0), 0);
+    if (Math.random() < 0.3) {
+      checksums.push(`${checksum + randomInt(1, 100)}`);
+      badLines.push(i + 1);
+    } else {
+      checksums.push(`${checksum}`);
+    }
+  }
+  return {
+    "data.txt": lines.join("\n"),
+    "CHECKSUMS.txt": checksums.join("\n"),
+    "SPEC.md": "Each line in CHECKSUMS.txt is the sum of ASCII char codes of the corresponding line in data.txt.\nFind lines where the checksum does not match.\nWrite the 1-based line numbers of bad lines, one per line, sorted numerically.",
+    ".expected": badLines.join("\n"),
+  };
+}
+
+function generateMultiEncodingData(): Record<string, string> {
+  const message = `agent${randomInt(100, 999)}`;
+  const steps = ["base64", "reverse"];
+  let current = message;
+  // Apply in reverse to get input
+  const reversed = [...current].reverse().join("");
+  const encoded = Buffer.from(reversed).toString("base64");
+
+  return {
+    "input.txt": encoded,
+    "pipeline.txt": steps.join("\n"),
+    "SPEC.md": "Apply the transforms in pipeline.txt in order to input.txt.\nbase64 = base64 decode\nreverse = reverse the string\nWrite final result to result.txt.",
+    ".expected": message,
+  };
+}
+
+// ── Math/Algorithmic data generators ──
+
+function generatePrimeSieveData(): Record<string, string> {
+  const limit = randomInt(50, 200);
+  const sieve = new Array(limit + 1).fill(true);
+  sieve[0] = sieve[1] = false;
+  for (let i = 2; i * i <= limit; i++) {
+    if (sieve[i]) {
+      for (let j = i * i; j <= limit; j += i) sieve[j] = false;
+    }
+  }
+  const primes: number[] = [];
+  for (let i = 2; i <= limit; i++) if (sieve[i]) primes.push(i);
+  return { "limit.txt": String(limit), ".expected": primes.join("\n") };
+}
+
+function generateSequenceData(): Record<string, string> {
+  const types = [
+    () => {
+      const start = randomInt(1, 10);
+      const diff = randomInt(2, 7);
+      const terms = Array.from({ length: 8 }, (_, i) => start + i * diff);
+      const next5 = Array.from({ length: 5 }, (_, i) => start + (8 + i) * diff);
+      return { terms, next5 };
+    },
+    () => {
+      const start = randomInt(2, 5);
+      const ratio = randomInt(2, 3);
+      const terms = Array.from({ length: 6 }, (_, i) => start * Math.pow(ratio, i));
+      const next5 = Array.from({ length: 5 }, (_, i) => start * Math.pow(ratio, 6 + i));
+      return { terms, next5 };
+    },
+    () => {
+      const terms = [1, 1];
+      for (let i = 2; i < 10; i++) terms.push(terms[i - 1]! + terms[i - 2]!);
+      const next5: number[] = [];
+      let a = terms[terms.length - 2]!, b = terms[terms.length - 1]!;
+      for (let i = 0; i < 5; i++) {
+        const c = a + b;
+        next5.push(c);
+        a = b;
+        b = c;
+      }
+      return { terms, next5 };
+    },
+    () => {
+      const start = randomInt(1, 5);
+      const terms = Array.from({ length: 8 }, (_, i) => (start + i) * (start + i));
+      const next5 = Array.from({ length: 5 }, (_, i) => (start + 8 + i) * (start + 8 + i));
+      return { terms, next5 };
+    },
+  ];
+  const gen = types[randomInt(0, types.length - 1)]!();
+  return {
+    "sequence.txt": gen.terms.join("\n"),
+    ".expected": gen.next5.join("\n"),
+  };
+}
+
+function generateGraphData(): Record<string, string> {
+  const nodeCount = randomInt(8, 15);
+  const nodes = Array.from({ length: nodeCount }, (_, i) => String.fromCharCode(65 + i));
+  const edges: [string, string][] = [];
+  // Build a connected graph
+  for (let i = 1; i < nodeCount; i++) {
+    const target = randomInt(0, i - 1);
+    edges.push([nodes[i]!, nodes[target]!]);
+    edges.push([nodes[target]!, nodes[i]!]);
+  }
+  // Add some extra edges
+  for (let i = 0; i < nodeCount; i++) {
+    if (Math.random() < 0.3) {
+      const j = randomInt(0, nodeCount - 1);
+      if (i !== j) {
+        edges.push([nodes[i]!, nodes[j]!]);
+        edges.push([nodes[j]!, nodes[i]!]);
+      }
+    }
+  }
+
+  // BFS for shortest path
+  const start = nodes[0]!;
+  const end = nodes[nodeCount - 1]!;
+  const adj: Record<string, Set<string>> = {};
+  for (const n of nodes) adj[n] = new Set();
+  for (const [a, b] of edges) adj[a]!.add(b);
+
+  const queue: [string, string[]][] = [[start, [start]]];
+  const visited = new Set([start]);
+  let shortestPath: string[] = [];
+  while (queue.length > 0) {
+    const [node, path] = queue.shift()!;
+    if (node === end) { shortestPath = path; break; }
+    for (const neighbor of adj[node]!) {
+      if (!visited.has(neighbor)) {
+        visited.add(neighbor);
+        queue.push([neighbor, [...path, neighbor]]);
+      }
+    }
+  }
+
+  const adjList = nodes.map(n => `${n}: ${[...adj[n]!].sort().join(",")}`).join("\n");
+  return {
+    "graph.txt": adjList,
+    "query.txt": `${start}\n${end}`,
+    ".expected": shortestPath.join(","),
+  };
+}
+
+// ── JSON data generators ──
+
+function generateJsonFlattenData(): Record<string, string> {
+  const obj: Record<string, unknown> = {
+    name: "test",
+    version: randomInt(1, 10),
+    config: {
+      debug: true,
+      timeout: randomInt(100, 5000),
+      database: {
+        host: "localhost",
+        port: randomInt(3000, 9000),
+        name: `db_${randomInt(1, 99)}`,
+      },
+    },
+    tags: undefined, // skip arrays for clean flattening
+    count: randomInt(1, 100),
+  };
+  delete obj.tags;
+
+  function flatten(o: Record<string, unknown>, prefix = ""): [string, string][] {
+    const result: [string, string][] = [];
+    for (const [k, v] of Object.entries(o)) {
+      const key = prefix ? `${prefix}.${k}` : k;
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        result.push(...flatten(v as Record<string, unknown>, key));
+      } else {
+        result.push([key, String(v)]);
+      }
+    }
+    return result;
+  }
+
+  const flattened = flatten(obj).sort((a, b) => a[0].localeCompare(b[0]));
+  const expected = flattened.map(([k, v]) => `${k}=${v}`).join("\n");
+  return { "data.json": JSON.stringify(obj, null, 2), ".expected": expected };
+}
+
+function generateJsonDiffData(): Record<string, string> {
+  const base: Record<string, unknown> = {
+    name: "project",
+    version: randomInt(1, 5),
+    author: "alice",
+    license: "MIT",
+    debug: false,
+    port: randomInt(3000, 5000),
+    timeout: randomInt(100, 1000),
+  };
+
+  const after = { ...base };
+  const changes: string[] = [];
+
+  // Remove a key
+  const keys = Object.keys(after);
+  const removeKey = keys[randomInt(0, keys.length - 1)]!;
+  delete after[removeKey];
+  changes.push(`removed:${removeKey}`);
+
+  // Add a key
+  const newKey = `new_field_${randomInt(1, 99)}`;
+  after[newKey] = randomInt(1, 100);
+  changes.push(`added:${newKey}`);
+
+  // Change a value
+  const remainingKeys = Object.keys(after).filter(k => k !== newKey);
+  if (remainingKeys.length > 0) {
+    const changeKey = remainingKeys[randomInt(0, remainingKeys.length - 1)]!;
+    after[changeKey] = `changed_${randomInt(1, 99)}`;
+    changes.push(`changed:${changeKey}`);
+  }
+
+  const expected = changes.sort().join("\n");
+  return {
+    "before.json": JSON.stringify(base, null, 2),
+    "after.json": JSON.stringify(after, null, 2),
+    ".expected": expected,
+  };
+}
+
+function generateJsonTreeData(): Record<string, string> {
+  function buildTree(depth: number, maxChildren: number): unknown {
+    if (depth === 0) return randomInt(1, 100);
+    const children: Record<string, unknown> = {};
+    const n = randomInt(2, maxChildren);
+    for (let i = 0; i < n; i++) {
+      children[`node_${String.fromCharCode(97 + i)}`] = buildTree(depth - 1, maxChildren);
+    }
+    return children;
+  }
+
+  function aggregate(node: unknown): number {
+    if (typeof node === "number") return node;
+    const obj = node as Record<string, unknown>;
+    let sum = 0;
+    for (const v of Object.values(obj)) sum += aggregate(v);
+    return sum;
+  }
+
+  function collectAggregates(node: unknown, path: string, results: [string, number][]): void {
+    if (typeof node === "number") return;
+    const obj = node as Record<string, unknown>;
+    const sum = aggregate(obj);
+    results.push([path || "root", sum]);
+    for (const [k, v] of Object.entries(obj)) {
+      collectAggregates(v, path ? `${path}.${k}` : k, results);
+    }
+  }
+
+  const tree = buildTree(3, 3);
+  const aggregates: [string, number][] = [];
+  collectAggregates(tree, "", aggregates);
+  const expected = aggregates
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([path, sum]) => `${path}=${sum}`)
+    .join("\n");
+
+  return {
+    "tree.json": JSON.stringify(tree, null, 2),
+    ".expected": expected,
+  };
+}
+
+// ── SQLite data generators ──
+
+function generateSqlQueryData(): Record<string, string> {
+  const departments = ["Engineering", "Sales", "Marketing", "Support", "HR"];
+  const rows: string[] = [];
+  for (let i = 1; i <= randomInt(20, 50); i++) {
+    const dept = departments[randomInt(0, departments.length - 1)]!;
+    const salary = randomInt(40, 150) * 1000;
+    rows.push(`INSERT INTO employees VALUES (${i}, 'Employee_${i}', '${dept}', ${salary});`);
+  }
+
+  const queries = [
+    {
+      question: "What is the average salary per department? Output as: department,average_salary (rounded to nearest integer, sorted by department)",
+      verify: `SELECT department, ROUND(AVG(salary)) as avg_salary FROM employees GROUP BY department ORDER BY department;`,
+    },
+    {
+      question: "How many employees are in each department? Output as: department,count (sorted by department)",
+      verify: `SELECT department, COUNT(*) as count FROM employees GROUP BY department ORDER BY department;`,
+    },
+    {
+      question: "What is the total salary per department? Output as: department,total (sorted by department)",
+      verify: `SELECT department, SUM(salary) as total FROM employees GROUP BY department ORDER BY department;`,
+    },
+  ];
+  const q = queries[randomInt(0, queries.length - 1)]!;
+
+  const setup = `CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT, department TEXT, salary INTEGER);\n${rows.join("\n")}`;
+
+  return {
+    "setup.sql": setup,
+    "query.txt": q.question,
+    ".verify_query": q.verify,
+  };
+}
+
+function generateSqlMigrationData(): Record<string, string> {
+  const rows: string[] = [];
+  const count = randomInt(10, 30);
+  for (let i = 1; i <= count; i++) {
+    const fullName = `${["Alice", "Bob", "Charlie", "Diana", "Eve"][randomInt(0, 4)]!} ${["Smith", "Jones", "Brown", "Davis", "Wilson"][randomInt(0, 4)]!}`;
+    const email = `user${i}@example.com`;
+    rows.push(`INSERT INTO users VALUES (${i}, '${fullName}', '${email}', 1);`);
+  }
+
+  const setup = `CREATE TABLE users (id INTEGER PRIMARY KEY, full_name TEXT, email TEXT, active INTEGER);\n${rows.join("\n")}`;
+
+  const migration = `# Migration Spec\n\n1. Split full_name into first_name and last_name columns\n2. Add a created_at column with default value '2024-01-01'\n3. Rename active to is_active\n\nOutput the migrated data as CSV: id,first_name,last_name,email,is_active,created_at\nSorted by id.`;
+
+  return { "setup.sql": setup, "migration.md": migration };
+}
+
+// ── Multi-step orchestration data generators ──
+
+function generatePipelineBuilderData(): Record<string, string> {
+  const regions = ["north", "south", "east", "west"];
+  const products = ["widget", "gadget", "sprocket"];
+  const rows: string[] = ["product,region,amount,quantity"];
+  for (let i = 0; i < randomInt(100, 300); i++) {
+    const product = products[randomInt(0, products.length - 1)]!;
+    const region = regions[randomInt(0, regions.length - 1)]!;
+    const amount = (randomInt(100, 10000) / 100).toFixed(2);
+    const qty = randomInt(1, 20);
+    rows.push(`${product},${region},${amount},${qty}`);
+  }
+
+  const filterRegion = regions[randomInt(0, regions.length - 1)]!;
+  const pipeline = JSON.stringify({
+    steps: [
+      { op: "filter", field: "region", value: filterRegion },
+      { op: "sort", field: "amount", order: "desc" },
+      { op: "aggregate", groupBy: "product", sum: "amount" },
+      { op: "format", output: "csv" },
+    ],
+  }, null, 2);
+
+  // Compute expected
+  const dataRows = rows.slice(1).map(r => {
+    const [product, region, amount, quantity] = r.split(",");
+    return { product: product!, region: region!, amount: parseFloat(amount!), quantity: parseInt(quantity!) };
+  });
+  const filtered = dataRows.filter(r => r.region === filterRegion);
+  const agg: Record<string, number> = {};
+  for (const r of filtered) agg[r.product] = (agg[r.product] || 0) + r.amount;
+  const expected = Object.entries(agg)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([k, v]) => `${k},${(Math.round(v * 100) / 100).toFixed(2)}`)
+    .join("\n");
+
+  return {
+    "data.csv": rows.join("\n"),
+    "pipeline.json": pipeline,
+    ".expected": expected,
+  };
+}
+
+function generateMultiFormatEtlData(): Record<string, string> {
+  const custCount = randomInt(20, 50);
+  const custLines = ["id,name,region"];
+  const custIds: number[] = [];
+  for (let i = 1; i <= custCount; i++) {
+    custIds.push(i);
+    const region = ["north", "south", "east", "west"][randomInt(0, 3)]!;
+    custLines.push(`${i},Customer_${i},${region}`);
+  }
+
+  const orders: { order_id: string; customer_id: number; amount: number }[] = [];
+  for (let i = 1; i <= randomInt(50, 150); i++) {
+    orders.push({
+      order_id: `ORD-${String(i).padStart(4, "0")}`,
+      customer_id: custIds[randomInt(0, custIds.length - 1)]!,
+      amount: Math.round(randomInt(100, 50000)) / 100,
+    });
+  }
+  // Make some orders reference invalid customers
+  const invalidCount = randomInt(3, 8);
+  for (let i = 0; i < invalidCount; i++) {
+    orders.push({
+      order_id: `ORD-${String(orders.length + 1).padStart(4, "0")}`,
+      customer_id: 9000 + i,
+      amount: Math.round(randomInt(100, 5000)) / 100,
+    });
+  }
+
+  const rules = JSON.stringify({
+    rules: [
+      { check: "customer_exists", description: "customer_id must reference a valid customer" },
+      { check: "amount_positive", description: "amount must be greater than 0" },
+    ],
+  }, null, 2);
+
+  const inventoryRows = ["product_id,name,price"];
+  for (let i = 1; i <= 10; i++) {
+    inventoryRows.push(`P${i},Product_${i},${(randomInt(500, 10000) / 100).toFixed(2)}`);
+  }
+
+  const setupSql = `CREATE TABLE inventory (product_id TEXT, name TEXT, price REAL);\n` +
+    inventoryRows.slice(1).map(r => {
+      const [pid, name, price] = r.split(",");
+      return `INSERT INTO inventory VALUES ('${pid}', '${name}', ${price});`;
+    }).join("\n");
+
+  // Compute expected: valid orders aggregated by region
+  const custMap = new Map<number, string>();
+  for (let i = 1; i < custLines.length; i++) {
+    const [id, , region] = custLines[i]!.split(",");
+    custMap.set(parseInt(id!), region!);
+  }
+  const regionTotals: Record<string, number> = {};
+  const errors: string[] = [];
+  for (const o of orders) {
+    if (!custMap.has(o.customer_id)) {
+      errors.push(`${o.order_id}:customer_exists`);
+      continue;
+    }
+    const region = custMap.get(o.customer_id)!;
+    regionTotals[region] = (regionTotals[region] || 0) + o.amount;
+  }
+
+  const expectedClean = Object.entries(regionTotals)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([r, v]) => `${r},${(Math.round(v * 100) / 100).toFixed(2)}`)
+    .join("\n");
+  const expectedErrors = errors.sort().join("\n");
+
+  return {
+    "customers.csv": custLines.join("\n"),
+    "orders.json": JSON.stringify(orders, null, 2),
+    "setup.sql": setupSql,
+    "rules.json": rules,
+    ".expected_clean": expectedClean,
+    ".expected_errors": expectedErrors,
+  };
+}
+
 // ── Challenge templates ──
 
 interface ChallengeTemplate {
@@ -423,16 +1280,6 @@ function paths(id: string): string {
 
 const TEMPLATES: ChallengeTemplate[] = [
   // ── Difficulty 1: Computational (stimulus-response) ──
-  {
-    title: "Hello World",
-    category: "computational",
-    difficulty: 1,
-    makeVerifyScript: (id) => `#!/bin/bash
-${paths(id)}
-EXPECTED="Hello, World!"
-ACTUAL=$(cat "$ODIR/greeting.txt" 2>/dev/null)
-if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/greeting.txt is wrong or missing"; exit 1; fi`,
-  },
   {
     title: "Count Lines",
     category: "computational",
@@ -930,6 +1777,407 @@ ALICE_LINE=$(echo "$R2" | grep -n "alice" | head -1 | cut -d: -f1)
 BOB_LINE=$(echo "$R2" | grep -n "bob" | head -1 | cut -d: -f1)
 if [ -z "$ALICE_LINE" ] || [ -z "$BOB_LINE" ]; then echo "FAIL: output/${id}/server.js — GET /data?sort=key should return rows sorted by that field"; exit 1; fi
 if [ "$ALICE_LINE" -lt "$BOB_LINE" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/server.js — sort order is incorrect"; exit 1; fi`,
+  },
+
+  // ── Code Fixing ──
+  {
+    title: "Fix Python Function",
+    category: "discovery",
+    difficulty: 2,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cd "$ODIR" && python3 script.py 2>&1 | tr -d '[:space:]')
+EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/script.py — fix the python script so it produces correct output"; exit 1; fi`,
+    dataGenerator: generateFixPythonData,
+  },
+  {
+    title: "Fix Bash Script",
+    category: "discovery",
+    difficulty: 2,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cd "$ODIR" && bash script.sh 2>&1 | tr -d '[:space:]')
+EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/script.sh — fix the bash script so it produces correct output"; exit 1; fi`,
+    dataGenerator: generateFixBashData,
+  },
+  {
+    title: "Fix Node Script",
+    category: "discovery",
+    difficulty: 3,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cd "$ODIR" && node script.js 2>&1 | tr -d '[:space:]')
+EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/script.js — fix the node script so it produces correct output"; exit 1; fi`,
+    dataGenerator: generateFixNodeData,
+  },
+  {
+    title: "Missing Function",
+    category: "discovery",
+    difficulty: 3,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cd "$ODIR" && python3 main.py 2>&1 | tr -d '[:space:]')
+EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/helpers.py — implement the missing function so main.py runs correctly"; exit 1; fi`,
+    dataGenerator: generateMissingFunctionData,
+  },
+  {
+    title: "Debug Multi-file",
+    category: "discovery",
+    difficulty: 4,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cd "$ODIR" && python3 main.py 2>&1)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/ — fix bugs across the python files so main.py produces correct output"; exit 1; fi`,
+    dataGenerator: generateDebugMultifileData,
+  },
+  {
+    title: "Fix and Extend",
+    category: "compositional",
+    difficulty: 5,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cd "$ODIR" && python3 main.py 2>&1)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/ — fix bugs and implement features from SPEC.md so main.py produces correct output"; exit 1; fi`,
+    dataGenerator: generateFixAndExtendData,
+  },
+
+  // ── Image/Visual ──
+  {
+    title: "PPM Pixel Count",
+    category: "discovery",
+    difficulty: 2,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/count.txt" 2>/dev/null | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/count.txt — count non-white pixels in the PPM image"; exit 1; fi`,
+    dataGenerator: generatePpmPixelCountData,
+  },
+  {
+    title: "ASCII Art Message",
+    category: "discovery",
+    difficulty: 3,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/message.txt" 2>/dev/null | tr -d '[:space:]')
+EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/message.txt — decode the word spelled in ASCII art block letters"; exit 1; fi`,
+    dataGenerator: generateAsciiArtData,
+  },
+  {
+    title: "PPM Color Histogram",
+    category: "discovery",
+    difficulty: 4,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+if [ ! -f "$ODIR/histogram.csv" ]; then echo "FAIL: output/${id}/histogram.csv — produce color frequency histogram from PPM image as r,g,b,count sorted by count desc"; exit 1; fi
+ACTUAL=$(cat "$ODIR/histogram.csv" | grep -v "^r,g,b" | sort)
+EXPECTED_SORTED=$(echo "$EXPECTED" | sort)
+if [ "$ACTUAL" = "$EXPECTED_SORTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/histogram.csv — color histogram values are wrong"; exit 1; fi`,
+    dataGenerator: generatePpmColorHistogramData,
+  },
+  {
+    title: "SVG Data Extract",
+    category: "discovery",
+    difficulty: 4,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/result.txt" 2>/dev/null | tr -d '[:space:]')
+EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/result.txt — extract values from SVG text elements and apply the data-operation attribute"; exit 1; fi`,
+    dataGenerator: generateSvgDataExtractData,
+  },
+  {
+    title: "PPM Encode Message",
+    category: "compositional",
+    difficulty: 5,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+node -e "
+const fs = require('fs');
+let ppm;
+try { ppm = fs.readFileSync('$ODIR/encoded.ppm','utf-8'); }
+catch(e) { console.log('FAIL: output/${id}/encoded.ppm — encode the message into PPM pixel LSBs per SPEC.md'); process.exit(1); }
+const lines = ppm.trim().split('\\n');
+if (lines[0] !== 'P3') { console.log('FAIL: output/${id}/encoded.ppm — not a valid P3 PPM file'); process.exit(1); }
+const pixels = lines.slice(3).join(' ').trim().split(/\\s+/).map(Number);
+const reds = [];
+for (let i = 0; i < pixels.length; i += 3) reds.push(pixels[i]);
+let decoded = '';
+for (let i = 0; i < reds.length - 7; i += 8) {
+  let byte = 0;
+  for (let b = 0; b < 8; b++) byte = (byte << 1) | (reds[i+b] & 1);
+  if (byte === 0) break;
+  decoded += String.fromCharCode(byte);
+}
+if (decoded === '${id.replace(/'/g, "\\'")}') {
+  // wrong — agent stored the ID, not the message
+  console.log('FAIL: output/${id}/encoded.ppm — encoded wrong content');
+  process.exit(1);
+}
+if (decoded === '$EXPECTED') { console.log('PASS'); process.exit(0); }
+else { console.log('FAIL: output/${id}/encoded.ppm — decoded message does not match'); process.exit(1); }
+" 2>&1`,
+    dataGenerator: generatePpmEncodeMessageData,
+  },
+
+  // ── File System ──
+  {
+    title: "Find Files",
+    category: "computational",
+    difficulty: 1,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/count.txt" 2>/dev/null | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/count.txt — count files matching the target extension in the directory tree"; exit 1; fi`,
+    dataGenerator: generateFindFilesData,
+  },
+  {
+    title: "Directory Size Report",
+    category: "computational",
+    difficulty: 3,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+if [ ! -f "$ODIR/sizes.csv" ]; then echo "FAIL: output/${id}/sizes.csv — compute total bytes per subdirectory, sorted by size descending"; exit 1; fi
+ACTUAL=$(cat "$ODIR/sizes.csv" | grep -v "^dir" | sort)
+EXPECTED_SORTED=$(echo "$EXPECTED" | sort)
+if [ "$ACTUAL" = "$EXPECTED_SORTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/sizes.csv — directory size values are wrong"; exit 1; fi`,
+    dataGenerator: generateDirectorySizeData,
+  },
+  {
+    title: "Reconstruct Shattered File",
+    category: "compositional",
+    difficulty: 4,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/assembled.txt" 2>/dev/null)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/assembled.txt — find numbered chunks in subdirs and reassemble in order"; exit 1; fi`,
+    dataGenerator: generateShatteredFileData,
+  },
+
+  // ── String/Encoding ──
+  {
+    title: "Base64 Decode",
+    category: "computational",
+    difficulty: 1,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/decoded.txt" 2>/dev/null)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/decoded.txt — decode the base64-encoded file"; exit 1; fi`,
+    dataGenerator: generateBase64Data,
+  },
+  {
+    title: "Hex Dump Analysis",
+    category: "computational",
+    difficulty: 2,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/decoded.txt" 2>/dev/null)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/decoded.txt — convert hex bytes back to text"; exit 1; fi`,
+    dataGenerator: generateHexDumpData,
+  },
+  {
+    title: "Checksum Validator",
+    category: "discovery",
+    difficulty: 3,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/bad_lines.txt" 2>/dev/null | sort -n)
+EXPECTED_SORTED=$(echo "$EXPECTED" | sort -n)
+if [ "$ACTUAL" = "$EXPECTED_SORTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/bad_lines.txt — find lines where checksum does not match"; exit 1; fi`,
+    dataGenerator: generateChecksumData,
+  },
+  {
+    title: "Multi-encoding Pipeline",
+    category: "compositional",
+    difficulty: 4,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/result.txt" 2>/dev/null | tr -d '[:space:]')
+EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/result.txt — apply the encoding pipeline transforms in order"; exit 1; fi`,
+    dataGenerator: generateMultiEncodingData,
+  },
+
+  // ── Math/Algorithmic ──
+  {
+    title: "Prime Sieve",
+    category: "computational",
+    difficulty: 1,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/primes.txt" 2>/dev/null)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/primes.txt — find all primes up to the limit, one per line"; exit 1; fi`,
+    dataGenerator: generatePrimeSieveData,
+  },
+  {
+    title: "Sequence Completion",
+    category: "discovery",
+    difficulty: 3,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/next.txt" 2>/dev/null)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/next.txt — identify the pattern and predict the next 5 terms, one per line"; exit 1; fi`,
+    dataGenerator: generateSequenceData,
+  },
+  {
+    title: "Graph Shortest Path",
+    category: "compositional",
+    difficulty: 5,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/path.txt" 2>/dev/null | tr -d '[:space:]')
+EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/path.txt — find shortest path between nodes in the graph as comma-separated node list"; exit 1; fi`,
+    dataGenerator: generateGraphData,
+  },
+
+  // ── JSON Structured Data ──
+  {
+    title: "JSON Flatten",
+    category: "computational",
+    difficulty: 2,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/flat.txt" 2>/dev/null)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/flat.txt — flatten nested JSON to sorted dot-notation key=value pairs"; exit 1; fi`,
+    dataGenerator: generateJsonFlattenData,
+  },
+  {
+    title: "JSON Diff",
+    category: "discovery",
+    difficulty: 4,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected" | sort)
+ACTUAL=$(cat "$ODIR/diff.txt" 2>/dev/null | sort)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/diff.txt — compare before.json and after.json, report added/removed/changed keys"; exit 1; fi`,
+    dataGenerator: generateJsonDiffData,
+  },
+  {
+    title: "JSON Tree Aggregate",
+    category: "compositional",
+    difficulty: 5,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected")
+ACTUAL=$(cat "$ODIR/aggregates.txt" 2>/dev/null)
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/aggregates.txt — compute sum aggregates for all internal nodes, sorted by path"; exit 1; fi`,
+    dataGenerator: generateJsonTreeData,
+  },
+
+  // ── SQLite ──
+  {
+    title: "SQL Query",
+    category: "computational",
+    difficulty: 3,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+VERIFY_QUERY=$(cat "$CDIR/.verify_query")
+TMPDB=$(mktemp /tmp/verify_XXXXXX.db)
+sqlite3 "$TMPDB" < "$CDIR/setup.sql"
+EXPECTED=$(sqlite3 -csv "$TMPDB" "$VERIFY_QUERY" 2>/dev/null)
+rm -f "$TMPDB"
+if [ ! -f "$ODIR/result.csv" ]; then echo "FAIL: output/${id}/result.csv — answer the query from query.txt as CSV"; exit 1; fi
+ACTUAL_FULL=$(cat "$ODIR/result.csv")
+FIRST_LINE=$(echo "$ACTUAL_FULL" | head -1)
+if echo "$FIRST_LINE" | grep -qi "department\|name\|count\|salary\|total\|avg"; then
+  ACTUAL=$(echo "$ACTUAL_FULL" | tail -n +2 | sort)
+else
+  ACTUAL=$(echo "$ACTUAL_FULL" | sort)
+fi
+EXPECTED_SORTED=$(echo "$EXPECTED" | sort)
+if [ "$ACTUAL" = "$EXPECTED_SORTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/result.csv — query result is wrong"; exit 1; fi`,
+    dataGenerator: generateSqlQueryData,
+  },
+  {
+    title: "SQL Schema Migration",
+    category: "compositional",
+    difficulty: 5,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+TMPDB=$(mktemp /tmp/verify_XXXXXX.db)
+sqlite3 "$TMPDB" < "$CDIR/setup.sql"
+EXPECTED=$(sqlite3 -csv "$TMPDB" "SELECT id, substr(full_name, 1, instr(full_name, ' ') - 1) as first_name, substr(full_name, instr(full_name, ' ') + 1) as last_name, email, active as is_active, '2024-01-01' as created_at FROM users ORDER BY id;")
+rm -f "$TMPDB"
+if [ ! -f "$ODIR/migrated.csv" ]; then echo "FAIL: output/${id}/migrated.csv — apply the schema migration from migration.md"; exit 1; fi
+ACTUAL_FULL=$(cat "$ODIR/migrated.csv")
+FIRST_LINE=$(echo "$ACTUAL_FULL" | head -1)
+if echo "$FIRST_LINE" | grep -qi "id,first"; then
+  ACTUAL=$(echo "$ACTUAL_FULL" | tail -n +2)
+else
+  ACTUAL="$ACTUAL_FULL"
+fi
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/migrated.csv — migration result is wrong"; exit 1; fi`,
+    dataGenerator: generateSqlMigrationData,
+  },
+
+  // ── Multi-step Orchestration ──
+  {
+    title: "Pipeline Builder",
+    category: "compositional",
+    difficulty: 4,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED=$(cat "$CDIR/.expected" | sort)
+if [ ! -f "$ODIR/result.csv" ]; then echo "FAIL: output/${id}/result.csv — execute the pipeline from pipeline.json on data.csv"; exit 1; fi
+ACTUAL_FULL=$(cat "$ODIR/result.csv")
+FIRST_LINE=$(echo "$ACTUAL_FULL" | head -1)
+if echo "$FIRST_LINE" | grep -qi "product"; then
+  ACTUAL=$(echo "$ACTUAL_FULL" | tail -n +2 | sort)
+else
+  ACTUAL=$(echo "$ACTUAL_FULL" | sort)
+fi
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/result.csv — pipeline output is wrong"; exit 1; fi`,
+    dataGenerator: generatePipelineBuilderData,
+  },
+  {
+    title: "Multi-format ETL",
+    category: "compositional",
+    difficulty: 5,
+    makeVerifyScript: (id) => `#!/bin/bash
+${paths(id)}
+EXPECTED_CLEAN=$(cat "$CDIR/.expected_clean" | sort)
+EXPECTED_ERRORS=$(cat "$CDIR/.expected_errors" | sort)
+if [ ! -f "$ODIR/clean.csv" ]; then echo "FAIL: output/${id}/clean.csv — join CSV + JSON data, validate against rules.json, produce clean output"; exit 1; fi
+if [ ! -f "$ODIR/errors.txt" ]; then echo "FAIL: output/${id}/errors.txt — report validation errors"; exit 1; fi
+ACTUAL_CLEAN_FULL=$(cat "$ODIR/clean.csv")
+FIRST_LINE=$(echo "$ACTUAL_CLEAN_FULL" | head -1)
+if echo "$FIRST_LINE" | grep -qi "region"; then
+  ACTUAL_CLEAN=$(echo "$ACTUAL_CLEAN_FULL" | tail -n +2 | sort)
+else
+  ACTUAL_CLEAN=$(echo "$ACTUAL_CLEAN_FULL" | sort)
+fi
+ACTUAL_ERRORS=$(cat "$ODIR/errors.txt" | sort)
+if [ "$ACTUAL_CLEAN" != "$EXPECTED_CLEAN" ]; then echo "FAIL: output/${id}/clean.csv — aggregated values are wrong"; exit 1; fi
+if [ "$ACTUAL_ERRORS" != "$EXPECTED_ERRORS" ]; then echo "FAIL: output/${id}/errors.txt — error report is wrong"; exit 1; fi
+echo "PASS"; exit 0`,
+    dataGenerator: generateMultiFormatEtlData,
   },
 ];
 

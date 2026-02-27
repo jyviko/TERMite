@@ -1,10 +1,9 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { Challenge } from "../types/index.js";
 import { ChallengeGenerator, DIFFICULTY_EXPECTED_COST } from "./challenge-generator.js";
 import type { GeneratedChallenge } from "./challenge-generator.js";
 import type { Executor } from "../executor/index.js";
-import { lookupBountyMultiplier } from "../loop/resolve.js";
 
 // Depletion: each solve halves the remaining reward
 function depletionFactor(solveCount: number): number {
@@ -21,6 +20,7 @@ export interface ChallengeAttemptResult {
 interface ChallengePoolState {
   challenges: Challenge[];
   globalCycle: number;
+  seeded: boolean;
 }
 
 export class ChallengePool {
@@ -28,20 +28,22 @@ export class ChallengePool {
   private generator: ChallengeGenerator;
   private sharedDir: string;
   private globalCycle = 0;
+  private seeded = false;
 
   constructor(sharedDir: string, generator?: ChallengeGenerator) {
     this.sharedDir = sharedDir;
     this.generator = generator ?? new ChallengeGenerator();
   }
 
-  /** Target number of active challenges: 3 + floor(sqrt(activeAgentCount)). */
+  /** Target number of active challenges: n + floor(sqrt(n)). More than agents → temporal niches. */
   private targetCount(activeAgentCount: number): number {
-    return 3 + Math.floor(Math.sqrt(activeAgentCount));
+    return activeAgentCount + Math.floor(Math.sqrt(activeAgentCount));
   }
 
   /**
-   * Refresh the challenge pool: remove expired, generate new ones to maintain target count.
-   * Called periodically by arena (on regen timer).
+   * Refresh the challenge pool: remove expired, generate new ones toward target count.
+   * First call seeds ceil(target/2) for immediate work.
+   * Subsequent calls (every 10s) add at most 2 new challenges, creating a stream instead of a burst.
    */
   refresh(globalCycle: number, activeAgentCount: number): void {
     this.globalCycle = globalCycle;
@@ -53,14 +55,28 @@ export class ChallengePool {
       }
     }
 
-    // Generate new challenges to reach target count
     const target = this.targetCount(activeAgentCount);
-    while (this.challenges.size < target) {
-      const generated = this.generator.generateWeighted(globalCycle);
-      this.addChallenge(generated);
+
+    if (!this.seeded) {
+      // First refresh: seed half the target for immediate work
+      const initialTarget = Math.ceil(target / 2);
+      while (this.challenges.size < initialTarget) {
+        this.addChallenge(this.generator.generateWeighted(globalCycle));
+      }
+      this.seeded = true;
+    } else {
+      // Subsequent refreshes: stochastic trickle so agents can't predict timing.
+      // Each tick has a 40% chance of adding challenges (0, 1, or 2).
+      if (this.challenges.size < target && Math.random() < 0.4) {
+        const count = Math.random() < 0.5 ? 1 : 2;
+        let added = 0;
+        while (this.challenges.size < target && added < count) {
+          this.addChallenge(this.generator.generateWeighted(globalCycle));
+          added++;
+        }
+      }
     }
 
-    // Persist manifest
     this.persistManifest();
   }
 
@@ -72,7 +88,9 @@ export class ChallengePool {
     const challengeDir = join(this.sharedDir, challenge.dataDir);
     mkdirSync(challengeDir, { recursive: true });
     for (const [name, content] of Object.entries(dataFiles)) {
-      writeFileSync(join(challengeDir, name), content, "utf-8");
+      const filePath = join(challengeDir, name);
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, content, "utf-8");
     }
 
     this.challenges.set(challenge.id, challenge);
@@ -112,7 +130,6 @@ export class ChallengePool {
     challengeId: string,
     agentId: string,
     executor: Executor,
-    model: string,
   ): Promise<ChallengeAttemptResult> {
     const challenge = this.challenges.get(challengeId);
     if (!challenge) {
@@ -125,14 +142,9 @@ export class ChallengePool {
       const output = await executor.executeShell(`echo '${b64}' | base64 -d | bash 2>&1`);
 
       if (output.includes("PASS")) {
-        // Compute reward with depletion and model multiplier
+        // Raw reward: base × depletion only. Model multiplier applied downstream in computeIncome().
         const depletion = depletionFactor(challenge.solvedBy.length);
-        const modelMultiplier = lookupBountyMultiplier(model);
-
-        // Efficiency bonus: expected/actual cost, capped at 3.0x
-        // (Caller can override if they have the actual cost data)
-        const baseReward = challenge.baseReward * depletion * modelMultiplier;
-        const reward = Math.floor(baseReward);
+        const reward = Math.floor(challenge.baseReward * depletion);
 
         // Record solve
         challenge.solvedBy.push(agentId);
@@ -141,7 +153,7 @@ export class ChallengePool {
         return {
           passed: true,
           message: `PASS: ${challengeId} solved. Reward: ${reward.toLocaleString()} TEQ ` +
-            `(${Math.round(challenge.baseReward / 1000)}K base × ${modelMultiplier.toFixed(1)} model × ${depletion.toFixed(2)} depletion)`,
+            `(${Math.round(challenge.baseReward / 1000)}K base × ${depletion.toFixed(2)} depletion)`,
           reward,
           difficulty: challenge.difficulty,
         };
@@ -187,6 +199,7 @@ export class ChallengePool {
     const state: ChallengePoolState = {
       challenges: Array.from(this.challenges.values()),
       globalCycle: this.globalCycle,
+      seeded: this.seeded,
     };
     writeFileSync(path, JSON.stringify(state, null, 2));
   }
@@ -199,6 +212,7 @@ export class ChallengePool {
     try {
       const data: ChallengePoolState = JSON.parse(readFileSync(path, "utf-8"));
       pool.globalCycle = data.globalCycle;
+      pool.seeded = data.seeded ?? false;
       for (const c of data.challenges) {
         pool.challenges.set(c.id, c);
       }
