@@ -153,6 +153,12 @@ export class Executor {
     return result.result ?? "";
   }
 
+  async executeTool(command: string, input: string): Promise<string> {
+    const result = await this.send({ cmd: "execute_tool", command, input });
+    if (!result.ok) throw new Error(result.error ?? "Tool execution failed");
+    return result.result ?? "";
+  }
+
   async writeFile(path: string, content: string): Promise<string> {
     const result = await this.send({ cmd: "write_file", path, content });
     if (!result.ok) throw new Error(result.error ?? "Write file failed");

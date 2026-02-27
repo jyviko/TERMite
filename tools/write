@@ -1,6 +1,10 @@
 #!/bin/bash
 # description: write - Write content to a file path. Input: {"path":"...","content":"..."} or filepath on first line with content on remaining lines.
-INPUT="$1"
+if [ -n "$1" ]; then
+  INPUT="$1"
+else
+  INPUT="$(cat)"
+fi
 
 # Try JSON format first: {"path":"...","content":"..."}
 PARSED=$(printf '%s' "$INPUT" | python3 -c "

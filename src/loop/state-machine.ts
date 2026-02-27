@@ -232,9 +232,9 @@ export class AgentStateMachine {
       maxIterations: 25,
       executor,
       shouldStop: () =>
-        route.maxCycleCost != null && this.state.energy.currentCycleCost >= route.maxCycleCost,
+        route.maxCycleCost != null && this.state.energy.currentCycleVariableCost >= route.maxCycleCost,
       statusNote: () =>
-        `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity} TEQ, cycle cost: ${this.state.energy.currentCycleCost} TEQ`,
+        `Energy: ${this.state.energy.remaining}/${this.state.energy.capacity} TEQ, cycle cost: ${this.state.energy.currentCycleCost} TEQ (variable: ${this.state.energy.currentCycleVariableCost})`,
     })) {
       yield event;
       const extra = this.trackEvent(event);
@@ -292,8 +292,7 @@ export class AgentStateMachine {
       return this.forkHandler();
     }
 
-    const escaped = toolInput.replace(/'/g, "'\\''");
-    const result = await this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
+    const result = await this.executor.executeTool(`/workspace/tools/${name}`, toolInput);
 
     // Intercept __SIGNAL__ prefix in tool output — agent-created tools can
     // broadcast to the shared signal board by outputting this magic prefix.
@@ -402,6 +401,7 @@ export class AgentStateMachine {
         toolCount: this.availableToolCount,
         tier: this.lastTaskTier,
         baseCost: this.state.energy.baseCost,
+        cacheWriteCost: this.state.energy.currentCycleCacheWriteCost,
         drives: {
           explore: this.state.drives.drives.explore.level,
           acquire: this.state.drives.drives.acquire.level,

@@ -43,6 +43,11 @@ class MockExecutor {
     return "";
   }
 
+  async executeTool(command: string, input: string): Promise<string> {
+    if (command === "/workspace/tools/shell") return `(mock) ${input}`;
+    return `(mock tool) ${command}`;
+  }
+
   async writeFile(path: string, content: string): Promise<string> {
     const fullPath = path.startsWith("/") ? path : `/workspace/${path}`;
     this.files.set(fullPath, content);

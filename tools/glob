@@ -1,6 +1,10 @@
 #!/bin/bash
 # description: glob - Find files matching a pattern. Input: a glob pattern (e.g. "/workspace/**/*.txt"). Returns matching paths.
-PATTERN="$1"
+if [ -n "$1" ]; then
+  PATTERN="$1"
+else
+  PATTERN="$(cat)"
+fi
 
 if [ -z "$PATTERN" ]; then
   echo "Error: no pattern provided"

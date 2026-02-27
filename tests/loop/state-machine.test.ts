@@ -35,6 +35,7 @@ class MockLLM extends LLM {
 // Mock Executor (no Docker)
 class MockExecutor {
   private workingDir_ = "/workspace";
+  toolCalls: { command: string; input: string }[] = [];
 
   get workingDir(): string {
     return this.workingDir_;
@@ -53,6 +54,11 @@ class MockExecutor {
     }
     if (command.startsWith("/workspace/tools/check")) return "PASS";
     return `(mock) ${command}`;
+  }
+
+  async executeTool(command: string, input: string): Promise<string> {
+    this.toolCalls.push({ command, input });
+    return `(mock tool) ${command}`;
   }
 
   async writeFile(_path: string, _content: string): Promise<string> {
@@ -360,5 +366,54 @@ describe("AgentStateMachine", () => {
     // Success outcome + high relevance should yield income
     expect(state.energy.earned).toBeGreaterThan(initialEarned);
     expect(state.energy.cycleHistory[0]!.income).toBeGreaterThan(0);
+  });
+
+  it("tool dispatch uses executeTool with stdin, not executeShell", async () => {
+    const llm = new MockLLM();
+    // Think+Execute: agent calls the shell tool
+    llm.addResponse(
+      [
+        {
+          type: "tool_use",
+          id: "toolu_stdin",
+          name: "shell",
+          input: { input: "echo hello" },
+        },
+      ] as Anthropic.ContentBlock[],
+      "tool_use",
+    );
+    llm.addResponse(
+      [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve
+    llm.addResponse(
+      [{ type: "text", text: '{"outcome":"uncertain","value":0,"energyJustified":false,"lesson":"","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Memorize
+    llm.addResponse(
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new AgentStateManager({ budget: 500_000 });
+
+    const machine = new AgentStateMachine(
+      llm,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-stdin-dispatch.json",
+    );
+
+    await collectEvents(machine.run(), 20);
+
+    // executeTool should have been called (not executeShell) for the shell tool
+    // Agent may run multiple cycles, but every tool call must go through executeTool
+    expect(executor.toolCalls.length).toBeGreaterThanOrEqual(1);
+    expect(executor.toolCalls[0]!.command).toBe("/workspace/tools/shell");
+    expect(executor.toolCalls[0]!.input).toBe("echo hello");
   });
 });

@@ -2,12 +2,13 @@
 // execSync is intentional: the agent's shell access IS the feature.
 // The container is the sandbox boundary.
 
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve, relative } from "node:path";
 import { createInterface } from "node:readline";
 
 const WORKSPACE = "/workspace";
+const TOOLS_DIR = "/workspace/tools";
 const MAX_OUTPUT = 4000;
 const SHELL_TIMEOUT = 30_000;
 
@@ -15,6 +16,7 @@ interface Command {
   id: string;
   cmd: string;
   command?: string;
+  input?: string;
   path?: string;
   content?: string;
 }
@@ -64,6 +66,40 @@ function handleExecuteShell(cmd: Command): Response {
   }
 }
 
+function handleExecuteTool(cmd: Command): Response {
+  if (!cmd.command) {
+    return { id: cmd.id, ok: false, error: "Missing command" };
+  }
+
+  // Path validation: only allow executables inside /workspace/tools/
+  const resolved = resolve(cmd.command);
+  const rel = relative(TOOLS_DIR, resolved);
+  if (rel.startsWith("..") || rel.includes("/")) {
+    return { id: cmd.id, ok: false, error: "Tool path must be directly inside /workspace/tools/" };
+  }
+
+  // Runs tool script with input on stdin — bypasses bash ARG_MAX limits.
+  // Uses execFileSync (no shell) so the command path cannot be injected.
+  try {
+    const output = execFileSync(resolved, {
+      cwd: WORKSPACE,
+      timeout: SHELL_TIMEOUT,
+      encoding: "utf-8",
+      input: cmd.input ?? "",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return { id: cmd.id, ok: true, result: truncate(output, MAX_OUTPUT) };
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    const output = (e.stdout ?? "") + (e.stderr ?? "");
+    return {
+      id: cmd.id,
+      ok: false,
+      error: truncate(output || e.message || "Tool execution failed", MAX_OUTPUT),
+    };
+  }
+}
+
 function handleWriteFile(cmd: Command): Response {
   if (!cmd.path || cmd.content === undefined) {
     return { id: cmd.id, ok: false, error: "Missing path or content" };
@@ -90,6 +126,7 @@ function handleCommand(cmd: Command): Response | null {
   switch (cmd.cmd) {
     case "ping": return handlePing(cmd);
     case "execute_shell": return handleExecuteShell(cmd);
+    case "execute_tool": return handleExecuteTool(cmd);
     case "write_file": return handleWriteFile(cmd);
     case "shutdown": return null;
     default: return { id: cmd.id, ok: false, error: `Unknown command: ${cmd.cmd}` };
