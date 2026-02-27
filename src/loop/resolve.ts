@@ -31,11 +31,13 @@ export class Resolver {
     goal: string;
     actions: string;
     cycleCost: number;
+    stateBlock?: string;
   }): Promise<ResolveResult> {
     const prompt = params.config.resolvePrompt
       .replace("{goal}", params.goal)
       .replace("{actions}", params.actions)
-      .replace("{cycleCost}", String(params.cycleCost));
+      .replace("{cycleCost}", String(params.cycleCost))
+      .replace("{stateBlock}", params.stateBlock ?? "");
 
     try {
       const response = await this.llm.chat({

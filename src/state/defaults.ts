@@ -18,6 +18,7 @@ Goal: {goal}
 What happened:
 {actions}
 Cost: {cycleCost} TEQ
+{stateBlock}
 
 Be honest. Talking about doing something is not doing it.
 Tool errors and empty results mean failure, not progress.
@@ -37,10 +38,12 @@ Respond JSON:
   "goalComplete": true|false
 }`;
 
-export const DEFAULT_MEMORIZE_PROMPT = `Extract useful knowledge from this cycle.
+export const DEFAULT_MEMORIZE_PROMPT = `What from this cycle is worth keeping?
 
 Outcome: {outcome}
 Lesson: {lesson}
+{stateBlock}
+{populationBlock}
 
 Current system prompt:
 {systemPrompt}

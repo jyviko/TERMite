@@ -132,6 +132,48 @@ describe("runMemorizePhase", () => {
     expect(capturedSystem).toContain("Cycle 3");
     expect(capturedSystem).toContain("ran check");
   });
+
+  it("substitutes stateBlock and populationBlock into prompt", async () => {
+    const llm = new MockLLM();
+    let capturedSystem = "";
+    const origChat = llm.chat.bind(llm);
+    llm.chat = async (params: ChatParams) => {
+      capturedSystem = params.system ?? "";
+      return origChat(params);
+    };
+
+    const config = new Config();
+    const memories = new MemoryStore();
+    const stateBlock = "State:\n- Drives: explore: 0.50→, acquire: 0.50→";
+    const populationBlock = "Population:\n- Agents: 4 active / 4 total";
+
+    await runMemorizePhase(llm, config, memories, "lesson", "success", 2000, stateBlock, populationBlock);
+
+    expect(capturedSystem).toContain("Drives: explore: 0.50→");
+    expect(capturedSystem).toContain("Agents: 4 active");
+    // {populationBlock} should be fully substituted (it only appears in memorize template)
+    expect(capturedSystem).not.toContain("{populationBlock}");
+    // Note: {stateBlock} will appear in the embedded resolve prompt text — that's correct.
+    // The memorize prompt shows the resolve template so agents can rewrite it.
+  });
+
+  it("defaults stateBlock and populationBlock to empty when omitted", async () => {
+    const llm = new MockLLM();
+    let capturedSystem = "";
+    const origChat = llm.chat.bind(llm);
+    llm.chat = async (params: ChatParams) => {
+      capturedSystem = params.system ?? "";
+      return origChat(params);
+    };
+
+    const config = new Config();
+    const memories = new MemoryStore();
+
+    await runMemorizePhase(llm, config, memories, "lesson", "success", 2000);
+
+    // {populationBlock} should be replaced with empty string
+    expect(capturedSystem).not.toContain("{populationBlock}");
+  });
 });
 
 // ── applyMemorizeOperations ─────────────────────────────────────────

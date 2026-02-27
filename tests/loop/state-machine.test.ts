@@ -368,6 +368,73 @@ describe("AgentStateMachine", () => {
     expect(state.energy.cycleHistory[0]!.income).toBeGreaterThan(0);
   });
 
+  it("resolve and memorize receive state block with drives and memory distribution", async () => {
+    const llm = new MockLLM();
+
+    // Capture system prompts from resolve (3rd call) and memorize (4th call)
+    const capturedSystems: string[] = [];
+    const origChat = llm.chat.bind(llm);
+    llm.chat = async (params: ChatParams) => {
+      capturedSystems.push(params.system ?? "");
+      return origChat(params);
+    };
+
+    // Think+Execute: end turn immediately
+    llm.addResponse(
+      [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve
+    llm.addResponse(
+      [{ type: "text", text: '{"outcome":"success","value":0.8,"energyJustified":true,"lesson":"learned","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Memorize
+    llm.addResponse(
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new AgentStateManager({ budget: 500_000 });
+
+    const machine = new AgentStateMachine(
+      llm,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-state-block.json",
+    );
+
+    // Provide population context
+    machine.setPopulationContext("Population:\n- Agents: 4 active / 4 total");
+
+    await collectEvents(machine.run(), 20);
+
+    // Think phase has no system prompt in capturedSystems (it uses systemPrompt param)
+    // Resolve is the 2nd call (after think), Memorize is the 3rd call
+    // Find system prompts that contain resolve/memorize indicators
+    const resolveSystem = capturedSystems.find((s) => s.includes("accomplish"));
+    const memorizeSystem = capturedSystems.find((s) => s.includes("worth keeping"));
+
+    expect(resolveSystem).toBeDefined();
+    expect(memorizeSystem).toBeDefined();
+
+    // Resolve should contain state block with drive levels and memory distribution
+    expect(resolveSystem).toContain("Drives:");
+    expect(resolveSystem).toContain("explore:");
+    expect(resolveSystem).toContain("Memory distribution:");
+    expect(resolveSystem).not.toContain("{stateBlock}");
+
+    // Memorize should contain both state block and population block
+    expect(memorizeSystem).toContain("Drives:");
+    expect(memorizeSystem).toContain("Memory distribution:");
+    expect(memorizeSystem).toContain("Agents: 4 active");
+    // {populationBlock} should be fully substituted
+    expect(memorizeSystem).not.toContain("{populationBlock}");
+    // Note: {stateBlock} appears in the embedded resolve prompt text — that's correct
+  });
+
   it("tool dispatch uses executeTool with stdin, not executeShell", async () => {
     const llm = new MockLLM();
     // Think+Execute: agent calls the shell tool

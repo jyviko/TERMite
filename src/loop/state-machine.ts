@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import type { AgentEvent, CycleRecord, Outcome } from "../types/index.js";
+import type { AgentEvent, CycleRecord, DriveName, Outcome } from "../types/index.js";
+import { DRIVE_NAMES } from "../types/index.js";
 import type { LLM } from "../llm/index.js";
 import type { Executor } from "../executor/index.js";
 import type { DriveSystem } from "../state/drives.js";
@@ -49,6 +50,12 @@ export class AgentStateMachine {
   // Signal handler — provided by arena, called when agent uses signal tool
   private signalHandler: ((message: string) => Promise<string>) | null = null;
 
+  // Previous-cycle drive levels for direction arrows in state block
+  private previousDriveLevels: Record<DriveName, number> | null = null;
+
+  // Population context — provided by arena from census/pool data
+  private populationContext: string = "";
+
   // Current cycle
   private cycleCtx = freshCycle();
   private availableToolCount = 0;
@@ -94,11 +101,13 @@ export class AgentStateMachine {
 
     // 1. Resolve — cheap LLM call to judge the cycle
     yield { type: "phase_change", phase: "resolving" };
+    const stateBlock = this.buildStateBlock();
     const resolveResult = await this.resolver.resolve({
       config: this.state.config,
       goal,
       actions,
       cycleCost: this.state.energy.currentCycleCost,
+      stateBlock,
     });
 
     // Burn resolve cost
@@ -150,6 +159,8 @@ export class AgentStateMachine {
       resolveResult.lesson,
       resolveResult.outcome,
       memorizeBudget,
+      stateBlock,
+      this.populationContext,
     );
 
     // Burn memorize cost (now captured in the current cycle, not the next one)
@@ -180,7 +191,11 @@ export class AgentStateMachine {
     // 6b. Append to metrics.jsonl — SSoT for per-cycle history
     this.appendMetrics();
 
-    // 7. Housekeeping
+    // 7. Housekeeping — snapshot drive levels before update for next cycle's direction arrows
+    this.previousDriveLevels = Object.fromEntries(
+      DRIVE_NAMES.map((n) => [n, this.state.drives.drives[n].level]),
+    ) as Record<DriveName, number>;
+
     this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.availableToolCount);
     this.state.drives.update(
       this.state.energy,
@@ -450,6 +465,63 @@ export class AgentStateMachine {
   /** Set the signal handler (provided by arena, executed when agent calls signal tool). */
   setSignalHandler(handler: (message: string) => Promise<string>): void {
     this.signalHandler = handler;
+  }
+
+  /** Set population context string (provided by arena from census/pool data). */
+  setPopulationContext(context: string): void {
+    this.populationContext = context;
+  }
+
+  // ── Reflection data blocks ──────────────────────────────────────────
+
+  /**
+   * Build a state block with drive levels, energy trend, memory distribution,
+   * and config version. Data, not instructions.
+   */
+  private buildStateBlock(): string {
+    const parts: string[] = [];
+
+    // Drive levels with direction arrows
+    const driveEntries = DRIVE_NAMES.map((n) => {
+      const level = this.state.drives.drives[n].level;
+      let arrow = "→";
+      if (this.previousDriveLevels) {
+        const prev = this.previousDriveLevels[n];
+        const delta = level - prev;
+        if (delta > 0.01) arrow = "↑";
+        else if (delta < -0.01) arrow = "↓";
+      }
+      return `${n}: ${level.toFixed(2)}${arrow}`;
+    });
+    parts.push(`Drives: ${driveEntries.join(", ")}`);
+
+    // Energy trend: last 5 cycles net
+    const history = this.state.energy.cycleHistory;
+    if (history.length > 0) {
+      const recent = history.slice(-5);
+      const trend = recent.map((c) => (c.net >= 0 ? `+${c.net}` : String(c.net)));
+      parts.push(`Energy trend (last ${recent.length} cycles net): ${trend.join(", ")}`);
+    }
+
+    // Memory type distribution
+    const mems = this.state.memories.memories;
+    const counts = { procedural: 0, semantic: 0, episodic: 0 };
+    for (const m of mems) counts[m.type as keyof typeof counts]++;
+    parts.push(`Memory distribution: ${counts.procedural} procedural, ${counts.semantic} semantic, ${counts.episodic} episodic`);
+
+    // Config version + cycles since last rewrite
+    const version = this.state.config.version;
+    if (version > 0) {
+      const lastRewrite = this.state.config.promptHistory[this.state.config.promptHistory.length - 1];
+      if (lastRewrite) {
+        const cyclesSince = this.state.cycleCount - lastRewrite.version;
+        parts.push(`Config version: ${version} (last rewrite: ${cyclesSince} cycles ago)`);
+      } else {
+        parts.push(`Config version: ${version}`);
+      }
+    }
+
+    return `State:\n- ${parts.join("\n- ")}`;
   }
 }
 

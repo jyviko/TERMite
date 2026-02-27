@@ -51,6 +51,8 @@ export async function runMemorizePhase(
   lesson: string,
   outcome: string,
   memoryBudget: number,
+  stateBlock?: string,
+  populationBlock?: string,
 ): Promise<MemorizeResult> {
   const prompt = config.memorizePrompt
     .replace("{outcome}", outcome)
@@ -60,7 +62,9 @@ export async function runMemorizePhase(
     .replace("{memoryCount}", String(memories.memories.length))
     .replace("{memories}", formatMemoriesWithCosts(memories))
     .replace("{memoryTokens}", String(memories.totalTokenCost))
-    .replace("{memoryBudget}", String(memoryBudget));
+    .replace("{memoryBudget}", String(memoryBudget))
+    .replace("{stateBlock}", stateBlock ?? "")
+    .replace("{populationBlock}", populationBlock ?? "");
 
   try {
     const response = await llm.chat({

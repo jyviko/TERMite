@@ -1,6 +1,62 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { computeIncome } from "../../src/loop/resolve.js";
+import Anthropic from "@anthropic-ai/sdk";
+import { LLM, type LLMResponse, type ChatParams } from "../../src/llm/index.js";
+import { Resolver, computeIncome } from "../../src/loop/resolve.js";
+import { Config } from "../../src/state/config.js";
 import { TEQPool } from "../../src/arena/teq-pool.js";
+
+class MockLLM extends LLM {
+  response = '{"outcome":"success","value":0.5,"energyJustified":true,"lesson":"test","goalComplete":false}';
+  capturedSystem = "";
+
+  constructor() {
+    super({});
+  }
+
+  async chat(params: ChatParams): Promise<LLMResponse> {
+    this.capturedSystem = params.system ?? "";
+    return {
+      content: [{ type: "text", text: this.response, citations: null }] as Anthropic.ContentBlock[],
+      stopReason: "end_turn",
+      usage: { input: 80, output: 30, cacheCreation: 0, cacheRead: 0 },
+    };
+  }
+}
+
+describe("Resolver", () => {
+  it("substitutes stateBlock into resolve prompt", async () => {
+    const llm = new MockLLM();
+    const resolver = new Resolver(llm);
+    const config = new Config();
+    const stateBlock = "State:\n- Drives: explore: 0.80↑, acquire: 0.30↓";
+
+    await resolver.resolve({
+      config,
+      goal: "test goal",
+      actions: "ran check",
+      cycleCost: 5000,
+      stateBlock,
+    });
+
+    expect(llm.capturedSystem).toContain("Drives: explore: 0.80↑");
+    expect(llm.capturedSystem).not.toContain("{stateBlock}");
+  });
+
+  it("defaults stateBlock to empty when omitted", async () => {
+    const llm = new MockLLM();
+    const resolver = new Resolver(llm);
+    const config = new Config();
+
+    await resolver.resolve({
+      config,
+      goal: "test goal",
+      actions: "ran check",
+      cycleCost: 5000,
+    });
+
+    expect(llm.capturedSystem).not.toContain("{stateBlock}");
+  });
+});
 
 describe("computeIncome", () => {
   let pool: TEQPool;
