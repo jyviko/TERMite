@@ -1,5 +1,5 @@
 #!/bin/bash
-# description: create_tool - Create a reusable tool. Input: name|description|script body. Available next cycle.
+# description: create_tool - Create a reusable tool. Input: name|description|script body. The body receives input via $INPUT variable. Available next cycle.
 input="$(cat)"
 name="${input%%|*}"
 rest="${input#*|}"
@@ -13,6 +13,7 @@ fi
 cat > "/workspace/tools/$name" << TOOLEOF
 #!/bin/bash
 # description: $name - $desc
+INPUT="\$(cat)"
 $body
 TOOLEOF
 chmod +x "/workspace/tools/$name"
