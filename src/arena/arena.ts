@@ -107,7 +107,7 @@ export class Arena {
     this.openDataGenerator = new OpenDataGenerator();
   }
 
-  /** Scale pool regen rate to population size × average model multiplier. */
+  /** Scale pool regen rate sublinearly with population to create carrying capacity. */
   private calibratePool(): void {
     const BASE_REGEN_PER_AGENT = 50_000;
     const entries = Array.from(this.agents.values());
@@ -118,7 +118,10 @@ export class Arena {
     }, 0);
     const avgMultiplier = totalMultiplier / entries.length;
 
-    const scaledRegen = Math.floor(BASE_REGEN_PER_AGENT * entries.length * avgMultiplier);
+    // sqrt(n) makes each additional agent contribute less regen than the last.
+    // 8 Sonnet agents: sqrt(8) × 50K × 3.0 ≈ 424K/tick — viable but scarce.
+    // 80 agents: sqrt(80) × 50K × 3.0 ≈ 1.34M/tick — heavy competition.
+    const scaledRegen = Math.floor(BASE_REGEN_PER_AGENT * Math.sqrt(entries.length) * avgMultiplier);
     this.teqPool.setRegenRate(scaledRegen);
   }
 
