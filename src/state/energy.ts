@@ -161,6 +161,7 @@ export class EnergyLedger {
     const actualIncome = this.cycleIncome;
     this.cycleHistory.push({
       cycle,
+      timestamp: new Date().toISOString(),
       cost: this.cycleCost,
       income: actualIncome,
       net: actualIncome - this.cycleCost,
@@ -196,7 +197,7 @@ export class EnergyLedger {
   }
 
   get active(): boolean {
-    return this.reserves > 0 && this.spent < this.budget;
+    return this.reserves > 0;
   }
 
   get currentCycleCost(): number {
@@ -208,6 +209,7 @@ export class EnergyLedger {
   }
 
   toJSON(): EnergyLedgerData {
+    // cycleHistory omitted — metrics.jsonl is the SSoT for per-cycle records
     return {
       budget: this.budget,
       spent: this.spent,
@@ -216,7 +218,7 @@ export class EnergyLedger {
       earned: this.earned,
       earnedFromPrizes: this.earnedFromPrizes,
       baseCost: this.baseCost,
-      cycleHistory: this.cycleHistory,
+      cycleHistory: [],
     };
   }
 

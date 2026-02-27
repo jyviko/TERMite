@@ -24,6 +24,9 @@ const { values } = parseArgs({
 const workspaceRoot = values.workspace ?? "./arena-workspace";
 const REFRESH_INTERVAL = parseInt(values.interval ?? "1500", 10);
 
+let hideDead = false;
+let tierFilter: number | null = null; // null = show all, 1-6 = show only that tier
+
 /** Find the latest run-* directory, or use --run if specified */
 function findRunDir(): string {
   if (values.run) return join(workspaceRoot, values.run);
@@ -127,14 +130,55 @@ interface AgentData {
   [key: string]: unknown;
 }
 
+function loadCensus(): Map<string, AgentData> {
+  const censusPath = join(SAVES_DIR, "shared", "_census.json");
+  try {
+    const data = JSON.parse(readFileSync(censusPath, "utf-8"));
+    const map = new Map<string, AgentData>();
+    if (Array.isArray(data.agents)) {
+      for (const a of data.agents) {
+        const id = String(a.id ?? "");
+        if (id) map.set(id, a);
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
 function loadAgents(): AgentData[] {
   if (!existsSync(SAVES_DIR)) return [];
+  const census = loadCensus();
   const agents: AgentData[] = [];
   for (const entry of readdirSync(SAVES_DIR, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "shared") continue;
     const statePath = join(SAVES_DIR, entry.name, "state.json");
     try {
-      agents.push(JSON.parse(readFileSync(statePath, "utf-8")));
+      const state = JSON.parse(readFileSync(statePath, "utf-8"));
+      // Load cycle history from metrics.jsonl (SSoT)
+      const energyObj = state.energy ?? {};
+      const metricsPath = join(SAVES_DIR, entry.name, "metrics.jsonl");
+      try {
+        const raw = readFileSync(metricsPath, "utf-8");
+        const records = raw
+          .split("\n")
+          .filter((l: string) => l.trim().length > 0)
+          .map((l: string) => JSON.parse(l));
+        if (records.length > 0) {
+          energyObj.cycleHistory = records;
+        }
+      } catch {
+        // No metrics file — legacy state.json may still have cycleHistory
+      }
+      // Merge live tier from census (entry.json only exists after death/shutdown)
+      const id = String(state.id ?? state.agent_id ?? "");
+      const cEntry = census.get(id);
+      if (cEntry) {
+        state._taskTier = gn(cEntry, "level");
+        state._graduated = Boolean(g(cEntry, "graduated"));
+      }
+      agents.push(state);
     } catch {
       // Not written yet
     }
@@ -278,13 +322,19 @@ function drawCard(buf: string[], org: AgentData, r0: number, c0: number, colW: n
   safe(buf, r, c0, ` Life: ${fmtSigned(lifetime)}`, lc);
   r++;
 
-  // Row 11: tool registry
+  // Row 11: tier + tools
+  const tier = gn(org, "_taskTier");
+  const grad = Boolean(g(org, "_graduated"));
+  const tierLabel = grad ? "G" : `T${tier || "?"}`;
   const tools = g(org, "tool_registry", "toolRegistry");
-  if (Array.isArray(tools) && tools.length > 0) {
-    const names = tools.map((t: AgentData) => gs(t, "name")).join(", ");
-    safe(buf, r, c0, ` T: ${names}`.slice(0, colW - 1), MAG);
+  const toolNames = Array.isArray(tools) && tools.length > 0
+    ? tools.map((t: AgentData) => gs(t, "name")).join(",")
+    : "";
+  const tierColor = tier >= 5 ? GREEN : tier >= 3 ? YELLOW : "";
+  if (toolNames) {
+    safe(buf, r, c0, ` ${tierLabel} ${toolNames}`.slice(0, colW - 1), `${tierColor}`);
   } else {
-    safe(buf, r, c0, " T: none");
+    safe(buf, r, c0, ` ${tierLabel}`, tierColor);
   }
   r++;
 
@@ -316,7 +366,12 @@ function render(): string {
   // Clear
   buf.push("\x1b[2J\x1b[H");
 
-  const orgs = loadAgents();
+  const allOrgs = loadAgents();
+  let orgs = hideDead ? allOrgs.filter((o) => Boolean(g(o, "active"))) : allOrgs;
+  if (tierFilter !== null) {
+    orgs = orgs.filter((o) => gn(o, "_taskTier") === tierFilter);
+  }
+  const deadCount = allOrgs.length - allOrgs.filter((o) => Boolean(g(o, "active"))).length;
 
   // Global stats
   const totalSpent = orgs.reduce((s, o) => s + gn((g(o, "energy") ?? {}) as AgentData, "spent"), 0);
@@ -385,7 +440,9 @@ function render(): string {
   }
 
   // Footer
-  safe(buf, height - 1, 0, ` [q] quit  ${n} agents  ${nCols}x${nGridRows} grid`, CYAN);
+  const deadLabel = hideDead ? `${deadCount} hidden` : `${deadCount} dead`;
+  const tierLabel = tierFilter !== null ? `T${tierFilter}` : "all";
+  safe(buf, height - 1, 0, ` [q]uit [d]ead [1-6]tier [0]all  ${n}/${allOrgs.length} shown (${deadLabel}) tier:${tierLabel}`, CYAN);
 
   return buf.join("");
 }
@@ -404,6 +461,15 @@ if (process.stdin.isTTY) {
   process.stdin.on("data", (key: string) => {
     if (key === "q" || key === "Q" || key === "\x03") {
       cleanup();
+    } else if (key === "d" || key === "D") {
+      hideDead = !hideDead;
+      tick();
+    } else if (key >= "1" && key <= "6") {
+      tierFilter = tierFilter === Number(key) ? null : Number(key);
+      tick();
+    } else if (key === "0") {
+      tierFilter = null;
+      tick();
     }
   });
 }

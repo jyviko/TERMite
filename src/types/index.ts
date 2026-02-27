@@ -11,6 +11,9 @@ export type DriveName = (typeof DRIVE_NAMES)[number];
 // Memory types
 export type MemoryType = "episodic" | "semantic" | "procedural";
 
+// Prompt phases (the three rewritable prompts)
+export type PromptPhase = "systemPrompt" | "resolvePrompt" | "memorizePrompt";
+
 export interface Drive {
   name: DriveName;
   level: number; // 0.0 - 1.0
@@ -45,6 +48,7 @@ export interface EnergyLedgerData {
 
 export interface CycleRecord {
   cycle: number;
+  timestamp?: string;   // ISO wall-clock time
   cost: number;
   income: number;
   net: number;
@@ -80,11 +84,15 @@ export interface RoutingConfig {
 }
 
 export interface PromptRewrite {
-  phase: string;
+  phase: PromptPhase;
   oldPrompt: string;
   newPrompt: string;
   timestamp: number;
   version: number;
+}
+
+export interface DrivePhaseTracking {
+  coordinateActiveCycles: number;
 }
 
 export interface AgentState {
@@ -99,8 +107,23 @@ export interface AgentState {
   goal: string | null;
   energy: EnergyLedgerData;
   drives: Record<DriveName, Drive>;
+  drivePhaseTracking?: DrivePhaseTracking;
   memories: Memory[];
   config: Config;
+}
+
+// Strategy fingerprint — appended to metrics.jsonl for post-hoc ALife analysis
+export interface StrategyFingerprint {
+  memEpisodic: number;
+  memSemantic: number;
+  memProcedural: number;
+  memTotalTokens: number;
+  promptVersion: number;
+  toolCount: number;
+  tier: number;
+  baseCost: number;
+  drives: Record<DriveName, number>;
+  generation: number;
 }
 
 // Task system

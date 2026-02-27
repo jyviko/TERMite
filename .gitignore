@@ -7,6 +7,7 @@ saves/
 .env
 
 .pnp.*
+.yarn/install-state.gz
 arena-workspace/
 .claude-o/
 worktrees/

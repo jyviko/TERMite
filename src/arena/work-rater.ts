@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { LLM, TokenUsage } from "../llm/index.js";
+import { ZERO_USAGE, type LLM, type TokenUsage } from "../llm/index.js";
 import { extractText } from "../llm/util.js";
 
 export interface WorkRating {
@@ -23,8 +23,6 @@ Rating scale:
 
 Respond with ONLY a JSON object:
 {"score": 0.0, "rationale": "brief explanation"}`;
-
-const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
 export class WorkRater {
   constructor(private llm: LLM) {}

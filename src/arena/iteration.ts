@@ -20,7 +20,7 @@ export class ConfigIterator {
 
     const formattedTaskHistory = params.taskHistory
       .slice(-10)
-      .map((q) => `tier ${q.tier}: ${q.passed ? "PASS" : "FAIL"} in ${q.cyclesTaken} cycles`)
+      .map((q) => `level ${q.tier}: ${q.passed ? "PASS" : "FAIL"} in ${q.cyclesTaken} cycles`)
       .join("\n");
 
     const prompt = `You are iterating an agent's configuration for the next version.
@@ -31,7 +31,7 @@ ${params.sourceConfig.systemPrompt}
 Source agent's key memories (sorted by importance):
 ${formattedMemories || "(none)"}
 
-Task history:
+Challenge history:
 ${formattedTaskHistory || "(none)"}
 
 Create an improved system prompt for the next version. It should:
@@ -61,7 +61,7 @@ Return JSON: { "systemPrompt": "..." }`;
         promptHistory: [],
       });
 
-      applyRewrites(next);
+      applyVariations(next);
 
       return next;
     } catch {
@@ -84,11 +84,13 @@ function parseIterateResponse(text: string): { systemPrompt?: string } {
   }
 }
 
-function applyRewrites(config: Config): void {
+const SHUFFLE_PROBABILITY = 0.1;
+const DELETION_PROBABILITY = 0.05;
+
+function applyVariations(config: Config): void {
   const sentences = config.systemPrompt.split(/(?<=\.)\s+/);
 
-  // 10% chance: shuffle one sentence
-  if (Math.random() < 0.1 && sentences.length > 2) {
+  if (Math.random() < SHUFFLE_PROBABILITY && sentences.length > 2) {
     const idx = Math.floor(Math.random() * sentences.length);
     const newIdx = Math.floor(Math.random() * sentences.length);
     const [removed] = sentences.splice(idx, 1);
@@ -96,8 +98,7 @@ function applyRewrites(config: Config): void {
     config.systemPrompt = sentences.join(" ");
   }
 
-  // 5% chance: remove shortest sentence
-  if (Math.random() < 0.05 && sentences.length > 3) {
+  if (Math.random() < DELETION_PROBABILITY && sentences.length > 3) {
     const shortest = sentences.reduce((a, b) => (a.length < b.length ? a : b));
     const idx = sentences.indexOf(shortest);
     if (idx >= 0) sentences.splice(idx, 1);

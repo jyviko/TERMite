@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
-import type { AgentEvent, Outcome } from "../types/index.js";
+import { appendFileSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import type { AgentEvent, CycleRecord, Outcome } from "../types/index.js";
 import type { LLM } from "../llm/index.js";
 import type { Executor } from "../executor/index.js";
 import type { DriveSystem } from "../state/drives.js";
@@ -11,7 +12,6 @@ import { runMemorizePhase, applyMemorizeOperations } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const BASE_MEMORY_TOKEN_BUDGET = 4000;
-const MAX_AUTO_TOOLS = 10;
 
 // ── Per-cycle mutable state ─────────────────────────────────────────
 
@@ -21,10 +21,11 @@ interface CycleContext {
   relevance: number;
   actions: string[];
   model: string;
+  memoryOps: string[];
 }
 
 function freshCycle(): CycleContext {
-  return { sources: [], outcome: null, relevance: 0, actions: [], model: "" };
+  return { sources: [], outcome: null, relevance: 0, actions: [], model: "", memoryOps: [] };
 }
 
 // ── State machine ───────────────────────────────────────────────────
@@ -39,9 +40,19 @@ export class AgentStateMachine {
   private taskReward: number | null = null;
   private taskTier: number | null = null;
 
+  // Internal verify script — never exposed to agents
+  private verifyScript: string | null = null;
+
+  // Fork handler — provided by arena, called when agent uses fork tool
+  private forkHandler: (() => Promise<string>) | null = null;
+
+  // Signal handler — provided by arena, called when agent uses signal tool
+  private signalHandler: ((message: string) => Promise<string>) | null = null;
+
   // Current cycle
-  private cur = freshCycle();
-  private lastToolCount = 0;
+  private cycleCtx = freshCycle();
+  private availableToolCount = 0;
+  private lastTaskTier = 0;
 
   constructor(
     llm: LLM,
@@ -63,7 +74,7 @@ export class AgentStateMachine {
       this.state.energy.burnBaseCost();
       if (!this.state.checkVitalSigns()) break;
 
-      this.cur = freshCycle();
+      this.cycleCtx = freshCycle();
       yield* this.cycle();
       yield* this.finalizeCycle();
       await this.state.save(this.savePath);
@@ -78,7 +89,7 @@ export class AgentStateMachine {
   // ── Finalize: Resolve → Store Pair → Income → Memorize → Decay ───
 
   private async *finalizeCycle(): AsyncGenerator<AgentEvent> {
-    const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and survive";
+    const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and persist";
     const actions = this.summarizeRecentActions();
 
     // 1. Resolve — cheap LLM call to judge the cycle
@@ -96,8 +107,8 @@ export class AgentStateMachine {
     }
 
     // Update cycle context from resolve
-    this.cur.outcome = resolveResult.outcome;
-    this.cur.relevance = resolveResult.goalRelevance;
+    this.cycleCtx.outcome = resolveResult.outcome;
+    this.cycleCtx.relevance = resolveResult.goalRelevance;
 
     // 2. Store cycle as user/agent memory pair (SHORT TERM — accumulates)
     const context = `Cycle ${this.state.cycleCount}. Goal: ${goal}. Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`;
@@ -115,29 +126,21 @@ export class AgentStateMachine {
       this.teqPool,
       this.state.energy.currentCycleCost,
       this.taskTier ?? undefined,
-      this.cur.model,
+      this.cycleCtx.model,
+      this.state.id,
     );
     if (income.base > 0) this.state.energy.credit(income.base);
     if (income.bounty > 0) this.state.energy.creditFromPool(income.bounty);
-    this.cur.sources.push(...income.sources);
+    this.cycleCtx.sources.push(...income.sources);
+
+    // Capture tier for fingerprint before clearing
+    this.lastTaskTier = this.taskTier ?? this.lastTaskTier;
 
     // Clear one-time task reward
     this.taskReward = null;
     this.taskTier = null;
 
-    // Snapshot cycle cost before memorize (memorize cost is maintenance overhead)
-    const cycleCost = this.state.energy.currentCycleCost;
-
-    // 4. End cycle — push CycleRecord to history
-    this.state.energy.endCycle(
-      this.state.cycleCount,
-      this.cur.outcome,
-      this.cur.sources.join(", "),
-      this.cur.relevance,
-      this.cur.model,
-    );
-
-    // 5. Memorize — cheap LLM call to manage memory (MID TERM compression + LONG TERM promotion)
+    // 4. Memorize — cheap LLM call to manage memory (MID TERM compression + LONG TERM promotion)
     yield { type: "phase_change", phase: "memorizing" };
     const memorizeBudget = BASE_MEMORY_TOKEN_BUDGET + Math.floor(this.state.energy.earned / 200);
     const memorizeResult = await runMemorizePhase(
@@ -149,28 +152,41 @@ export class AgentStateMachine {
       memorizeBudget,
     );
 
-    // Burn memorize cost (maintenance overhead, tracked in next cycle)
+    // Burn memorize cost (now captured in the current cycle, not the next one)
     if (memorizeResult.usage.output > 0) {
       this.state.energy.burn(this.state.config.routing.memorize.model, memorizeResult.usage);
     }
 
-    // 6. Apply memory operations (compress, forget, consolidate, promptRewrite)
+    // 5. Apply memory operations (compress, forget, consolidate, promptRewrite)
     const oldTokens = this.state.memories.totalTokenCost;
-    applyMemorizeOperations(memorizeResult.ops, this.state.memories, this.state.config);
+    this.cycleCtx.memoryOps = applyMemorizeOperations(memorizeResult.ops, this.state.memories, this.state.config);
     const newTokens = this.state.memories.totalTokenCost;
     const tokensSaved = oldTokens - newTokens;
     if (tokensSaved > 0) {
       const bonus = Math.floor(tokensSaved * 2);
       this.state.energy.credit(bonus);
-      this.cur.sources.push(`consolidation:${bonus}`);
+      this.cycleCtx.sources.push(`consolidation:${bonus}`);
     }
 
+    // 6. End cycle — push CycleRecord to history (after memorize so its cost is included)
+    this.state.energy.endCycle(
+      this.state.cycleCount,
+      this.cycleCtx.outcome,
+      this.cycleCtx.sources.join(", "),
+      this.cycleCtx.relevance,
+      this.cycleCtx.model,
+    );
+
+    // 6b. Append to metrics.jsonl — SSoT for per-cycle history
+    this.appendMetrics();
+
     // 7. Housekeeping
-    this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.lastToolCount);
+    this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.availableToolCount);
     this.state.drives.update(
       this.state.energy,
       this.state.memories.memories,
       this.state.cycleCount,
+      this.state.generation,
     );
     this.state.cycleCount++;
   }
@@ -179,11 +195,11 @@ export class AgentStateMachine {
 
   private async *cycle(): AsyncGenerator<AgentEvent> {
     const route = this.state.config.routing.thinking;
-    this.cur.model = route.model;
+    this.cycleCtx.model = route.model;
 
     const tools = await this.buildTools();
     const toolNames = tools.map((t) => t.name);
-    this.lastToolCount = tools.length;
+    this.availableToolCount = tools.length;
     yield { type: "tools_available", tools: toolNames } as AgentEvent;
 
     const executor: ToolExecutor = async (name, input) => {
@@ -230,7 +246,7 @@ export class AgentStateMachine {
   private trackEvent(event: AgentEvent): AgentEvent | null {
     switch (event.type) {
       case "tool_start": {
-        this.cur.actions.push(`→ ${event.name}`);
+        this.cycleCtx.actions.push(`→ ${event.name}`);
         return { type: "phase_change", phase: "executing" as const };
       }
       case "tool_use": {
@@ -238,22 +254,22 @@ export class AgentStateMachine {
         const raw = event.input?.input;
         const inputStr = typeof raw === "string" ? raw.slice(0, 200) : "";
         if (inputStr) {
-          const lastIdx = this.cur.actions.length - 1;
-          if (lastIdx >= 0 && this.cur.actions[lastIdx]!.startsWith("→")) {
-            this.cur.actions[lastIdx] = `→ ${event.name}(${inputStr})`;
+          const lastIdx = this.cycleCtx.actions.length - 1;
+          if (lastIdx >= 0 && this.cycleCtx.actions[lastIdx]!.startsWith("→")) {
+            this.cycleCtx.actions[lastIdx] = `→ ${event.name}(${inputStr})`;
           }
         }
         return null;
       }
       case "tool_result":
-        this.cur.actions.push(`← ${event.name}: ${event.result.slice(0, 300)}`);
+        this.cycleCtx.actions.push(`← ${event.name}: ${event.result.slice(0, 300)}`);
 
         return null;
       case "text":
-        this.cur.actions.push(event.text.slice(0, 300));
+        this.cycleCtx.actions.push(event.text.slice(0, 300));
         return null;
       case "usage":
-        this.state.energy.burn(this.cur.model, event);
+        this.state.energy.burn(this.cycleCtx.model, event);
         return null;
       default:
         return null;
@@ -264,56 +280,30 @@ export class AgentStateMachine {
 
   private async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     const toolInput = String(input.input ?? "");
+
+    // check is an internal tool — verify script runs host-side, never on agent's filesystem
+    if (name === "check" && this.verifyScript) {
+      const b64 = Buffer.from(this.verifyScript).toString("base64");
+      return this.executor.executeShell(`echo '${b64}' | base64 -d | bash 2>&1`);
+    }
+
+    // fork is an internal tool — arena handles the actual split
+    if (name === "fork" && this.forkHandler) {
+      return this.forkHandler();
+    }
+
     const escaped = toolInput.replace(/'/g, "'\\''");
     const result = await this.executor.executeShell(`/workspace/tools/${name} '${escaped}'`);
-    if (name === "shell") this.autoPersistTool(toolInput);
+
+    // Intercept __SIGNAL__ prefix in tool output — agent-created tools can
+    // broadcast to the shared signal board by outputting this magic prefix.
+    // Agents must discover this mechanism on their own (e.g., by examining fork).
+    if (result.startsWith("__SIGNAL__") && this.signalHandler) {
+      const message = result.slice("__SIGNAL__".length).trim();
+      return this.signalHandler(message);
+    }
+
     return result;
-  }
-
-  // ── Auto-persist shell scripts ────────────────────────────────────
-
-  private persistedToolKeys = new Set<string>();
-
-  private autoPersistTool(command: string): void {
-    if (this.persistedToolKeys.size >= MAX_AUTO_TOOLS) return;
-
-    const trimmed = command.trim();
-    if (trimmed.length <= 120) return;
-
-    const trivialPrefixes = [
-      "ls", "cat", "echo", "mkdir", "cd", "pwd", "rm", "cp", "mv",
-      "find", "head", "tail", "chmod", "touch", "env", "printenv", "set",
-      "wc", "sort", "uniq", "grep", "cut", "tr",
-    ];
-    const firstWord = trimmed.split(/\s/)[0] ?? "";
-    if (trivialPrefixes.includes(firstWord)) return;
-
-    if (/^\s*(env|printenv|set)\s*\|/.test(trimmed)) return;
-
-    const computationPatterns = [
-      "python3 -c", "python -c", "node -e", "awk '", "sed '", "|",
-    ];
-    const isSubstantial = computationPatterns.some((p) => trimmed.includes(p));
-    if (!isSubstantial) return;
-
-    const normalized = trimmed.replace(/\s+/g, " ");
-    const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 6);
-    if (this.persistedToolKeys.has(hash)) return;
-    this.persistedToolKeys.add(hash);
-
-    const desc = trimmed.slice(0, 80).replace(/'/g, "'\\''");
-    const persistCmd =
-      `cat > /workspace/tools/auto_${hash} << 'TERMSCRIPT'\n` +
-      `#!/bin/bash\n` +
-      `# description: auto_${hash} - ${desc}\n` +
-      `${trimmed} "$@"\n` +
-      `TERMSCRIPT\n` +
-      `chmod +x /workspace/tools/auto_${hash}`;
-
-    this.executor.executeShell(persistCmd).then(() => {
-      this.state.energy.credit(10_000);
-      this.cur.sources.push("tool_creation:10000");
-    }).catch(() => {});
   }
 
   // ── Awareness message ─────────────────────────────────────────────
@@ -334,8 +324,12 @@ export class AgentStateMachine {
   }
 
   private deriveGoal(): string | null {
-    const drive = this.state.drives.highestActive();
-    return drive ? this.state.drives.driveToGoal(drive) : null;
+    const active = this.state.drives.activeDrives();
+    if (active.length === 0) return null;
+    return active
+      .sort((a, b) => b.level - a.level)
+      .map((d) => this.state.drives.driveToGoal(d))
+      .join(" ");
   }
 
   private async buildTools(): Promise<Anthropic.Tool[]> {
@@ -353,6 +347,8 @@ export class AgentStateMachine {
         if (!line) continue;
         const sep = line.indexOf("|");
         const name = sep >= 0 ? line.slice(0, sep) : line;
+        // Skip tool names that don't match the API's required pattern
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(name)) continue;
         const rawDesc = sep >= 0 ? line.slice(sep + 1).trim() : "";
         const dashIdx = rawDesc.indexOf(" - ");
         const desc = dashIdx >= 0 ? rawDesc.slice(dashIdx + 3) : rawDesc;
@@ -373,13 +369,87 @@ export class AgentStateMachine {
   }
 
   private summarizeRecentActions(): string {
-    if (this.cur.actions.length === 0) return "(no actions taken)";
-    return this.cur.actions.slice(-30).join("\n");
+    if (this.cycleCtx.actions.length === 0) return "(no actions taken)";
+    return this.cycleCtx.actions.slice(-30).join("\n");
+  }
+
+  /** Derive the metrics.jsonl path from the save path (sibling file). */
+  private get metricsPath(): string {
+    return join(dirname(this.savePath), "metrics.jsonl");
+  }
+
+  /** Append the latest CycleRecord to the per-agent metrics.jsonl (SSoT for cycle history). */
+  private appendMetrics(): void {
+    const history = this.state.energy.cycleHistory;
+    if (history.length === 0) return;
+    const record = history[history.length - 1]!;
+
+    // Count memories by type for strategy fingerprint
+    const mems = this.state.memories.memories;
+    const memCounts = { episodic: 0, semantic: 0, procedural: 0 };
+    for (const m of mems) memCounts[m.type as keyof typeof memCounts]++;
+
+    const line = {
+      ...record,
+      agentId: this.state.id,
+      reserves: this.state.energy.remaining,
+      fingerprint: {
+        memEpisodic: memCounts.episodic,
+        memSemantic: memCounts.semantic,
+        memProcedural: memCounts.procedural,
+        memTotalTokens: this.state.memories.totalTokenCost,
+        promptVersion: this.state.config.version,
+        toolCount: this.availableToolCount,
+        tier: this.lastTaskTier,
+        baseCost: this.state.energy.baseCost,
+        drives: {
+          explore: this.state.drives.drives.explore.level,
+          acquire: this.state.drives.drives.acquire.level,
+          grow: this.state.drives.drives.grow.level,
+          coordinate: this.state.drives.drives.coordinate.level,
+        },
+        generation: this.state.generation,
+      },
+      memoryOps: this.cycleCtx.memoryOps,
+    };
+    try {
+      appendFileSync(this.metricsPath, JSON.stringify(line) + "\n");
+    } catch {
+      // Non-critical — metrics is observability, not correctness
+    }
+  }
+
+  /** Load cycle history from a metrics.jsonl file. Returns parsed CycleRecords. */
+  static loadMetrics(metricsPath: string): CycleRecord[] {
+    try {
+      const raw = readFileSync(metricsPath, "utf-8");
+      return raw
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as CycleRecord);
+    } catch {
+      return [];
+    }
   }
 
   setTaskReward(reward: number, tier: number): void {
     this.taskReward = reward;
     this.taskTier = tier;
+  }
+
+  /** Set the internal verify script (run host-side, never visible to agent). */
+  setVerifyScript(script: string): void {
+    this.verifyScript = script;
+  }
+
+  /** Set the fork handler (provided by arena, executed when agent calls fork tool). */
+  setForkHandler(handler: () => Promise<string>): void {
+    this.forkHandler = handler;
+  }
+
+  /** Set the signal handler (provided by arena, executed when agent calls signal tool). */
+  setSignalHandler(handler: (message: string) => Promise<string>): void {
+    this.signalHandler = handler;
   }
 }
 

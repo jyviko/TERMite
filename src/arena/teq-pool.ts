@@ -1,4 +1,5 @@
 import { writeFile, readFile, mkdir } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface TEQPoolConfig {
@@ -14,6 +15,16 @@ export interface TEQPoolSnapshot {
   totalRegenerated: number;
   maxBalance: number;
   regenPerCycle: number;
+}
+
+export interface PoolEvent {
+  t: string;                // ISO timestamp
+  type: "withdraw" | "deposit" | "regen";
+  amount: number;           // actual amount (not requested)
+  balance: number;          // balance after event
+  agentId?: string;         // who withdrew/deposited (undefined for regen)
+  regenRate?: number;       // current regen rate (for regen events)
+  activeAgents?: number;    // population at time of regen
 }
 
 const DEFAULT_CONFIG: TEQPoolConfig = {
@@ -34,6 +45,9 @@ export class TEQPool {
 
   /** Promise-chain serialization for concurrent withdraw safety. */
   private mutex: Promise<void> = Promise.resolve();
+
+  /** Append-only JSONL ledger path. Null if ledger is not enabled. */
+  private ledgerPath: string | null = null;
 
   private constructor(config: Partial<TEQPoolConfig> = {}) {
     this.balance = config.initialBalance ?? DEFAULT_CONFIG.initialBalance;
@@ -67,29 +81,44 @@ export class TEQPool {
    * Atomically withdraw up to `requested` TEQs.
    * Returns the actual amount withdrawn (may be less if pool is low/empty).
    */
-  async withdraw(requested: number): Promise<number> {
+  async withdraw(requested: number, agentId?: string): Promise<number> {
     return new Promise<number>((resolve) => {
       this.mutex = this.mutex.then(() => {
         const actual = Math.min(requested, Math.max(0, this.balance));
         this.balance -= actual;
         this.totalWithdrawn += actual;
+        this.appendLedger({ t: new Date().toISOString(), type: "withdraw", amount: actual, balance: this.balance, agentId });
         resolve(actual);
       });
     });
   }
 
-  /** Return TEQs to the pool (e.g. on agent death). Capped at maxBalance. */
-  deposit(amount: number): void {
+  /** Return TEQs to the pool (e.g. on agent halt). Capped at maxBalance. */
+  deposit(amount: number, agentId?: string): void {
     this.balance = Math.min(this.maxBalance, this.balance + amount);
     this.totalDeposited += amount;
+    this.appendLedger({ t: new Date().toISOString(), type: "deposit", amount, balance: this.balance, agentId });
+  }
+
+  /** Update the regen rate at runtime (e.g. to scale with population × model multiplier). */
+  setRegenRate(rate: number): void {
+    this.regenPerCycle = rate;
   }
 
   /** Called on a timer — adds regenPerCycle TEQs, capped at maxBalance. */
-  regenerate(): void {
+  regenerate(activeAgents?: number): void {
     const added = Math.min(this.regenPerCycle, this.maxBalance - this.balance);
     if (added > 0) {
       this.balance += added;
       this.totalRegenerated += added;
+      this.appendLedger({
+        t: new Date().toISOString(),
+        type: "regen",
+        amount: added,
+        balance: this.balance,
+        regenRate: this.regenPerCycle,
+        activeAgents,
+      });
     }
   }
 
@@ -111,6 +140,25 @@ export class TEQPool {
   async persist(path: string): Promise<void> {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(this.toJSON(), null, 2), "utf-8");
+  }
+
+  /** Enable append-only JSONL ledger at the given path. */
+  setLedger(path: string): void {
+    this.ledgerPath = path;
+  }
+
+  /** Close the ledger (no-op — appendFileSync needs no teardown). */
+  closeLedger(): void {
+    this.ledgerPath = null;
+  }
+
+  private appendLedger(event: PoolEvent): void {
+    if (!this.ledgerPath) return;
+    try {
+      appendFileSync(this.ledgerPath, JSON.stringify(event) + "\n");
+    } catch {
+      // Non-critical — ledger is observability, not correctness
+    }
   }
 
   /** Load persisted state into the singleton, or initialize fresh. */

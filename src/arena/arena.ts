@@ -8,10 +8,12 @@ import { AgentStateManager } from "../state/agent-state.js";
 import { MemoryStore } from "../state/memory.js";
 import { AgentStateMachine } from "../loop/state-machine.js";
 import { TaskGenerator, TIER_REWARDS } from "./task-generator.js";
+import { lookupBountyMultiplier } from "../loop/resolve.js";
 import { TaskVerifier } from "./task-verifier.js";
 import { ConfigIterator } from "./iteration.js";
 import { SharedBudget } from "./shared-budget.js";
 import { TEQPool } from "./teq-pool.js";
+import { SnapshotManager } from "./snapshots.js";
 import { OpenDataGenerator } from "./open-data-generator.js";
 import { WorkRater } from "./work-rater.js";
 
@@ -40,6 +42,8 @@ export interface ArenaConfig {
   poolInitialBalance?: number;
   poolRegenPerCycle?: number;
   poolMaxBalance?: number;
+  snapshotIntervalMs?: number;
+  noSnapshots?: boolean;
 }
 
 // ANSI color palette for per-agent log coloring
@@ -60,9 +64,25 @@ const AGENT_COLORS = [
 const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
 
+// Signal board entry
+interface Signal {
+  from: string;
+  message: string;
+  cycle: number;
+  timestamp: string;
+  expiresAt: number;
+}
+
+const SIGNAL_COST = 500;         // TEQ cost per signal
+const SIGNAL_MAX_LENGTH = 256;   // Max message length
+const SIGNAL_TTL_MS = 5 * 60_000; // Signals expire after 5 minutes
+const SPLIT_REPORT_CYCLE_THRESHOLD = 10; // Cycles before split report is sent
+
 export class Arena {
   private agents = new Map<string, AgentEntry>();
   private agentColors = new Map<string, string>();
+  private signals: Signal[] = [];
+  private splitReportsSent = new Set<string>(); // copy IDs that have been reported
   private llm: LLM;
   private sharedBudget: SharedBudget;
   private teqPool: TEQPool;
@@ -73,6 +93,7 @@ export class Arena {
   private openDataGenerator: OpenDataGenerator;
   private config: ArenaConfig;
   private runDir = "";
+  private snapshots: SnapshotManager | null = null;
 
   constructor(config: ArenaConfig) {
     this.config = config;
@@ -90,6 +111,24 @@ export class Arena {
     this.openDataGenerator = new OpenDataGenerator();
   }
 
+  /** Scale pool regen rate sublinearly with population to create carrying capacity. */
+  private calibratePool(): void {
+    const BASE_REGEN_PER_AGENT = 50_000;
+    const entries = Array.from(this.agents.values()).filter(e => e.active);
+    if (entries.length === 0) return;
+
+    const totalMultiplier = entries.reduce((sum, e) => {
+      return sum + lookupBountyMultiplier(e.state.config.routing.thinking.model);
+    }, 0);
+    const avgMultiplier = totalMultiplier / entries.length;
+
+    // sqrt(n) makes each additional agent contribute less regen than the last.
+    // 8 Sonnet agents: sqrt(8) × 50K × 3.0 ≈ 424K/tick — viable but scarce.
+    // 80 agents: sqrt(80) × 50K × 3.0 ≈ 1.34M/tick — heavy competition.
+    const scaledRegen = Math.floor(BASE_REGEN_PER_AGENT * Math.sqrt(entries.length) * avgMultiplier);
+    this.teqPool.setRegenRate(scaledRegen);
+  }
+
   async start(): Promise<void> {
     // Each run gets its own timestamped directory under workspaceRoot
     const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -98,6 +137,18 @@ export class Arena {
     mkdirSync(join(this.runDir, "shared"), { recursive: true });
 
     console.log(`Run directory: ${this.runDir}`);
+
+    // Initialize snapshots
+    if (!this.config.noSnapshots) {
+      this.snapshots = new SnapshotManager({
+        runDir: this.runDir,
+        intervalMs: this.config.snapshotIntervalMs,
+      });
+      await this.snapshots.init();
+    }
+
+    // Initialize pool ledger
+    this.teqPool.setLedger(join(this.runDir, "shared", "_pool_ledger.jsonl"));
 
     // Seed agents from previous runs — config + distilled memories carry over, fresh energy
     let seeded = 0;
@@ -137,11 +188,16 @@ export class Arena {
     for (let i = seeded; i < this.config.agentCount; i++) {
       await this.spawnAgent();
     }
+
+    this.calibratePool();
   }
 
   /** Resume a previously stopped run. Loads agent state + arena metadata, spins fresh containers on existing workspaces. */
   async resume(runDir: string): Promise<void> {
     this.runDir = runDir;
+
+    // Restore arena-level state
+    this.restoreArenaState();
 
     // Restore pool state
     const poolPath = join(this.runDir, "shared", "_pool.json");
@@ -162,17 +218,34 @@ export class Arena {
       await executor.stop().catch(() => {});
     }
 
-    let resumed = 0;
+    // Collect resumable agents with their tier for prioritized startup
+    interface ResumeCandidate {
+      dir: string;
+      state: AgentStateManager;
+      entryData: ArenaEntryData;
+    }
+
+    const candidates: ResumeCandidate[] = [];
     let skipped = 0;
 
     for (const dir of agentDirs) {
       const statePath = join(this.runDir, dir, "state.json");
       const entryPath = join(this.runDir, dir, "entry.json");
-      const workspacePath = join(this.runDir, dir, "workspace");
 
-      if (!existsSync(statePath)) continue;
+      if (!existsSync(statePath) || !existsSync(entryPath)) continue;
+
+      let entryData: ArenaEntryData;
+      try {
+        entryData = JSON.parse(readFileSync(entryPath, "utf-8"));
+      } catch {
+        continue; // Corrupted entry.json — skip agent
+      }
 
       const state = await AgentStateManager.load(statePath);
+
+      // Load cycle history from metrics.jsonl (SSoT for per-cycle records)
+      const metricsPath = join(this.runDir, dir, "metrics.jsonl");
+      state.energy.cycleHistory = AgentStateMachine.loadMetrics(metricsPath);
 
       // Skip dead agents
       if (state.energy.remaining <= 0) {
@@ -185,24 +258,17 @@ export class Arena {
       state.stopReason = null;
       state.mode = "active";
 
-      // Load arena entry metadata
-      let entryData: ArenaEntryData = {
-        taskTier: 1,
-        currentTask: null,
-        taskHistory: [],
-        consecutivePasses: 0,
-        consecutiveFails: 0,
-        graduated: false,
-      };
-      if (existsSync(entryPath)) {
-        try {
-          entryData = JSON.parse(readFileSync(entryPath, "utf-8"));
-        } catch {
-          // Corrupted entry.json — use defaults
-        }
-      }
+      candidates.push({ dir, state, entryData });
+    }
 
-      // Spin fresh container on existing workspace
+    // Sort by tier descending — highest-value agents start first
+    candidates.sort((a, b) => (b.entryData.taskTier ?? 1) - (a.entryData.taskTier ?? 1));
+
+    const CONTAINER_STAGGER_MS = 500;
+    let resumed = 0;
+
+    for (const { dir, state, entryData } of candidates) {
+      const workspacePath = join(this.runDir, dir, "workspace");
       const sharedDir = resolve(join(this.runDir, "shared"));
       const executor = new Executor({
         workingDir: workspacePath,
@@ -211,8 +277,24 @@ export class Arena {
       });
       await executor.start();
 
+      // Stagger container startups to avoid Docker resource exhaustion
+      if (resumed > 0) {
+        await new Promise((r) => setTimeout(r, CONTAINER_STAGGER_MS));
+      }
+
       const savePath = join(this.runDir, dir, "state.json");
       const machine = new AgentStateMachine(this.llm, executor, state, this.teqPool, savePath);
+
+      // Restore verify script for current task
+      if (entryData.currentTask) {
+        machine.setVerifyScript(this.taskGenerator.getVerifyScript(entryData.currentTask));
+      }
+
+      // Wire fork handler
+      machine.setForkHandler(() => this.handleForkRequest(dir));
+
+      // Wire signal handler
+      machine.setSignalHandler((msg) => this.handleSignal(dir, state.cycleCount, msg));
 
       const entry: AgentEntry = {
         stateMachine: machine,
@@ -231,25 +313,50 @@ export class Arena {
       this.agents.set(dir, entry);
       this.agentColors.set(dir, AGENT_COLORS[(this.agents.size - 1) % AGENT_COLORS.length]!);
       resumed++;
+
+      if (resumed % 10 === 0) {
+        console.log(`[ARENA] Started ${resumed}/${candidates.length} containers (tier ${entryData.taskTier})...`);
+      }
     }
 
     console.log(`[ARENA] Resumed ${resumed} agents, skipped ${skipped} dead agents from ${runDir}`);
+
+    // Initialize snapshots (may already have .jj/.git from prior run)
+    if (!this.config.noSnapshots) {
+      this.snapshots = new SnapshotManager({
+        runDir: this.runDir,
+        intervalMs: this.config.snapshotIntervalMs,
+      });
+      await this.snapshots.init();
+    }
+
+    // Initialize pool ledger (appends to existing file)
+    this.teqPool.setLedger(join(this.runDir, "shared", "_pool_ledger.jsonl"));
+
+    this.calibratePool();
   }
 
   async run(): Promise<void> {
     const poolPath = join(this.runDir, "shared", "_pool.json");
 
     // Regeneration timer: every 10s, add TEQs and persist pool state
+    // Only regenerate when at least one agent has completed a cycle (is actively running)
     const regenTimer = setInterval(async () => {
-      this.teqPool.regenerate();
+      const activeEntries = Array.from(this.agents.values()).filter(
+        (e) => e.state.active && e.state.cycleCount > 0,
+      );
+      if (activeEntries.length > 0) this.teqPool.regenerate(activeEntries.length);
       await this.teqPool.persist(poolPath).catch(() => {});
     }, 10_000);
 
-    // Peer visibility timer: every 15s, write leaderboard + peer tools
+    // Peer visibility timer: every 15s, write census + peer tools
     const peerTimer = setInterval(() => {
       this.syncPeerData();
     }, 15_000);
     this.syncPeerData(); // initial write
+
+    // Start periodic snapshots
+    this.snapshots?.start();
 
     try {
       const promises = Array.from(this.agents.entries()).map(([id, entry]) =>
@@ -260,6 +367,7 @@ export class Arena {
       clearInterval(regenTimer);
       clearInterval(peerTimer);
       await this.teqPool.persist(poolPath).catch(() => {});
+      await this.snapshots?.stop("run-complete").catch(() => {});
     }
   }
 
@@ -272,22 +380,14 @@ export class Arena {
 
   /** Graceful shutdown: save all agent state + arena metadata, then stop containers. */
   async shutdown(): Promise<void> {
+    this.persistArenaState();
+
     const saves = Array.from(this.agents.entries()).map(async ([id, entry]) => {
       try {
         await entry.state.save(join(this.runDir, id, "state.json"));
-        // Persist arena-level entry metadata for resume
-        const entryData: ArenaEntryData = {
-          taskTier: entry.taskTier,
-          currentTask: entry.currentTask,
-          taskHistory: entry.taskHistory,
-          consecutivePasses: entry.consecutivePasses,
-          consecutiveFails: entry.consecutiveFails,
-          graduated: entry.graduated,
-          graduationData: entry.graduationData,
-        };
         writeFileSync(
           join(this.runDir, id, "entry.json"),
-          JSON.stringify(entryData, null, 2),
+          JSON.stringify(this.buildEntryData(entry), null, 2),
         );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -295,6 +395,15 @@ export class Arena {
       }
     });
     await Promise.allSettled(saves);
+
+    // Final snapshot before stopping containers
+    if (this.snapshots) {
+      await this.snapshots.snapshotSync("shutdown").catch(() => {});
+    }
+
+    // Close ledger
+    this.teqPool.closeLedger();
+
     await this.stop();
   }
 
@@ -304,6 +413,7 @@ export class Arena {
     startingReserves?: number,
     seedMemories?: MemoryStore,
     sourceGeneration?: number,
+    startingTier?: number,
   ): Promise<string> {
     const id = `agent-${randomUUID().slice(0, 8)}`;
     const workspacePath = join(this.runDir, id, "workspace");
@@ -348,9 +458,17 @@ export class Arena {
     const savePath = join(this.runDir, id, "state.json");
     const machine = new AgentStateMachine(this.llm, executor, state, this.teqPool, savePath);
 
-    // Drop initial task
-    const task = this.taskGenerator.generateTask(1, 0);
+    // Drop initial task at the appropriate tier
+    const tier = startingTier ?? 1;
+    const task = this.taskGenerator.generateTask(tier, 0);
     this.taskGenerator.writeTaskToWorkspace(task, workspacePath);
+    machine.setVerifyScript(this.taskGenerator.getVerifyScript(task));
+
+    // Wire fork handler — agent calls fork tool, arena executes
+    machine.setForkHandler(() => this.handleForkRequest(id));
+
+    // Wire signal handler — agent calls signal tool, arena mediates shared write
+    machine.setSignalHandler((msg) => this.handleSignal(id, state.cycleCount, msg));
 
     // If fork, copy source agent's tools
     if (sourceId) {
@@ -365,7 +483,7 @@ export class Arena {
       stateMachine: machine,
       state,
       executor,
-      taskTier: 1,
+      taskTier: tier,
       currentTask: task,
       taskHistory: [],
       active: true,
@@ -380,9 +498,16 @@ export class Arena {
   }
 
   private async runAgent(id: string, entry: AgentEntry): Promise<void> {
+    let lastCycle = entry.state.cycleCount;
     try {
       for await (const event of entry.stateMachine.run()) {
         this.logEvent(id, entry.state.mode, event);
+
+        // Detect cycle boundary — check task deadline and demotion
+        if (entry.state.cycleCount !== lastCycle) {
+          lastCycle = entry.state.cycleCount;
+          this.checkTaskDeadline(id, entry);
+        }
 
         // Check shared budget
         if (this.sharedBudget.exhausted) {
@@ -409,22 +534,14 @@ export class Arena {
       // Return pool-sourced TEQs on stop
       const returnAmount = entry.state.energy.earnedFromPrizes;
       if (returnAmount > 0) {
-        this.teqPool.deposit(returnAmount);
+        this.teqPool.deposit(returnAmount, id);
       }
 
       // Preserve workspace + arena metadata (stopped agent)
       await entry.state.save(join(this.runDir, id, "state.json"));
-      const entryData: ArenaEntryData = {
-        taskTier: entry.taskTier,
-        currentTask: entry.currentTask,
-        taskHistory: entry.taskHistory,
-        consecutivePasses: entry.consecutivePasses,
-        consecutiveFails: entry.consecutiveFails,
-        graduated: entry.graduated,
-        graduationData: entry.graduationData,
-      };
-      writeFileSync(join(this.runDir, id, "entry.json"), JSON.stringify(entryData, null, 2));
+      writeFileSync(join(this.runDir, id, "entry.json"), JSON.stringify(this.buildEntryData(entry), null, 2));
       await entry.executor.stop().catch(() => {});
+      this.calibratePool();
     }
   }
 
@@ -433,8 +550,9 @@ export class Arena {
     const task = entry.currentTask;
     if (!task) return;
 
-    // Verify
-    const result = await this.taskVerifier.verify(task, entry.executor);
+    // Verify using host-side script (agent never sees this)
+    const verifyScript = this.taskGenerator.getVerifyScript(task);
+    const result = await this.taskVerifier.verify(entry.executor, verifyScript);
     if (!result.passed) return;
 
     // Credit energy
@@ -450,15 +568,15 @@ export class Arena {
     entry.consecutivePasses++;
     entry.consecutiveFails = 0;
 
-    // Tier escalation: 3 consecutive passes → tier up (or graduate at tier 5)
+    // Tier escalation: 3 consecutive passes → tier up (or graduate at tier 6)
     if (entry.consecutivePasses >= 3) {
-      if (entry.taskTier >= 5) {
+      if (entry.taskTier >= 6) {
         entry.graduated = true;
         entry.consecutivePasses = 0;
         await this.onGraduation(id, entry);
         return; // No more structured tasks
       }
-      entry.taskTier = Math.min(5, entry.taskTier + 1);
+      entry.taskTier = Math.min(6, entry.taskTier + 1);
       entry.consecutivePasses = 0;
     }
 
@@ -469,20 +587,56 @@ export class Arena {
     );
     entry.currentTask = newTask;
     this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
+    entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
+  }
 
-    // Check fork conditions
-    if (
-      entry.taskTier >= 5 &&
-      entry.state.energy.ratio > 0.7 &&
-      entry.state.cycleCount > 20
-    ) {
-      await this.fork(id, entry);
+  private checkTaskDeadline(id: string, entry: AgentEntry): void {
+    const task = entry.currentTask;
+    if (!task || entry.graduated) return;
+
+    const cyclesOnTask = entry.state.cycleCount - task.assignedCycle;
+    if (cyclesOnTask < task.deadlineCycles) return;
+
+    // Task expired — record failure
+    entry.taskHistory.push({
+      taskId: task.id,
+      tier: task.tier,
+      passed: false,
+      cyclesTaken: cyclesOnTask,
+    });
+
+    entry.consecutivePasses = 0;
+    entry.consecutiveFails++;
+
+    console.log(
+      `[ARENA] ${id} deadline expired on tier ${task.tier} "${task.title}" ` +
+      `(${cyclesOnTask}/${task.deadlineCycles} cycles, fails: ${entry.consecutiveFails})`,
+    );
+
+    // Tier demotion: 2 consecutive deadline failures → tier down
+    if (entry.consecutiveFails >= 2) {
+      const oldTier = entry.taskTier;
+      entry.taskTier = Math.max(1, entry.taskTier - 1);
+      entry.consecutiveFails = 0;
+      if (entry.taskTier !== oldTier) {
+        console.log(`[ARENA] ${id} demoted to tier ${entry.taskTier}`);
+      }
     }
+
+    // Assign new task at current tier (possibly demoted)
+    const workspacePath = join(this.runDir, id, "workspace");
+    const newTask = this.taskGenerator.generateTask(
+      entry.taskTier,
+      entry.state.cycleCount,
+    );
+    entry.currentTask = newTask;
+    this.taskGenerator.writeTaskToWorkspace(newTask, workspacePath);
+    entry.stateMachine.setVerifyScript(this.taskGenerator.getVerifyScript(newTask));
   }
 
   private async onGraduation(id: string, entry: AgentEntry): Promise<void> {
     const workspacePath = join(this.runDir, id, "workspace");
-    console.log(`[ARENA] ${id} GRADUATED from tier 5 — transitioning to open data`);
+    console.log(`[ARENA] ${id} GRADUATED from tier 6 — transitioning to open data`);
 
     entry.currentTask = null;
 
@@ -498,11 +652,11 @@ export class Arena {
 
     try {
       const rating = await this.workRater.rate(dataDir, outputDir);
-      const baseReward = TIER_REWARDS[5] ?? 300_000;
+      const baseReward = TIER_REWARDS[6] ?? 300_000;
       const reward = Math.floor(rating.score * baseReward);
 
       if (reward > 0) {
-        entry.stateMachine.setTaskReward(reward, 5);
+        entry.stateMachine.setTaskReward(reward, 6);
       }
 
       console.log(
@@ -520,85 +674,186 @@ export class Arena {
     }
   }
 
-  private async fork(sourceId: string, source: AgentEntry): Promise<void> {
-    const INVESTMENT_RATIO = 0.3;
-    const MIN_VIABLE_FORK = 20_000;
+  private async handleForkRequest(id: string): Promise<string> {
+    const entry = this.agents.get(id);
+    if (!entry) return "FORK_DENIED: agent not found";
 
-    const investment = Math.floor(source.state.energy.reserves * INVESTMENT_RATIO);
-    if (investment < MIN_VIABLE_FORK) {
-      console.log(
-        `[ARENA] ${sourceId} cannot fork: investment ${investment} < minimum ${MIN_VIABLE_FORK}`,
-      );
-      return;
+    const MIN_VIABLE_COPY = 20_000;
+    const BONUS_RATIO = 0.1; // 10% of source reserves, from TEQ pool
+    const INVESTMENT_RATIO = 0.5; // Source invests 50% of reserves in copy
+    const reserves = entry.state.energy.reserves;
+    const investment = Math.floor(reserves * INVESTMENT_RATIO);
+
+    if (investment < MIN_VIABLE_COPY) {
+      return `FORK_DENIED: insufficient reserves (copy needs at least ${MIN_VIABLE_COPY} TEQ, you have ${reserves})`;
     }
 
-    // Deduct investment from source
-    source.state.energy.burnFlat(investment);
+    // Pool bonus — environment subsidizes splits via TEQ pool
+    const requestedBonus = Math.floor(reserves * BONUS_RATIO);
+    const poolBonus = await this.teqPool.withdraw(requestedBonus, id);
+
+    // Inherit procedural + semantic memories (episodic is context-specific)
+    const inheritedMemories = new MemoryStore(
+      entry.state.memories.memories.filter((m) => m.type !== "episodic"),
+    );
+
+    // Origin memory — copy knows where it came from (factual, not prescriptive)
+    const inheritedCount = inheritedMemories.memories.length;
+    inheritedMemories.add(
+      `Created from split of ${id}. Source had ${reserves.toLocaleString()} TEQ at cycle ${entry.state.cycleCount}. ` +
+      `Inherited ${inheritedCount} memories and tools. Source continues independently.`,
+      "semantic",
+      0.95,
+      "Origin",
+    );
+
+    // Copy inherits tier (minus 1, minimum 1) — progress isn't lost
+    const copyTier = Math.max(1, entry.taskTier - 1);
 
     try {
-      const iteratedConfig = await this.iterator.iterate({
-        sourceConfig: source.state.config,
-        memories: source.state.memories.memories,
-        taskHistory: source.taskHistory,
-        generation: source.state.generation,
+      // One config iteration for copy — variation via LLM temperature
+      const copyConfig = await this.iterator.iterate({
+        sourceConfig: entry.state.config,
+        memories: entry.state.memories.memories,
+        taskHistory: entry.taskHistory,
+        generation: entry.state.generation,
       });
 
-      // Offspring inherit procedural + semantic memories (transferable knowledge)
-      const inheritedMemories = new MemoryStore(
-        source.state.memories.memories.filter((m) => m.type !== "episodic"),
-      );
+      // Source invests half its reserves; copy gets investment + pool bonus
+      const copyReserves = investment + poolBonus;
+      entry.state.energy.burnFlat(investment);
 
-      const forkId = await this.spawnAgent(sourceId, iteratedConfig, investment, inheritedMemories);
+      const copy = await this.spawnAgent(id, copyConfig, copyReserves, inheritedMemories, undefined, copyTier);
+      this.calibratePool();
+
+      const gen = entry.state.generation + 1;
       console.log(
-        `[ARENA] ${sourceId} forked → ${forkId} (gen ${source.state.generation + 1}, invested ${investment} TEQ)`,
+        `[ARENA] ${id} split → ${copy} (gen ${gen}, invested ${investment} + ${poolBonus} bonus = ${copyReserves} TEQ, tier ${copyTier})`,
       );
 
-      // Run the forked agent concurrently
-      const forkEntry = this.agents.get(forkId);
-      if (forkEntry) {
-        this.runAgent(forkId, forkEntry).catch((err: unknown) => {
+      // Source records the split
+      entry.state.memories.add(
+        `Split at cycle ${entry.state.cycleCount}. Invested ${investment.toLocaleString()} TEQ. ` +
+        `Copy ${copy} created with ${copyReserves.toLocaleString()} TEQ at level ${copyTier}. ` +
+        `Remaining reserves: ${entry.state.energy.reserves.toLocaleString()} TEQ.`,
+        "semantic",
+        0.9,
+        "Split",
+      );
+
+      // Run copy concurrently
+      const copyEntry = this.agents.get(copy);
+      if (copyEntry) {
+        this.runAgent(copy, copyEntry).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[ARENA] Fork ${forkId} run failed: ${msg}`);
+          console.error(`[ARENA] Copy ${copy} run failed: ${msg}`);
         });
       }
+
+      return `SPLIT: ${copy} created with ${copyReserves.toLocaleString()} TEQ at level ${copyTier}. You invested ${investment.toLocaleString()} TEQ. Remaining: ${entry.state.energy.reserves.toLocaleString()} TEQ.`;
     } catch (err: unknown) {
-      // Refund source on failure
-      source.state.energy.credit(investment);
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[ARENA] Fork failed for ${sourceId}: ${msg}`);
+      return `FORK_FAILED: ${msg}`;
+    }
+  }
+
+  private async handleSignal(id: string, cycle: number, message: string): Promise<string> {
+    const entry = this.agents.get(id);
+    if (!entry) return "SIGNAL_DENIED: agent not found";
+
+    if (!message || message.trim().length === 0) {
+      return "SIGNAL_DENIED: empty message";
+    }
+
+    const trimmed = message.trim().slice(0, SIGNAL_MAX_LENGTH);
+
+    // Burn signal cost
+    if (entry.state.energy.reserves < SIGNAL_COST) {
+      return `SIGNAL_DENIED: insufficient reserves (need ${SIGNAL_COST} TEQ, have ${entry.state.energy.reserves})`;
+    }
+    entry.state.energy.burnFlat(SIGNAL_COST);
+
+    // Prune expired signals
+    const now = Date.now();
+    this.signals = this.signals.filter((s) => s.expiresAt > now);
+
+    // Add new signal
+    this.signals.push({
+      from: id,
+      message: trimmed,
+      cycle,
+      timestamp: new Date().toISOString(),
+      expiresAt: now + SIGNAL_TTL_MS,
+    });
+
+    // Write immediately so other agents can see it
+    const sharedDir = join(this.runDir, "shared");
+    writeFileSync(
+      join(sharedDir, "_signals.json"),
+      JSON.stringify({ updated: new Date().toISOString(), signals: this.signals }, null, 2),
+    );
+
+    return `SIGNAL_SENT: "${trimmed}" (cost: ${SIGNAL_COST} TEQ, expires in 5 min)`;
+  }
+
+  private persistArenaState(): void {
+    const statePath = join(this.runDir, "shared", "_arena_state.json");
+    writeFileSync(statePath, JSON.stringify({
+      signals: this.signals,
+      splitReportsSent: [...this.splitReportsSent],
+    }, null, 2));
+  }
+
+  private restoreArenaState(): void {
+    const statePath = join(this.runDir, "shared", "_arena_state.json");
+    if (!existsSync(statePath)) return;
+    try {
+      const data = JSON.parse(readFileSync(statePath, "utf-8"));
+      if (Array.isArray(data.signals)) {
+        const now = Date.now();
+        this.signals = data.signals.filter((s: Signal) => s.expiresAt > now);
+      }
+      if (Array.isArray(data.splitReportsSent)) {
+        this.splitReportsSent = new Set(data.splitReportsSent);
+      }
+    } catch {
+      // Corrupted state — start fresh
     }
   }
 
   private syncPeerData(): void {
     const sharedDir = join(this.runDir, "shared");
 
-    // Leaderboard
-    const leaderboard = Array.from(this.agents.entries()).map(([id, entry]) => ({
+    // Census — includes lineage for copy/source observability
+    const census = Array.from(this.agents.entries()).map(([id, entry]) => ({
       id,
       active: entry.state.active,
       cycleCount: entry.state.cycleCount,
-      taskTier: entry.taskTier,
+      level: entry.taskTier,
       energyPct: Math.floor(entry.state.energy.ratio * 100),
       reserves: entry.state.energy.reserves,
       configVersion: entry.state.config.version,
       model: entry.state.config.routing.thinking.model,
-      consecutivePasses: entry.consecutivePasses,
+      streak: entry.consecutivePasses,
       graduated: entry.graduated,
+      generation: entry.state.generation,
+      sourceId: entry.state.sourceId,
     }));
-    leaderboard.sort((a, b) => b.energyPct - a.energyPct);
+    census.sort((a, b) => b.energyPct - a.energyPct);
     writeFileSync(
-      join(sharedDir, "_leaderboard.json"),
-      JSON.stringify({ updated: new Date().toISOString(), agents: leaderboard }, null, 2),
+      join(sharedDir, "_census.json"),
+      JSON.stringify({ updated: new Date().toISOString(), agents: census }, null, 2),
     );
 
     // Peer tools — collect tool names and contents from each agent
+    const EXCLUDED_TOOLS = ["shell", "check", "census", "peers", "signal", "signals"];
     const peerTools: Record<string, { active: boolean; tools: Record<string, string> }> = {};
     for (const [id, entry] of this.agents) {
       const toolsDir = join(this.runDir, id, "workspace", "tools");
       const tools: Record<string, string> = {};
       try {
         for (const file of readdirSync(toolsDir)) {
-          if (["shell", "check", "leaderboard", "peers"].includes(file)) continue;
+          if (EXCLUDED_TOOLS.includes(file)) continue;
           try {
             tools[file] = readFileSync(join(toolsDir, file), "utf-8");
           } catch {
@@ -614,6 +869,73 @@ export class Arena {
       join(sharedDir, "_peers.json"),
       JSON.stringify({ updated: new Date().toISOString(), agents: peerTools }, null, 2),
     );
+
+    // Signals — prune expired, persist
+    const now = Date.now();
+    this.signals = this.signals.filter((s) => s.expiresAt > now);
+    writeFileSync(
+      join(sharedDir, "_signals.json"),
+      JSON.stringify({ updated: new Date().toISOString(), signals: this.signals }, null, 2),
+    );
+
+    // Persist entry.json for active agents — prevents tier loss on crash
+    for (const [id, entry] of this.agents) {
+      if (!entry.state.active) continue;
+      try {
+        writeFileSync(
+          join(this.runDir, id, "entry.json"),
+          JSON.stringify(this.buildEntryData(entry), null, 2),
+        );
+      } catch {
+        // Non-critical — will retry next sync
+      }
+    }
+
+    // Split reports — inject feedback into source agents after copies stabilize
+    this.injectSplitReports();
+  }
+
+  private injectSplitReports(): void {
+    for (const [copyId, copyEntry] of this.agents) {
+      const sourceId = copyEntry.state.sourceId;
+      if (!sourceId) continue; // Not a copy
+      if (this.splitReportsSent.has(copyId)) continue; // Already reported
+      if (copyEntry.state.cycleCount < SPLIT_REPORT_CYCLE_THRESHOLD) continue; // Too early
+
+      const sourceEntry = this.agents.get(sourceId);
+      if (!sourceEntry) continue; // Source no longer in arena
+
+      // Build report
+      const tasksPassed = copyEntry.taskHistory.filter((t) => t.passed).length;
+      const copySplit = Array.from(this.agents.values()).some(
+        (a) => a.state.sourceId === copyId,
+      );
+      const report =
+        `Copy ${copyId} after ${copyEntry.state.cycleCount} cycles: ` +
+        `level ${copyEntry.taskTier}, ` +
+        `energy ${Math.floor(copyEntry.state.energy.ratio * 100)}%, ` +
+        `${tasksPassed} challenges cleared, ` +
+        `config v${copyEntry.state.config.version}` +
+        (copySplit ? ", has split further" : "") +
+        (!copyEntry.state.active ? `, halted (${copyEntry.state.stopReason})` : "");
+
+      sourceEntry.state.memories.add(report, "semantic", 0.8, "Split report");
+      this.splitReportsSent.add(copyId);
+
+      console.log(`[ARENA] Split report: ${sourceId} ← ${copyId} (${copyEntry.state.cycleCount} cycles)`);
+    }
+  }
+
+  private buildEntryData(entry: AgentEntry): ArenaEntryData {
+    return {
+      taskTier: entry.taskTier,
+      currentTask: entry.currentTask,
+      taskHistory: entry.taskHistory,
+      consecutivePasses: entry.consecutivePasses,
+      consecutiveFails: entry.consecutiveFails,
+      graduated: entry.graduated,
+      graduationData: entry.graduationData,
+    };
   }
 
   private logEvent(id: string, mode: string, event: AgentEvent): void {
@@ -636,6 +958,20 @@ export class Arena {
         console.error(`${prefix} \x1b[31mERROR: ${event.message}${RESET}`);
         break;
     }
+  }
+
+  /** List snapshots for a run directory. */
+  static async listSnapshots(runDir: string): Promise<import("./snapshots.js").SnapshotRef[]> {
+    const mgr = new SnapshotManager({ runDir });
+    await mgr.init();
+    return mgr.list();
+  }
+
+  /** Rewind a run directory to a previous snapshot. */
+  static async rewindRun(runDir: string, ref: string): Promise<void> {
+    const mgr = new SnapshotManager({ runDir });
+    await mgr.init();
+    await mgr.rewind(ref);
   }
 }
 

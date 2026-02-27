@@ -16,15 +16,15 @@ describe("TaskGenerator", () => {
   });
 
   it("generates tasks at different tiers", () => {
-    for (const tier of [1, 2, 3, 4, 5]) {
+    for (const tier of [1, 2, 3, 4, 5, 6]) {
       const task = gen.generateTask(tier, 0);
       expect(task.tier).toBe(tier);
     }
   });
 
-  it("clamps tier to 5 maximum", () => {
+  it("clamps tier to 6 maximum", () => {
     const task = gen.generateTask(99, 0);
-    expect(task.tier).toBeLessThanOrEqual(5);
+    expect(task.tier).toBeLessThanOrEqual(6);
     expect(task.tier).toBeGreaterThanOrEqual(1);
   });
 
@@ -53,24 +53,26 @@ describe("TaskGenerator", () => {
     const t1 = gen.generateTask(1, 0);
     const t3 = gen.generateTask(3, 0);
     const t5 = gen.generateTask(5, 0);
+    const t6 = gen.generateTask(6, 0);
     expect(t3.reward).toBeGreaterThan(t1.reward);
     expect(t5.reward).toBeGreaterThan(t3.reward);
+    expect(t6.reward).toBeGreaterThan(t5.reward);
   });
 
-  it("TIER_EXPECTED_COST has entries for tiers 1-5", () => {
-    for (const tier of [1, 2, 3, 4, 5]) {
+  it("TIER_EXPECTED_COST has entries for tiers 1-6", () => {
+    for (const tier of [1, 2, 3, 4, 5, 6]) {
       expect(TIER_EXPECTED_COST[tier]).toBeDefined();
       expect(TIER_EXPECTED_COST[tier]).toBeGreaterThan(0);
     }
-    expect(TIER_EXPECTED_COST[6]).toBeUndefined();
+    expect(TIER_EXPECTED_COST[7]).toBeUndefined();
   });
 
-  it("TIER_REWARDS has entries for tiers 1-5 only", () => {
-    for (const tier of [1, 2, 3, 4, 5]) {
+  it("TIER_REWARDS has entries for tiers 1-6", () => {
+    for (const tier of [1, 2, 3, 4, 5, 6]) {
       expect(TIER_REWARDS[tier]).toBeDefined();
       expect(TIER_REWARDS[tier]).toBeGreaterThan(0);
     }
-    expect(TIER_REWARDS[6]).toBeUndefined();
+    expect(TIER_REWARDS[7]).toBeUndefined();
   });
 
   it("data generators produce files of expected sizes", () => {

@@ -33,7 +33,7 @@ class MockExecutor {
 
   async executeShell(command: string): Promise<string> {
     if (command.includes("find /workspace/tools")) {
-      return "shell|shell - Run a shell command\ncheck|check - Validate task output";
+      return "shell|shell - Run a shell command\ncheck|check - Probe the environment";
     }
     if (command.startsWith("/workspace/tools/check")) {
       const greeting = this.files.get("/workspace/output/greeting.txt");

@@ -1,4 +1,4 @@
-import type { Config as ConfigData, PromptRewrite, RoutingConfig } from "../types/index.js";
+import type { Config as ConfigData, PromptPhase, PromptRewrite, RoutingConfig } from "../types/index.js";
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_RESOLVE_PROMPT, DEFAULT_MEMORIZE_PROMPT, DEFAULT_ROUTING } from "./defaults.js";
 
 export class Config {
@@ -28,7 +28,7 @@ export class Config {
     this.promptHistory = data?.promptHistory ?? [];
   }
 
-  rewrite(phase: string, newPrompt: string): void {
+  rewrite(phase: PromptPhase, newPrompt: string): void {
     const current = this.getPrompt(phase);
     if (!current || !newPrompt.trim()) return;
 
@@ -44,7 +44,7 @@ export class Config {
     this.version++;
   }
 
-  private getPrompt(phase: string): string | null {
+  private getPrompt(phase: PromptPhase): string | null {
     switch (phase) {
       case "systemPrompt": return this.systemPrompt;
       case "resolvePrompt": return this.resolvePrompt;
@@ -53,7 +53,7 @@ export class Config {
     }
   }
 
-  private setPrompt(phase: string, prompt: string): void {
+  private setPrompt(phase: PromptPhase, prompt: string): void {
     switch (phase) {
       case "systemPrompt": this.systemPrompt = prompt; break;
       case "resolvePrompt": this.resolvePrompt = prompt; break;
