@@ -66,18 +66,19 @@ function loadAgents(runDir: string): AgentState[] {
     const statePath = join(runDir, entry.name, "state.json");
     try {
       const state = JSON.parse(readFileSync(statePath, "utf-8"));
-      // Restore cycle history from metrics.jsonl (SSoT) if state.json has none
-      if (!state.energy?.cycleHistory?.length) {
-        const metricsPath = join(runDir, entry.name, "metrics.jsonl");
-        try {
-          const raw = readFileSync(metricsPath, "utf-8");
-          state.energy.cycleHistory = raw
-            .split("\n")
-            .filter((l: string) => l.trim().length > 0)
-            .map((l: string) => JSON.parse(l));
-        } catch {
-          // No metrics file yet
+      // Load cycle history from metrics.jsonl (SSoT)
+      const metricsPath = join(runDir, entry.name, "metrics.jsonl");
+      try {
+        const raw = readFileSync(metricsPath, "utf-8");
+        const records = raw
+          .split("\n")
+          .filter((l: string) => l.trim().length > 0)
+          .map((l: string) => JSON.parse(l));
+        if (records.length > 0) {
+          state.energy.cycleHistory = records;
         }
+      } catch {
+        // No metrics file — legacy state.json may still have cycleHistory
       }
       agents.push(state);
     } catch {
