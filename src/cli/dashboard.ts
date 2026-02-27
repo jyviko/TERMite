@@ -206,6 +206,7 @@ interface PoolData {
   totalDeposited: number;
   totalRegenerated: number;
   maxBalance: number;
+  regenPerCycle: number;
 }
 
 function loadPool(): PoolData | null {
@@ -215,6 +216,58 @@ function loadPool(): PoolData | null {
   } catch {
     return null;
   }
+}
+
+interface PoolEvent {
+  t: string;
+  type: "withdraw" | "deposit" | "regen";
+  amount: number;
+  balance: number;
+  agentId?: string;
+}
+
+function loadPoolLedger(maxEvents = 2000): PoolEvent[] {
+  const ledgerPath = join(SAVES_DIR, "shared", "_pool_ledger.jsonl");
+  try {
+    const raw = readFileSync(ledgerPath, "utf-8");
+    const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+    // Take last N lines for performance
+    const tail = lines.slice(-maxEvents);
+    return tail.map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+}
+
+/** Downsample pool balance history to N points for sparkline */
+function sampleBalances(events: PoolEvent[], points: number): number[] {
+  if (events.length === 0) return [];
+  if (events.length <= points) return events.map((e) => e.balance);
+  const step = events.length / points;
+  const out: number[] = [];
+  for (let i = 0; i < points; i++) {
+    out.push(events[Math.floor(i * step)]!.balance);
+  }
+  // Always include the latest
+  out[out.length - 1] = events[events.length - 1]!.balance;
+  return out;
+}
+
+/** Compute flow rates from recent ledger events (per-minute) */
+function flowRates(events: PoolEvent[]): { wRate: number; dRate: number; rRate: number } {
+  if (events.length < 2) return { wRate: 0, dRate: 0, rRate: 0 };
+  // Use last 200 events for rate calc
+  const recent = events.slice(-200);
+  const t0 = new Date(recent[0]!.t).getTime();
+  const t1 = new Date(recent[recent.length - 1]!.t).getTime();
+  const mins = Math.max(1, (t1 - t0) / 60_000);
+  let w = 0, d = 0, r = 0;
+  for (const e of recent) {
+    if (e.type === "withdraw") w += e.amount;
+    else if (e.type === "deposit") d += e.amount;
+    else if (e.type === "regen") r += e.amount;
+  }
+  return { wRate: Math.floor(w / mins), dRate: Math.floor(d / mins), rRate: Math.floor(r / mins) };
 }
 
 // Field accessors — handle both camelCase and snake_case
@@ -397,6 +450,7 @@ function render(): string {
   safe(buf, 0, width - 20, `${nActive}/${orgs.length} active  ${timeStr}`, CYAN);
 
   // Row 1: TEQ pool status
+  const ledger = loadPoolLedger();
   if (pool) {
     const poolPct = pool.maxBalance > 0 ? Math.floor((pool.balance / pool.maxBalance) * 100) : 0;
     const poolColor = poolPct > 40 ? GREEN : poolPct > 15 ? YELLOW : RED;
@@ -407,19 +461,34 @@ function render(): string {
     );
   }
 
-  // Row 2: bounty board
+  // Row 2: pool balance sparkline + flow rates
+  if (ledger.length > 1) {
+    const sparkW = Math.min(40, Math.floor(width * 0.4));
+    const balances = sampleBalances(ledger, sparkW);
+    const spark = sparkline(balances, sparkW);
+    const rates = flowRates(ledger);
+    const netFlow = rates.rRate + rates.dRate - rates.wRate;
+    const flowColor = netFlow >= 0 ? GREEN : RED;
+    safe(buf, 2, 0, ` ${spark}`, YELLOW);
+    safe(buf, 2, sparkW + 2,
+      `w:${fmt(rates.wRate)}/m  d:${fmt(rates.dRate)}/m  r:${fmt(rates.rRate)}/m  net:${fmtSigned(netFlow)}/m`,
+      flowColor,
+    );
+  }
+
+  // Row 3: bounty board
   if (goals.length > 0) {
-    safe(buf, 2, 0, ` Bounties: ${nOpen} open  ${nClaimed} claimed  ${nCompleted} done  (${fmt(totalBounty)}e locked)`, YELLOW);
+    safe(buf, 3, 0, ` Bounties: ${nOpen} open  ${nClaimed} claimed  ${nCompleted} done  (${fmt(totalBounty)}e locked)`, YELLOW);
   }
 
   // Empty state
   if (orgs.length === 0) {
-    safe(buf, 4, 2, `Waiting for agents... (${SAVES_DIR})`, YELLOW);
+    safe(buf, 5, 2, `Waiting for agents... (${SAVES_DIR})`, YELLOW);
     safe(buf, height - 1, 0, ` [q] quit`, CYAN);
     return buf.join("");
   }
 
-  // Grid layout (start at row 4 to leave room for header, pool, bounties)
+  // Grid layout (start at row 5 to leave room for header, pool, chart, bounties)
   const n = orgs.length;
   const nCols = Math.max(1, Math.floor(width / MIN_COL_W));
   const nGridRows = Math.ceil(n / nCols);
@@ -428,7 +497,7 @@ function render(): string {
   for (let idx = 0; idx < n; idx++) {
     const gridR = Math.floor(idx / nCols);
     const gridC = idx % nCols;
-    const r0 = 4 + gridR * CARD_ROWS;
+    const r0 = 5 + gridR * CARD_ROWS;
     const c0 = gridC * colW;
 
     if (r0 + CARD_ROWS > height - 1) {
