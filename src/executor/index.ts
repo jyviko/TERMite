@@ -96,6 +96,10 @@ export class Executor {
       process.stderr.write(`[body-agent stderr] ${chunk.toString()}`);
     });
 
+    this.process.stdin!.on("error", () => {
+      // Handled per-write in sendRaw — suppress uncaught EPIPE
+    });
+
     this.process.on("exit", (code) => {
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
@@ -195,7 +199,13 @@ export class Executor {
         return;
       }
 
-      this.process.stdin.write(payload);
+      this.process.stdin.write(payload, (err) => {
+        if (err) {
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(new Error(`Body agent pipe write failed: ${err.message}`));
+        }
+      });
     });
   }
 
