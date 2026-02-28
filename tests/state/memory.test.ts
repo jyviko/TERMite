@@ -143,6 +143,44 @@ describe("MemoryStore", () => {
     expect(store.memories[0]!.content).toBe("fresh memory");
   });
 
+  it("formatMetadataOnly returns (no memories) when empty", () => {
+    expect(store.formatMetadataOnly()).toBe("(no memories)");
+  });
+
+  it("formatMetadataOnly shows ID, type, importance, tokens, preview", () => {
+    store.add("a short fact about tools", "semantic", 0.7);
+    const output = store.formatMetadataOnly();
+    expect(output).toMatch(/\[mem_\w+\]/);
+    expect(output).toContain("semantic");
+    expect(output).toContain("imp:0.7");
+    expect(output).toContain("tokens:");
+    expect(output).toContain("a short fact about tools");
+  });
+
+  it("formatMetadataOnly flattens newlines in preview", () => {
+    store.add("line one\nline two\nline three", "episodic", 0.5);
+    const output = store.formatMetadataOnly();
+    expect(output).not.toContain("\nline");
+    expect(output).toContain("line one line two");
+  });
+
+  it("formatMetadataOnly marks budget-excluded memories", () => {
+    // Add memories with varying importance
+    store.add("high value fact", "procedural", 0.9, "Cycle 1");
+    store.add("low value noise", "episodic", 0.1, "Cycle 2");
+
+    // formatAsMessages with tiny budget — only one memory fits (~6 tokens each)
+    store.formatAsMessages(8);
+
+    const output = store.formatMetadataOnly();
+    const lines = output.split("\n");
+    // One line should have [not in context], the other should not
+    const inContext = lines.filter((l) => !l.includes("[not in context]"));
+    const excluded = lines.filter((l) => l.includes("[not in context]"));
+    expect(inContext.length).toBeGreaterThanOrEqual(1);
+    expect(excluded.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("serializes and deserializes with context", () => {
     store.add("test1", "semantic", 0.7, "Cycle 1");
     store.add("test2", "procedural", 0.3);

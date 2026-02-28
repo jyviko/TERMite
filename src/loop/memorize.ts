@@ -1,6 +1,4 @@
 import type { MemoryType } from "../types/index.js";
-import { ZERO_USAGE, type LLM, type TokenUsage } from "../llm/index.js";
-import { extractText } from "../llm/util.js";
 import type { Config } from "../state/config.js";
 import type { MemoryStore } from "../state/memory.js";
 
@@ -33,69 +31,7 @@ export interface MemorizeOps {
   resolveRewrite?: string | null;
 }
 
-export interface MemorizeResult {
-  ops: MemorizeOps;
-  usage: TokenUsage;
-}
-
-// ── Mandatory memorize phase ────────────────────────────────────────
-
-/**
- * Run the Memorize phase — an LLM call that decides what to remember,
- * forget, compress, consolidate, and whether to rewrite the system prompt.
- */
-export async function runMemorizePhase(
-  llm: LLM,
-  config: Config,
-  memories: MemoryStore,
-  lesson: string,
-  outcome: string,
-  memoryBudget: number,
-  stateBlock?: string,
-  populationBlock?: string,
-): Promise<MemorizeResult> {
-  const prompt = config.memorizePrompt
-    .replace("{outcome}", outcome)
-    .replace("{lesson}", lesson)
-    .replace("{systemPrompt}", config.systemPrompt)
-    .replace("{resolvePrompt}", config.resolvePrompt)
-    .replace("{memoryCount}", String(memories.memories.length))
-    .replace("{memories}", formatMemoriesWithCosts(memories))
-    .replace("{memoryTokens}", String(memories.totalTokenCost))
-    .replace("{memoryBudget}", String(memoryBudget))
-    .replace("{stateBlock}", stateBlock ?? "")
-    .replace("{populationBlock}", populationBlock ?? "");
-
-  try {
-    const response = await llm.chat({
-      model: config.routing.memorize.model,
-      system: prompt,
-      messages: [{ role: "user", content: "Manage memory." }],
-      maxTokens: config.routing.memorize.maxTokens,
-      skipCache: true,
-    });
-
-    const text = extractText(response.content);
-    const ops = parseMemorizeResponse(text);
-    return { ops, usage: response.usage };
-  } catch {
-    return { ops: {}, usage: ZERO_USAGE };
-  }
-}
-
-function formatMemoriesWithCosts(memories: MemoryStore): string {
-  if (memories.memories.length === 0) return "(no memories)";
-  return memories.memories
-    .map((m) => {
-      if (m.context) {
-        return `[${m.id}] (tokens:${m.tokenCost})\n  User: ${m.context}\n  Agent: ${m.content}`;
-      }
-      return `[${m.id}] ${m.type} (tokens:${m.tokenCost}) ${m.content}`;
-    })
-    .join("\n");
-}
-
-function parseMemorizeResponse(text: string): MemorizeOps {
+export function parseMemorizeResponse(text: string): MemorizeOps {
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return {};

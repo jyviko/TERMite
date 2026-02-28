@@ -1,7 +1,5 @@
 import type { Outcome } from "../types/index.js";
-import { ZERO_USAGE, type LLM, type TokenUsage } from "../llm/index.js";
-import { extractText } from "../llm/util.js";
-import type { Config } from "../state/config.js";
+import { ZERO_USAGE, type TokenUsage } from "../llm/index.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 import { DIFFICULTY_EXPECTED_COST } from "../arena/challenge-generator.js";
 
@@ -14,7 +12,7 @@ export interface ResolveResult {
   usage: TokenUsage;
 }
 
-const RESOLVE_ERROR_DEFAULT: ResolveResult = {
+export const RESOLVE_ERROR_DEFAULT: ResolveResult = {
   outcome: "uncertain",
   lesson: "",
   goalRelevance: 0,
@@ -23,41 +21,7 @@ const RESOLVE_ERROR_DEFAULT: ResolveResult = {
   usage: ZERO_USAGE,
 };
 
-export class Resolver {
-  constructor(private llm: LLM) {}
-
-  async resolve(params: {
-    config: Config;
-    goal: string;
-    actions: string;
-    cycleCost: number;
-    stateBlock?: string;
-  }): Promise<ResolveResult> {
-    const prompt = params.config.resolvePrompt
-      .replace("{goal}", params.goal)
-      .replace("{actions}", params.actions)
-      .replace("{cycleCost}", String(params.cycleCost))
-      .replace("{stateBlock}", params.stateBlock ?? "");
-
-    try {
-      const response = await this.llm.chat({
-        model: params.config.routing.resolve.model,
-        system: prompt,
-        messages: [{ role: "user", content: "Evaluate." }],
-        maxTokens: params.config.routing.resolve.maxTokens,
-        skipCache: true,
-      });
-
-      const text = extractText(response.content);
-
-      return { ...parseResolveResponse(text), usage: response.usage };
-    } catch {
-      return RESOLVE_ERROR_DEFAULT;
-    }
-  }
-}
-
-function parseResolveResponse(text: string): Omit<ResolveResult, "usage"> {
+export function parseResolveResponse(text: string): Omit<ResolveResult, "usage"> {
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return RESOLVE_ERROR_DEFAULT;

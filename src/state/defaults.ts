@@ -46,6 +46,7 @@ Current resolve prompt:
 {resolvePrompt}
 
 Existing memories ({memoryCount}, {memoryTokens}/{memoryBudget} tokens):
+Full content is in the conversation pairs above. This inventory shows IDs and metadata only.
 {memories}
 
 Output JSON (all fields optional):
@@ -69,6 +70,6 @@ RULES:
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   thinking: { model: "claude-sonnet-4-6", maxTokens: 2048, maxCycleCost: 150_000 },
-  resolve: { model: "claude-sonnet-4-6", maxTokens: 512 },
-  memorize: { model: "claude-sonnet-4-6", maxTokens: 1024 },
+  resolveMaxTokens: 512,
+  memorizeMaxTokens: 1024,
 };

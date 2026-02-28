@@ -189,7 +189,7 @@ describe("AgentStateMachine", () => {
     expect(cycleMem.content).toContain("Outcome: success");
     expect(cycleMem.content).toContain("Explored workspace");
 
-    // First cycle: think(tool_use) + think(end_turn) + resolve + memorize = 4 calls minimum
+    // First cycle: think(tool_use) + think(end_turn) + resolve(postTurn) + memorize(postTurn) = 4 calls
     expect(llm.callIndex).toBeGreaterThanOrEqual(4);
   });
 
@@ -367,14 +367,14 @@ describe("AgentStateMachine", () => {
     expect(state.energy.cycleHistory[0]!.income).toBe(0);
   });
 
-  it("resolve and memorize receive state block with drives and memory distribution", async () => {
+  it("resolve and memorize post-turns receive state block with drives and memory distribution", async () => {
     const llm = new MockLLM();
 
-    // Capture system prompts from resolve (3rd call) and memorize (4th call)
-    const capturedSystems: string[] = [];
+    // Capture messages from each LLM call to inspect post-turn user messages
+    const capturedMessages: Anthropic.MessageParam[][] = [];
     const origChat = llm.chat.bind(llm);
     llm.chat = async (params: ChatParams) => {
-      capturedSystems.push(params.system ?? "");
+      capturedMessages.push([...params.messages]);
       return origChat(params);
     };
 
@@ -383,12 +383,12 @@ describe("AgentStateMachine", () => {
       [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
-    // Resolve
+    // Resolve post-turn
     llm.addResponse(
       [{ type: "text", text: '{"outcome":"success","value":0.8,"energyJustified":true,"lesson":"learned","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
-    // Memorize
+    // Memorize post-turn
     llm.addResponse(
       [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
@@ -410,28 +410,38 @@ describe("AgentStateMachine", () => {
 
     await collectEvents(machine.run(), 20);
 
-    // Think phase has no system prompt in capturedSystems (it uses systemPrompt param)
-    // Resolve is the 2nd call (after think), Memorize is the 3rd call
-    // Find system prompts that contain resolve/memorize indicators
-    const resolveSystem = capturedSystems.find((s) => s.includes("accomplish"));
-    const memorizeSystem = capturedSystems.find((s) => s.includes("worth keeping"));
+    // Multiple cycles may run. Extract last user message text from each call's messages.
+    const lastUserText = (msgs: Anthropic.MessageParam[]): string => {
+      const userMsgs = msgs.filter((m) => m.role === "user");
+      const last = userMsgs[userMsgs.length - 1]!;
+      return typeof last.content === "string"
+        ? last.content
+        : (last.content as any[]).map((b: any) => b.text ?? "").join("");
+    };
 
-    expect(resolveSystem).toBeDefined();
-    expect(memorizeSystem).toBeDefined();
+    // Find first resolve and memorize post-turn calls by message content
+    const resolveMsg = capturedMessages
+      .map((msgs) => lastUserText(msgs))
+      .find((t) => t.includes("accomplish"));
+    const memorizeMsg = capturedMessages
+      .map((msgs) => lastUserText(msgs))
+      .find((t) => t.includes("worth keeping"));
 
-    // Resolve should contain state block with drive levels and memory distribution
-    expect(resolveSystem).toContain("Drives:");
-    expect(resolveSystem).toContain("explore:");
-    expect(resolveSystem).toContain("Memory distribution:");
-    expect(resolveSystem).not.toContain("{stateBlock}");
+    expect(resolveMsg).toBeDefined();
+    expect(memorizeMsg).toBeDefined();
 
-    // Memorize should contain both state block and population block
-    expect(memorizeSystem).toContain("Drives:");
-    expect(memorizeSystem).toContain("Memory distribution:");
-    expect(memorizeSystem).toContain("Agents: 4 active");
+    // Resolve user message should contain state block with drive levels and memory distribution
+    expect(resolveMsg!).toContain("Drives:");
+    expect(resolveMsg!).toContain("explore:");
+    expect(resolveMsg!).toContain("Memory distribution:");
+    expect(resolveMsg!).not.toContain("{stateBlock}");
+
+    // Memorize user message should contain state block and population block
+    expect(memorizeMsg!).toContain("Drives:");
+    expect(memorizeMsg!).toContain("Memory distribution:");
+    expect(memorizeMsg!).toContain("Agents: 4 active");
     // {populationBlock} should be fully substituted
-    expect(memorizeSystem).not.toContain("{populationBlock}");
-    // Note: {stateBlock} appears in the embedded resolve prompt text — that's correct
+    expect(memorizeMsg!).not.toContain("{populationBlock}");
   });
 
   it("tool dispatch uses executeTool with stdin, not executeShell", async () => {
@@ -481,5 +491,58 @@ describe("AgentStateMachine", () => {
     expect(executor.toolCalls.length).toBeGreaterThanOrEqual(1);
     expect(executor.toolCalls[0]!.command).toBe("/workspace/tools/shell");
     expect(executor.toolCalls[0]!.input).toBe("echo hello");
+  });
+
+  it("resolve failure still allows memorize to run and cycle to record", async () => {
+    const llm = new MockLLM();
+    let callCount = 0;
+
+    // Override chat to throw on resolve (2nd call) but succeed on others
+    const origChat = llm.chat.bind(llm);
+    llm.chat = async (params: ChatParams) => {
+      callCount++;
+      // Think phase = call 1, Resolve postTurn = call 2
+      if (callCount === 2) throw new Error("API overloaded");
+      return origChat(params);
+    };
+
+    // Think+Execute: end turn immediately
+    llm.addResponse(
+      [{ type: "text", text: "Done.", citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Resolve — won't be used (call throws)
+    llm.addResponse(
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+    // Memorize — should still execute
+    llm.addResponse(
+      [{ type: "text", text: '{}', citations: null }] as Anthropic.ContentBlock[],
+      "end_turn",
+    );
+
+    const executor = new MockExecutor();
+    const state = new AgentStateManager({ budget: 500_000 });
+
+    const machine = new AgentStateMachine(
+      llm,
+      executor as unknown as Executor,
+      state,
+      pool,
+      "/tmp/test-resolve-fail.json",
+    );
+
+    const events = await collectEvents(machine.run(), 20);
+
+    // Cycle record should still be written with error defaults
+    expect(state.energy.cycleHistory.length).toBeGreaterThan(0);
+    expect(state.energy.cycleHistory[0]!.outcome).toBe("uncertain");
+
+    // Memorize phase should still fire despite resolve failure
+    const phases = events
+      .filter((e) => e.type === "phase_change")
+      .map((e) => (e as any).phase);
+    expect(phases).toContain("memorizing");
   });
 });

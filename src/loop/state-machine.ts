@@ -4,12 +4,13 @@ import { join, dirname } from "node:path";
 import type { AgentEvent, CycleRecord, DriveName, Outcome } from "../types/index.js";
 import { DRIVE_NAMES } from "../types/index.js";
 import type { LLM } from "../llm/index.js";
+import { ZERO_USAGE } from "../llm/index.js";
 import type { Executor } from "../executor/index.js";
 import type { DriveSystem } from "../state/drives.js";
 import { AgentStateManager } from "../state/agent-state.js";
 import { AgenticLoop, type ToolExecutor } from "./agentic-loop.js";
-import { Resolver, computeIncome, lookupBountyMultiplier } from "./resolve.js";
-import { runMemorizePhase, applyMemorizeOperations } from "./memorize.js";
+import { parseResolveResponse, RESOLVE_ERROR_DEFAULT, computeIncome, lookupBountyMultiplier } from "./resolve.js";
+import { parseMemorizeResponse, applyMemorizeOperations } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const BASE_MEMORY_TOKEN_BUDGET = 4000;
@@ -34,7 +35,6 @@ function freshCycle(): CycleContext {
 export class AgentStateMachine {
   private llm: LLM;
   private loop: AgenticLoop;
-  private resolver: Resolver;
   private savePath: string;
 
   // Task reward (set by arena, cleared after first resolve)
@@ -73,7 +73,6 @@ export class AgentStateMachine {
   ) {
     this.llm = llm;
     this.loop = new AgenticLoop(llm);
-    this.resolver = new Resolver(llm);
     this.savePath = savePath ?? `saves/${state.id}.json`;
   }
 
@@ -101,21 +100,23 @@ export class AgentStateMachine {
   private async *finalizeCycle(): AsyncGenerator<AgentEvent> {
     const goal = this.state.goal ?? this.deriveGoal() ?? "Explore and persist";
     const actions = this.summarizeRecentActions();
-
-    // 1. Resolve — cheap LLM call to judge the cycle
-    yield { type: "phase_change", phase: "resolving" };
     const stateBlock = this.buildStateBlock();
-    const resolveResult = await this.resolver.resolve({
-      config: this.state.config,
-      goal,
-      actions,
-      cycleCost: this.state.energy.currentCycleCost,
-      stateBlock,
-    });
 
-    // Burn resolve cost
-    if (resolveResult.usage.output > 0) {
-      this.state.energy.burn(this.state.config.routing.resolve.model, resolveResult.usage);
+    // 1. Resolve — post-turn in the agentic loop conversation (cached prefix)
+    yield { type: "phase_change", phase: "resolving" };
+    const resolveMessage = this.state.config.resolvePrompt
+      .replace("{goal}", goal)
+      .replace("{actions}", actions)
+      .replace("{cycleCost}", String(this.state.energy.currentCycleCost))
+      .replace("{stateBlock}", stateBlock);
+
+    let resolveResult = RESOLVE_ERROR_DEFAULT;
+    try {
+      const r = await this.loop.postTurn(resolveMessage, this.state.config.routing.resolveMaxTokens);
+      resolveResult = { ...parseResolveResponse(r.text), usage: r.usage };
+      this.state.energy.burn(this.cycleCtx.model, r.usage);
+    } catch {
+      // postTurn failed — use defaults, no energy to burn
     }
 
     // Update cycle context from resolve
@@ -149,28 +150,33 @@ export class AgentStateMachine {
     this.taskReward = null;
     this.taskTier = null;
 
-    // 4. Memorize — cheap LLM call to manage memory (MID TERM compression + LONG TERM promotion)
+    // 4. Memorize — post-turn in the agentic loop conversation (cached prefix)
     yield { type: "phase_change", phase: "memorizing" };
     const memorizeBudget = BASE_MEMORY_TOKEN_BUDGET + Math.floor(this.state.energy.earned / 200);
-    const memorizeResult = await runMemorizePhase(
-      this.llm,
-      this.state.config,
-      this.state.memories,
-      resolveResult.lesson,
-      resolveResult.outcome,
-      memorizeBudget,
-      stateBlock,
-      this.populationContext,
-    );
+    const memorizeMessage = this.state.config.memorizePrompt
+      .replace("{outcome}", resolveResult.outcome)
+      .replace("{lesson}", resolveResult.lesson)
+      .replace("{systemPrompt}", this.state.config.systemPrompt)
+      .replace("{resolvePrompt}", this.state.config.resolvePrompt)
+      .replace("{memoryCount}", String(this.state.memories.memories.length))
+      .replace("{memories}", this.state.memories.formatMetadataOnly())
+      .replace("{memoryTokens}", String(this.state.memories.totalTokenCost))
+      .replace("{memoryBudget}", String(memorizeBudget))
+      .replace("{stateBlock}", stateBlock)
+      .replace("{populationBlock}", this.populationContext ?? "");
 
-    // Burn memorize cost (now captured in the current cycle, not the next one)
-    if (memorizeResult.usage.output > 0) {
-      this.state.energy.burn(this.state.config.routing.memorize.model, memorizeResult.usage);
+    let memorizeOps = {};
+    try {
+      const m = await this.loop.postTurn(memorizeMessage, this.state.config.routing.memorizeMaxTokens);
+      memorizeOps = parseMemorizeResponse(m.text);
+      this.state.energy.burn(this.cycleCtx.model, m.usage);
+    } catch {
+      // postTurn failed — no ops, no energy to burn
     }
 
     // 5. Apply memory operations (compress, forget, consolidate, promptRewrite)
     const oldTokens = this.state.memories.totalTokenCost;
-    this.cycleCtx.memoryOps = applyMemorizeOperations(memorizeResult.ops, this.state.memories, this.state.config);
+    this.cycleCtx.memoryOps = applyMemorizeOperations(memorizeOps, this.state.memories, this.state.config);
     const newTokens = this.state.memories.totalTokenCost;
     const tokensSaved = oldTokens - newTokens;
     if (tokensSaved > 0) {

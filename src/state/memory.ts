@@ -9,6 +9,9 @@ export interface MessagePair {
 export class MemoryStore {
   memories: Memory[];
 
+  /** IDs of memories injected into the conversation by the last formatAsMessages call. */
+  private injectedIds = new Set<string>();
+
   constructor(memories?: Memory[]) {
     this.memories = memories ?? [];
   }
@@ -96,10 +99,12 @@ export class MemoryStore {
       .sort((a, b) => this.effectiveScore(b) - this.effectiveScore(a));
 
     const selected: Memory[] = [];
+    this.injectedIds = new Set();
     let totalTokens = 0;
     for (const m of ranked) {
       if (totalTokens + m.tokenCost > tokenBudget) continue;  // skip if too large, try next
       selected.push(m);
+      this.injectedIds.add(m.id);
       totalTokens += m.tokenCost;
       m.accessCount++;  // track access for scoring boost
       m.lastAccessed = Date.now();
@@ -142,6 +147,21 @@ export class MemoryStore {
     }
 
     return lines.length > 0 ? lines.join("\n") : "(no memories yet)";
+  }
+
+  /**
+   * Slim inventory for the memorize post-turn: IDs, types, importance, token costs, preview.
+   * Full content is already in the conversation as user/assistant pairs.
+   */
+  formatMetadataOnly(): string {
+    if (this.memories.length === 0) return "(no memories)";
+    return this.memories
+      .map((m) => {
+        const preview = m.content.slice(0, 60).replace(/\n/g, " ");
+        const tag = this.injectedIds.has(m.id) ? "" : " [not in context]";
+        return `[${m.id}] ${m.type} imp:${m.importance.toFixed(1)} tokens:${m.tokenCost}${tag} "${preview}..."`;
+      })
+      .join("\n");
   }
 
   effectiveScore(m: Memory): number {

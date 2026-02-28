@@ -14,16 +14,8 @@ export class Config {
     this.resolvePrompt = data?.resolvePrompt ?? DEFAULT_RESOLVE_PROMPT;
     this.memorizePrompt = data?.memorizePrompt ?? DEFAULT_MEMORIZE_PROMPT;
     this.routing = data?.routing
-      ? {
-          thinking: { ...data.routing.thinking },
-          resolve: { ...data.routing.resolve },
-          memorize: { ...(data.routing.memorize ?? DEFAULT_ROUTING.memorize) },
-        }
-      : {
-          thinking: { ...DEFAULT_ROUTING.thinking },
-          resolve: { ...DEFAULT_ROUTING.resolve },
-          memorize: { ...DEFAULT_ROUTING.memorize },
-        };
+      ? migrateRouting(data.routing)
+      : { ...DEFAULT_ROUTING, thinking: { ...DEFAULT_ROUTING.thinking } };
     this.version = data?.version ?? 0;
     this.promptHistory = data?.promptHistory ?? [];
   }
@@ -75,4 +67,22 @@ export class Config {
   static fromJSON(data: ConfigData): Config {
     return new Config(data);
   }
+}
+
+/** Migrate old routing format (resolve/memorize as RouteEntry) to new flat maxTokens fields. */
+function migrateRouting(raw: RoutingConfig): RoutingConfig {
+  // raw may actually be an old-format object from JSON deserialization
+  const r = raw as unknown as Record<string, unknown>;
+  const legacy = r as Record<string, Record<string, unknown>>;
+  return {
+    thinking: { ...raw.thinking },
+    resolveMaxTokens:
+      (r.resolveMaxTokens as number) ??
+      (legacy.resolve?.maxTokens as number) ??
+      DEFAULT_ROUTING.resolveMaxTokens,
+    memorizeMaxTokens:
+      (r.memorizeMaxTokens as number) ??
+      (legacy.memorize?.maxTokens as number) ??
+      DEFAULT_ROUTING.memorizeMaxTokens,
+  };
 }

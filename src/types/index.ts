@@ -80,8 +80,8 @@ export interface RouteEntry {
 
 export interface RoutingConfig {
   thinking: RouteEntry;
-  resolve: RouteEntry;
-  memorize: RouteEntry;
+  resolveMaxTokens: number;
+  memorizeMaxTokens: number;
 }
 
 export interface PromptRewrite {

@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentEvent } from "../types/index.js";
-import type { LLM, LLMResponse } from "../llm/index.js";
+import type { LLM, LLMResponse, TokenUsage } from "../llm/index.js";
 
 export type ToolExecutor = (
   name: string,
@@ -24,11 +24,61 @@ const DEFAULT_MAX_ITERATIONS = 99;
 const TOOL_RESULT_RETENTION_COUNT = 6;
 
 export class AgenticLoop {
-  constructor(private llm: LLM) {}
+  private llm: LLM;
+
+  // Conversation state — preserved after run() for post-turns
+  private messages: Anthropic.MessageParam[] = [];
+  private currentSystemPrompt = "";
+  private currentModel = "";
+  private currentTools: Anthropic.Tool[] = [];
+
+  constructor(llm: LLM) {
+    this.llm = llm;
+  }
+
+  /**
+   * Append a user message to the existing conversation and get one more LLM response.
+   * Must be called after run() completes. Benefits from the cached prefix.
+   * Tools are included to preserve the cache prefix (system→tools→messages).
+   * The model shouldn't call them — instructions ask for JSON only.
+   */
+  async postTurn(message: string, maxTokens: number): Promise<{ text: string; usage: TokenUsage }> {
+    this.messages.push({ role: "user", content: message });
+
+    try {
+      const response = await this.llm.chat({
+        model: this.currentModel,
+        system: this.currentSystemPrompt,
+        messages: this.messages,
+        tools: this.currentTools.length > 0 ? this.currentTools : undefined,
+        maxTokens,
+      });
+
+      const textBlocks = response.content.filter(
+        (b): b is Anthropic.TextBlock => b.type === "text",
+      );
+      // Push only text blocks — strip any unexpected tool_use to keep conversation API-valid
+      this.messages.push({
+        role: "assistant",
+        content: textBlocks.length > 0 ? textBlocks : [{ type: "text", text: "{}" }],
+      });
+
+      const text = textBlocks.map((b) => b.text).join("");
+
+      return { text, usage: response.usage };
+    } catch (err) {
+      // Pop the user message to keep conversation balanced for subsequent postTurns
+      this.messages.pop();
+      throw err;
+    }
+  }
 
   async *run(config: LoopConfig): AsyncGenerator<AgentEvent> {
     const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-    const messages: Anthropic.MessageParam[] = [...config.messages];
+    this.messages = [...config.messages];
+    this.currentSystemPrompt = config.systemPrompt;
+    this.currentModel = config.model;
+    this.currentTools = config.tools;
 
     // Cumulative token tracking across all iterations in this burst
     const cumulative = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, iterations: 0 };
@@ -43,14 +93,14 @@ export class AgenticLoop {
       if (iteration > 0 && config.shouldStop?.()) break;
 
       // Micro-compact old tool results to manage context
-      stubOldToolResults(messages, TOOL_RESULT_RETENTION_COUNT);
+      stubOldToolResults(this.messages, TOOL_RESULT_RETENTION_COUNT);
 
       let response: LLMResponse;
       try {
         response = await this.llm.chat({
           model: config.model,
           system: config.systemPrompt,
-          messages,
+          messages: this.messages,
           tools: config.tools.length > 0 ? config.tools : undefined,
           maxTokens: config.maxTokens,
         });
@@ -84,7 +134,7 @@ export class AgenticLoop {
       }
 
       // Push assistant message with full content
-      messages.push({ role: "assistant", content: response.content });
+      this.messages.push({ role: "assistant", content: response.content });
 
       // Extract tool_use blocks
       const toolUseBlocks = response.content.filter(
@@ -94,7 +144,7 @@ export class AgenticLoop {
       // Handle max_tokens truncation — must provide tool_results if any tool_use present
       if (response.stopReason === "max_tokens") {
         if (toolUseBlocks.length > 0) {
-          messages.push({
+          this.messages.push({
             role: "user",
             content: toolUseBlocks.map((tb) => ({
               type: "tool_result" as const,
@@ -103,7 +153,7 @@ export class AgenticLoop {
             })),
           });
         } else {
-          messages.push({
+          this.messages.push({
             role: "user",
             content: "Your response was cut off. Continue from where you stopped.",
           });
@@ -149,7 +199,7 @@ export class AgenticLoop {
         type: "text",
         text: `[Burst: ${cumulative.output.toLocaleString()} out, ${cumulative.input.toLocaleString()} in, ${cumulative.iterations} iter${status ? ` | ${status}` : ""}]`,
       };
-      messages.push({ role: "user", content: [...toolResults, usageNote] });
+      this.messages.push({ role: "user", content: [...toolResults, usageNote] });
 
       // Check if a tool signaled the loop should stop (e.g. resolve)
       if (config.shouldStop?.()) break;

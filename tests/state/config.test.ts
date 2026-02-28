@@ -45,6 +45,44 @@ describe("Config", () => {
     expect(c.version).toBe(2);
   });
 
+  it("migrates old routing format with resolve/memorize sub-objects", () => {
+    const c = new Config({
+      routing: {
+        thinking: { model: "claude-sonnet-4-6", maxTokens: 2048, maxCycleCost: 150_000 },
+        resolve: { model: "claude-haiku-4-5-20251001", maxTokens: 256 },
+        memorize: { model: "claude-haiku-4-5-20251001", maxTokens: 512 },
+      } as any,
+    });
+    expect(c.routing.resolveMaxTokens).toBe(256);
+    expect(c.routing.memorizeMaxTokens).toBe(512);
+    expect(c.routing.thinking.model).toBe("claude-sonnet-4-6");
+    // Old model fields are discarded — no per-phase model routing
+    expect((c.routing as any).resolve).toBeUndefined();
+    expect((c.routing as any).memorize).toBeUndefined();
+  });
+
+  it("passes through new routing format unchanged", () => {
+    const c = new Config({
+      routing: {
+        thinking: { model: "claude-sonnet-4-6", maxTokens: 2048, maxCycleCost: 150_000 },
+        resolveMaxTokens: 768,
+        memorizeMaxTokens: 2048,
+      },
+    });
+    expect(c.routing.resolveMaxTokens).toBe(768);
+    expect(c.routing.memorizeMaxTokens).toBe(2048);
+  });
+
+  it("falls back to defaults for missing routing fields", () => {
+    const c = new Config({
+      routing: {
+        thinking: { model: "claude-sonnet-4-6", maxTokens: 2048, maxCycleCost: 150_000 },
+      } as any,
+    });
+    expect(c.routing.resolveMaxTokens).toBe(512);
+    expect(c.routing.memorizeMaxTokens).toBe(1024);
+  });
+
   it("serializes and deserializes", () => {
     const c = new Config();
     c.rewrite("systemPrompt", "rewritten prompt");

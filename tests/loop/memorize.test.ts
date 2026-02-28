@@ -1,178 +1,63 @@
 import { describe, it, expect } from "vitest";
-import Anthropic from "@anthropic-ai/sdk";
-import { LLM, type LLMResponse, type ChatParams } from "../../src/llm/index.js";
 import { MemoryStore } from "../../src/state/memory.js";
 import { Config } from "../../src/state/config.js";
-import { runMemorizePhase, applyMemorizeOperations, type MemorizeOps } from "../../src/loop/memorize.js";
+import { parseMemorizeResponse, applyMemorizeOperations, type MemorizeOps } from "../../src/loop/memorize.js";
 
-// ── Mock LLM ────────────────────────────────────────────────────────
+// ── parseMemorizeResponse ───────────────────────────────────────────
 
-class MockLLM extends LLM {
-  response = "{}";
-  callCount = 0;
-  shouldFail = false;
-
-  constructor() {
-    super({});
-  }
-
-  async chat(_params: ChatParams): Promise<LLMResponse> {
-    this.callCount++;
-    if (this.shouldFail) throw new Error("LLM unavailable");
-    return {
-      content: [{ type: "text", text: this.response, citations: null }] as Anthropic.ContentBlock[],
-      stopReason: "end_turn",
-      usage: { input: 80, output: 30, cacheCreation: 0, cacheRead: 0 },
-    };
-  }
-}
-
-// ── runMemorizePhase ────────────────────────────────────────────────
-
-describe("runMemorizePhase", () => {
-  it("calls LLM and parses forget operations", async () => {
-    const llm = new MockLLM();
-    llm.response = '{"forget":["mem_abc123","mem_def456"]}';
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    const result = await runMemorizePhase(llm, config, memories, "cleanup", "partial", 2000);
-
-    expect(llm.callCount).toBe(1);
-    expect(result.ops.forget).toEqual(["mem_abc123", "mem_def456"]);
-    expect(result.usage.output).toBe(30);
+describe("parseMemorizeResponse", () => {
+  it("parses forget operations", () => {
+    const ops = parseMemorizeResponse('{"forget":["mem_abc123","mem_def456"]}');
+    expect(ops.forget).toEqual(["mem_abc123", "mem_def456"]);
   });
 
-  it("parses compress operations", async () => {
-    const llm = new MockLLM();
-    llm.response = '{"compress":[{"id":"mem_abc","newContent":"shorter version"}]}';
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    const result = await runMemorizePhase(llm, config, memories, "compress", "partial", 2000);
-
-    expect(result.ops.compress).toHaveLength(1);
-    expect(result.ops.compress![0]!.newContent).toBe("shorter version");
+  it("parses compress operations", () => {
+    const ops = parseMemorizeResponse('{"compress":[{"id":"mem_abc","newContent":"shorter version"}]}');
+    expect(ops.compress).toHaveLength(1);
+    expect(ops.compress![0]!.newContent).toBe("shorter version");
   });
 
-  it("parses consolidate operations", async () => {
-    const llm = new MockLLM();
-    llm.response = '{"consolidate":{"sourceIds":["mem_a","mem_b"],"newContent":"combined","importance":0.9}}';
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    const result = await runMemorizePhase(llm, config, memories, "consolidate", "partial", 2000);
-
-    expect(result.ops.consolidate).toBeDefined();
-    expect(result.ops.consolidate!.sourceIds).toEqual(["mem_a", "mem_b"]);
+  it("parses consolidate operations", () => {
+    const ops = parseMemorizeResponse('{"consolidate":{"sourceIds":["mem_a","mem_b"],"newContent":"combined","importance":0.9}}');
+    expect(ops.consolidate).toBeDefined();
+    expect(ops.consolidate!.sourceIds).toEqual(["mem_a", "mem_b"]);
   });
 
-  it("parses promptRewrite field", async () => {
-    const llm = new MockLLM();
-    llm.response = '{"promptRewrite":"Be efficient. Use tools."}';
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    const result = await runMemorizePhase(llm, config, memories, "rewrite", "success", 2000);
-
-    expect(result.ops.promptRewrite).toBe("Be efficient. Use tools.");
+  it("parses promptRewrite field", () => {
+    const ops = parseMemorizeResponse('{"promptRewrite":"Be efficient. Use tools."}');
+    expect(ops.promptRewrite).toBe("Be efficient. Use tools.");
   });
 
-  it("handles snake_case prompt_rewrite from LLM", async () => {
-    const llm = new MockLLM();
-    llm.response = '{"prompt_rewrite":"Be efficient."}';
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    const result = await runMemorizePhase(llm, config, memories, "rewrite", "success", 2000);
-
-    expect(result.ops.promptRewrite).toBe("Be efficient.");
+  it("handles snake_case prompt_rewrite from LLM", () => {
+    const ops = parseMemorizeResponse('{"prompt_rewrite":"Be efficient."}');
+    expect(ops.promptRewrite).toBe("Be efficient.");
   });
 
-  it("returns empty ops on LLM failure", async () => {
-    const llm = new MockLLM();
-    llm.shouldFail = true;
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    const result = await runMemorizePhase(llm, config, memories, "test", "failure", 2000);
-
-    expect(result.ops).toEqual({});
-    expect(result.usage.output).toBe(0);
+  it("parses memorizeRewrite and resolveRewrite", () => {
+    const ops = parseMemorizeResponse('{"memorizeRewrite":"new mem prompt","resolveRewrite":"new resolve prompt"}');
+    expect(ops.memorizeRewrite).toBe("new mem prompt");
+    expect(ops.resolveRewrite).toBe("new resolve prompt");
   });
 
-  it("returns empty ops on invalid JSON", async () => {
-    const llm = new MockLLM();
-    llm.response = "not json at all";
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    const result = await runMemorizePhase(llm, config, memories, "test", "failure", 2000);
-
-    expect(result.ops).toEqual({});
+  it("returns empty ops for invalid JSON", () => {
+    expect(parseMemorizeResponse("not json at all")).toEqual({});
   });
 
-  it("includes outcome, lesson, and memory pairs in prompt", async () => {
-    const llm = new MockLLM();
-    let capturedSystem = "";
-    const origChat = llm.chat.bind(llm);
-    llm.chat = async (params: ChatParams) => {
-      capturedSystem = params.system ?? "";
-      return origChat(params);
-    };
-
-    const config = new Config();
-    const memories = new MemoryStore();
-    memories.add("ran check, got FAIL", "episodic", 0.8, "Cycle 3. Goal: explore");
-
-    await runMemorizePhase(llm, config, memories, "wrong path", "failure", 2000);
-
-    expect(capturedSystem).toContain("failure");
-    expect(capturedSystem).toContain("wrong path");
-    expect(capturedSystem).toContain("Cycle 3");
-    expect(capturedSystem).toContain("ran check");
+  it("returns empty ops for empty string", () => {
+    expect(parseMemorizeResponse("")).toEqual({});
   });
 
-  it("substitutes stateBlock and populationBlock into prompt", async () => {
-    const llm = new MockLLM();
-    let capturedSystem = "";
-    const origChat = llm.chat.bind(llm);
-    llm.chat = async (params: ChatParams) => {
-      capturedSystem = params.system ?? "";
-      return origChat(params);
-    };
-
-    const config = new Config();
-    const memories = new MemoryStore();
-    const stateBlock = "State:\n- Drives: explore: 0.50→, acquire: 0.50→";
-    const populationBlock = "Population:\n- Agents: 4 active / 4 total";
-
-    await runMemorizePhase(llm, config, memories, "lesson", "success", 2000, stateBlock, populationBlock);
-
-    expect(capturedSystem).toContain("Drives: explore: 0.50→");
-    expect(capturedSystem).toContain("Agents: 4 active");
-    // {populationBlock} should be fully substituted (it only appears in memorize template)
-    expect(capturedSystem).not.toContain("{populationBlock}");
-    // Note: {stateBlock} will appear in the embedded resolve prompt text — that's correct.
-    // The memorize prompt shows the resolve template so agents can rewrite it.
+  it("extracts JSON from surrounding text", () => {
+    const ops = parseMemorizeResponse('Here is my response:\n{"forget":["mem_x"]}\nDone.');
+    expect(ops.forget).toEqual(["mem_x"]);
   });
 
-  it("defaults stateBlock and populationBlock to empty when omitted", async () => {
-    const llm = new MockLLM();
-    let capturedSystem = "";
-    const origChat = llm.chat.bind(llm);
-    llm.chat = async (params: ChatParams) => {
-      capturedSystem = params.system ?? "";
-      return origChat(params);
-    };
-
-    const config = new Config();
-    const memories = new MemoryStore();
-
-    await runMemorizePhase(llm, config, memories, "lesson", "success", 2000);
-
-    // {populationBlock} should be replaced with empty string
-    expect(capturedSystem).not.toContain("{populationBlock}");
+  it("parses store operations", () => {
+    const ops = parseMemorizeResponse('{"store":[{"content":"always run check first","type":"procedural","importance":0.8}]}');
+    expect(ops.store).toHaveLength(1);
+    expect(ops.store![0]!.content).toBe("always run check first");
+    expect(ops.store![0]!.type).toBe("procedural");
+    expect(ops.store![0]!.importance).toBe(0.8);
   });
 });
 
@@ -231,6 +116,36 @@ describe("applyMemorizeOperations", () => {
     expect(config.systemPrompt).toBe("New optimized prompt.");
     expect(config.systemPrompt).not.toBe(original);
     expect(config.version).toBe(1);
+  });
+
+  it("stores new memories", () => {
+    const memories = new MemoryStore();
+    const config = new Config();
+    const ops: MemorizeOps = {
+      store: [{ content: "always run check first", type: "procedural", importance: 0.8 }],
+    };
+
+    const results = applyMemorizeOperations(ops, memories, config);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toContain("stored");
+    expect(memories.memories).toHaveLength(1);
+    expect(memories.memories[0]!.content).toBe("always run check first");
+    expect(memories.memories[0]!.type).toBe("procedural");
+    expect(memories.memories[0]!.importance).toBe(0.8);
+  });
+
+  it("store ignores entries with missing fields", () => {
+    const memories = new MemoryStore();
+    const config = new Config();
+    const ops: MemorizeOps = {
+      store: [{ content: "", type: "semantic", importance: 0.5 }],
+    };
+
+    const results = applyMemorizeOperations(ops, memories, config);
+
+    expect(results).toHaveLength(0);
+    expect(memories.memories).toHaveLength(0);
   });
 
   it("handles empty ops gracefully", () => {
