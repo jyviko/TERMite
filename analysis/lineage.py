@@ -156,13 +156,19 @@ def fork_roi(lineage_tree: dict, agent_metrics: dict[str, list[dict]]) -> list[d
 
 def founder_dominance_over_time(run: dict) -> list[dict]:
     """
-    At each pool-regen event, compute the fraction of *currently alive* agents
-    that descend from each gen-0 ancestor.
+    At each significant population event (pool regen or agent death), compute
+    the fraction of *currently alive* agents that descend from each gen-0 ancestor.
 
     "Currently alive" = ran at least one cycle within the 120 seconds before this event.
 
-    Shows how quickly the population converges on a single lineage.
+    Events:
+      - regen: pool regeneration tick (regular heartbeat)
+      - death: last recorded metric for an agent (population shrinks)
+
+    The final snapshot is always anchored to the true end-of-run timestamp.
     """
+    from datetime import datetime, timedelta
+
     census_map = {c["id"]: c for c in run["census"]}
 
     def find_root(agent_id: str) -> str | None:
@@ -179,15 +185,7 @@ def founder_dominance_over_time(run: dict) -> list[dict]:
             current = parent
         return current["id"] if current else agent_id
 
-    regen_events = [e for e in run["pool_ledger"] if e["type"] == "regen"]
-    results = []
-
-    for i, regen in enumerate(regen_events):
-        t = regen["t"]
-        # Approximate activity window: agent ran a cycle within 120s of this event
-        # We use a simple string comparison on ISO timestamps (works since same date prefix)
-        # 120 seconds back from t:
-        from datetime import datetime, timezone, timedelta
+    def snapshot_at(t: str, global_cycle: int, event_type: str) -> dict | None:
         t_dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
         t_early = (t_dt - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
 
@@ -195,7 +193,6 @@ def founder_dominance_over_time(run: dict) -> list[dict]:
         n_active = 0
 
         for agent_id, agent in run["agents"].items():
-            # Agent must have run a cycle in the activity window [t_early, t]
             recently_active = any(
                 t_early <= m.get("timestamp", "") <= t
                 for m in agent["metrics"]
@@ -208,17 +205,55 @@ def founder_dominance_over_time(run: dict) -> list[dict]:
                 founder_counts[root] += 1
 
         if n_active == 0:
-            continue
+            return None
 
         dominant = max(founder_counts.values(), default=0)
-        results.append({
-            "global_cycle": i + 1,
+        return {
+            "global_cycle": global_cycle,
             "timestamp": t,
+            "event_type": event_type,
             "n_active": n_active,
             "n_founders_represented": len(founder_counts),
             "dominant_founder_pct": round(dominant / n_active, 4),
             "founder_distribution": dict(founder_counts),
-        })
+        }
+
+    # Build event list: regen ticks + agent death events (last metric per agent)
+    events: list[tuple[str, str]] = []  # (timestamp, event_type)
+
+    for e in run["pool_ledger"]:
+        if e["type"] == "regen":
+            events.append((e["t"], "regen"))
+
+    for agent_id, agent in run["agents"].items():
+        timestamps = [m.get("timestamp", "") for m in agent["metrics"] if m.get("timestamp")]
+        if timestamps:
+            events.append((max(timestamps), f"death:{agent_id}"))
+
+    # Sort chronologically; deduplicate events within 2 seconds of each other
+    events.sort(key=lambda x: x[0])
+    deduplicated: list[tuple[str, str]] = []
+    for ts, etype in events:
+        if deduplicated and abs(
+            (datetime.fromisoformat(ts.replace("Z", "+00:00")) -
+             datetime.fromisoformat(deduplicated[-1][0].replace("Z", "+00:00"))).total_seconds()
+        ) < 2 and "death" in etype and "death" in deduplicated[-1][1]:
+            # Merge near-simultaneous deaths — keep the later timestamp
+            deduplicated[-1] = (ts, "death:batch")
+        else:
+            deduplicated.append((ts, etype))
+
+    results = []
+    prev_n_active = None
+    for i, (ts, etype) in enumerate(deduplicated):
+        row = snapshot_at(ts, i + 1, etype if not etype.startswith("death:") else "death")
+        if row is None:
+            continue
+        # Skip regen ticks where population didn't change (noise reduction)
+        if etype == "regen" and row["n_active"] == prev_n_active:
+            continue
+        prev_n_active = row["n_active"]
+        results.append(row)
 
     return results
 
@@ -239,9 +274,16 @@ def lineage_summary(run: dict) -> dict:
     max_generation = max((c.get("generation", 0) for c in census), default=0)
     total_solved = sum(c.get("challengesSolved", 0) for c in census)
 
-    # Determine "end of run" timestamp from last pool event
-    last_t = run["pool_ledger"][-1]["t"] if run["pool_ledger"] else ""
+    # Determine "end of run" timestamp from last metric across all agents
+    # (pool ledger can lag behind agents that were mid-cycle at termination)
     first_t = run["pool_ledger"][0]["t"] if run["pool_ledger"] else ""
+    all_metric_ts = [
+        m.get("timestamp", "")
+        for agent in run["agents"].values()
+        for m in agent["metrics"]
+        if m.get("timestamp")
+    ]
+    last_t = max(all_metric_ts) if all_metric_ts else (run["pool_ledger"][-1]["t"] if run["pool_ledger"] else "")
 
     # Agents that had a metric in the last 20% of the run duration
     from datetime import datetime, timezone, timedelta

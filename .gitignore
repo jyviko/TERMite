@@ -13,3 +13,5 @@ arena-workspace/
 worktrees/
 *.pyc
 __pycache__/
+viewer/
+docs/

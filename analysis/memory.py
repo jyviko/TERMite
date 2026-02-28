@@ -149,23 +149,25 @@ def inheritance_profile(metrics: list[dict], census_entry: dict) -> dict:
 
 def population_memory_over_time(run: dict) -> list[dict]:
     """
-    Per pool-regen event: aggregate memory composition across all agents
-    active at that timestamp.
+    Per significant population event (pool regen or agent death): aggregate
+    memory composition across all agents active within the preceding 120 seconds.
 
-    Useful for plotting how collective memory evolves over the run.
+    Shares the same event timeline as diversity_over_time and founder_dominance.
     """
-    regen_events = [e for e in run["pool_ledger"] if e["type"] == "regen"]
-    results = []
+    from datetime import datetime, timedelta
 
-    for i, regen in enumerate(regen_events):
-        t = regen["t"]
+    def memory_at(t: str, global_cycle: int, event_type: str) -> dict | None:
+        t_dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+        t_early = (t_dt - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+
         ep_counts, sem_counts, proc_counts = [], [], []
         crystallization_rates = []
 
         for agent_id, agent in run["agents"].items():
             latest = None
             for m in agent["metrics"]:
-                if m.get("timestamp", "") <= t:
+                ts = m.get("timestamp", "")
+                if t_early <= ts <= t:
                     latest = m
             if latest is None:
                 continue
@@ -182,13 +184,14 @@ def population_memory_over_time(run: dict) -> list[dict]:
 
         n = len(ep_counts)
         if n == 0:
-            continue
+            return None
 
         def mean(lst): return sum(lst) / len(lst) if lst else 0
 
-        results.append({
-            "global_cycle": i + 1,
+        return {
+            "global_cycle": global_cycle,
             "timestamp": t,
+            "event_type": event_type,
             "n_agents": n,
             "mean_episodic": round(mean(ep_counts), 3),
             "mean_semantic": round(mean(sem_counts), 3),
@@ -197,6 +200,42 @@ def population_memory_over_time(run: dict) -> list[dict]:
             "total_procedural": sum(proc_counts),
             "total_semantic": sum(sem_counts),
             "total_episodic": sum(ep_counts),
-        })
+        }
+
+    # Build unified event list: regen ticks + agent deaths
+    events: list[tuple[str, str]] = []
+    for e in run["pool_ledger"]:
+        if e["type"] == "regen":
+            events.append((e["t"], "regen"))
+    for agent_id, agent in run["agents"].items():
+        timestamps = [m.get("timestamp", "") for m in agent["metrics"] if m.get("timestamp")]
+        if timestamps:
+            events.append((max(timestamps), f"death:{agent_id}"))
+
+    events.sort(key=lambda x: x[0])
+
+    # Deduplicate near-simultaneous deaths (within 2s)
+    deduplicated: list[tuple[str, str]] = []
+    for ts, etype in events:
+        if (deduplicated
+                and "death" in etype
+                and "death" in deduplicated[-1][1]
+                and abs((datetime.fromisoformat(ts.replace("Z", "+00:00")) -
+                         datetime.fromisoformat(deduplicated[-1][0].replace("Z", "+00:00"))).total_seconds()) < 2):
+            deduplicated[-1] = (ts, "death:batch")
+        else:
+            deduplicated.append((ts, etype))
+
+    results = []
+    prev_n = None
+    for i, (ts, etype) in enumerate(deduplicated):
+        label = etype if not etype.startswith("death:") else "death"
+        row = memory_at(ts, i + 1, label)
+        if row is None:
+            continue
+        if etype == "regen" and row["n_agents"] == prev_n:
+            continue
+        prev_n = row["n_agents"]
+        results.append(row)
 
     return results

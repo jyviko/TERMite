@@ -66,6 +66,11 @@ def load_run(run_dir: str | Path) -> dict:
     if manifest_path.exists():
         run["challenges"] = json.loads(manifest_path.read_text())
 
+    # Challenge pool state (includes evicted challenges if still present)
+    state_path = shared / "challenges" / "_state.json"
+    if state_path.exists():
+        run["challenge_state"] = json.loads(state_path.read_text())
+
     # Per-agent data
     for agent_dir in sorted(root.iterdir()):
         if not agent_dir.is_dir() or not agent_dir.name.startswith("agent-"):

@@ -188,43 +188,34 @@ def _agents_active_at(run: dict, timestamp: str) -> list[str]:
 
 def population_diversity_over_cycles(run: dict) -> list[dict]:
     """
-    Compute per-global-cycle population diversity.
+    Compute population diversity at each significant population event.
 
-    For each global cycle N, take the most recent fingerprint from each
-    agent that has run at least one cycle, and compute:
-      - n_active: number of active agents
+    Events: pool regen ticks + agent death events (last recorded metric per agent).
+    For each event, take the most recent fingerprint from each agent active
+    within the preceding 120 seconds and compute:
       - simpson: Simpson diversity index (phenotype buckets)
-      - shannon: Shannon entropy (phenotype buckets)
+      - shannon: Shannon entropy
       - mean_pairwise_distance: average Euclidean distance across all pairs
-      - dominant_lineage_pct: fraction of active agents from the most common source lineage
-
-    Returns list sorted by global_cycle.
+      - dominant_lineage_pct: fraction from the most common gen-0 lineage
     """
-    # Build a mapping: global_cycle -> {agent_id -> latest phenotype at or before that cycle}
-    # Use pool_ledger regen events to identify global cycle boundaries
-    regen_events = [e for e in run["pool_ledger"] if e["type"] == "regen"]
+    from datetime import datetime, timedelta
 
-    if not regen_events:
-        return []
+    census_map = {c["id"]: c for c in run["census"]}
 
-    results = []
+    def diversity_at(t: str, global_cycle: int, event_type: str) -> dict | None:
+        t_dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+        t_early = (t_dt - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
 
-    for i, regen in enumerate(regen_events):
-        t = regen["t"]
-        n_active = regen.get("activeAgents", 0)
-
-        # Gather most recent phenotype for each agent before this timestamp
         phenotypes: list[list[float]] = []
-        agent_sources: list[str] = []
+        lineage_counts: dict[str | None, int] = defaultdict(int)
 
         for agent_id, agent in run["agents"].items():
-            # Find latest metric before timestamp t
+            # Most recent metric within activity window
             latest = None
             for m in agent["metrics"]:
-                if m.get("timestamp", "") <= t:
+                ts = m.get("timestamp", "")
+                if t_early <= ts <= t:
                     latest = m
-                else:
-                    break
             if latest is None:
                 continue
             fp = latest.get("fingerprint", {})
@@ -232,70 +223,88 @@ def population_diversity_over_cycles(run: dict) -> list[dict]:
                 continue
             phenotypes.append(phenotype_vector(fp))
 
-            # Source for lineage tracking
-            gen = fp.get("generation", 0)
-            agent_sources.append(agent_id if gen == 0 else agent_id)
-
-        if len(phenotypes) < 2:
-            continue
-
-        # Simpson diversity
-        labels = [_discretize(p) for p in phenotypes]
-        label_counts: dict[tuple, int] = defaultdict(int)
-        for lbl in labels:
-            label_counts[lbl] += 1
-        n = len(labels)
-        simpson = 1.0 - sum(c * (c - 1) for c in label_counts.values()) / (n * (n - 1)) if n > 1 else 0.0
-
-        # Shannon entropy
-        shannon = -sum((c / n) * math.log2(c / n) for c in label_counts.values() if c > 0)
-
-        # Mean pairwise Euclidean distance
-        pairs = 0
-        dist_sum = 0.0
-        for a in range(len(phenotypes)):
-            for b in range(a + 1, len(phenotypes)):
-                dist_sum += euclidean(phenotypes[a], phenotypes[b])
-                pairs += 1
-        mean_dist = dist_sum / pairs if pairs > 0 else 0.0
-
-        # Dominant lineage fraction
-        # Use census to find generation-0 source for each agent
-        lineage_counts: dict[str | None, int] = defaultdict(int)
-        census_map = {c["id"]: c for c in run["census"]}
-        for agent_id in run["agents"]:
-            # Walk up the lineage to find gen-0 ancestor
+            # Walk to gen-0 root for lineage tracking
             current = census_map.get(agent_id)
-            if current is None:
-                continue
-            # Check if agent was active (had a metric before timestamp t)
-            agent = run["agents"][agent_id]
-            if not any(m.get("timestamp", "") <= t for m in agent["metrics"]):
-                continue
-            # Find root ancestor
             root = current
-            seen = set()
-            while root.get("sourceId") and root["sourceId"] not in seen:
-                seen.add(root.get("id"))
+            seen: set[str] = set()
+            while root and root.get("sourceId") and root["sourceId"] not in seen:
+                seen.add(root.get("id", ""))
                 parent = census_map.get(root["sourceId"])
                 if parent is None:
                     break
                 root = parent
-            lineage_counts[root.get("id")] += 1
+            lineage_counts[root.get("id") if root else agent_id] += 1
+
+        n = len(phenotypes)
+        if n < 2:
+            return None
+
+        labels = [_discretize(p) for p in phenotypes]
+        label_counts: dict[tuple, int] = defaultdict(int)
+        for lbl in labels:
+            label_counts[lbl] += 1
+
+        simpson = 1.0 - sum(c * (c - 1) for c in label_counts.values()) / (n * (n - 1))
+        shannon = -sum((c / n) * math.log2(c / n) for c in label_counts.values() if c > 0)
+
+        dist_sum = 0.0
+        pairs = 0
+        for a in range(n):
+            for b in range(a + 1, n):
+                dist_sum += euclidean(phenotypes[a], phenotypes[b])
+                pairs += 1
+        mean_dist = dist_sum / pairs if pairs > 0 else 0.0
 
         dominant_lineage_pct = max(lineage_counts.values()) / sum(lineage_counts.values()) if lineage_counts else 0.0
 
-        results.append({
-            "global_cycle": i + 1,
+        return {
+            "global_cycle": global_cycle,
             "timestamp": t,
-            "n_active": n_active,
+            "event_type": event_type,
+            "n_active": n,
             "n_with_phenotype": n,
             "simpson": round(simpson, 4),
             "shannon": round(shannon, 4),
             "mean_pairwise_distance": round(mean_dist, 4),
             "dominant_lineage_pct": round(dominant_lineage_pct, 4),
             "n_phenotype_clusters": len(label_counts),
-        })
+        }
+
+    # Build unified event list: regen ticks + agent deaths
+    events: list[tuple[str, str]] = []
+    for e in run["pool_ledger"]:
+        if e["type"] == "regen":
+            events.append((e["t"], "regen"))
+    for agent_id, agent in run["agents"].items():
+        timestamps = [m.get("timestamp", "") for m in agent["metrics"] if m.get("timestamp")]
+        if timestamps:
+            events.append((max(timestamps), f"death:{agent_id}"))
+
+    events.sort(key=lambda x: x[0])
+
+    # Deduplicate near-simultaneous deaths (within 2s)
+    deduplicated: list[tuple[str, str]] = []
+    for ts, etype in events:
+        if (deduplicated
+                and "death" in etype
+                and "death" in deduplicated[-1][1]
+                and abs((datetime.fromisoformat(ts.replace("Z", "+00:00")) -
+                         datetime.fromisoformat(deduplicated[-1][0].replace("Z", "+00:00"))).total_seconds()) < 2):
+            deduplicated[-1] = (ts, "death:batch")
+        else:
+            deduplicated.append((ts, etype))
+
+    results = []
+    prev_n = None
+    for i, (ts, etype) in enumerate(deduplicated):
+        label = etype if not etype.startswith("death:") else "death"
+        row = diversity_at(ts, i + 1, label)
+        if row is None:
+            continue
+        if etype == "regen" and row["n_active"] == prev_n:
+            continue
+        prev_n = row["n_active"]
+        results.append(row)
 
     return results
 

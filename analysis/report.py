@@ -2,15 +2,17 @@
 Generate analysis outputs for a run.
 
 Writes to <output_dir>/:
-  summary.json               — top-level metrics (MODES, pool, lineage, memory)
-  diversity_over_time.csv    — per-global-cycle diversity metrics
-  pool_curve.csv             — per-event pool balance + active agents
-  memory_over_time.csv       — per-global-cycle memory composition
-  per_agent_stats.csv        — one row per agent (all lifecycle stats)
-  per_agent_cycles.csv       — one row per agent-cycle (fingerprint + memory ops)
-  founder_dominance.csv      — per-global-cycle lineage convergence
-  generation_stats.csv       — per-generation aggregates
-  fork_roi.csv               — per-fork cost/benefit analysis
+  summary.json                      — top-level metrics (MODES, pool, lineage, memory)
+  diversity_over_time.csv           — per-event diversity metrics
+  pool_curve.csv                    — per-event pool balance + active agents
+  memory_over_time.csv              — per-event memory composition
+  per_agent_stats.csv               — one row per agent (all lifecycle stats)
+  per_agent_cycles.csv              — one row per agent-cycle (fingerprint + memory ops)
+  founder_dominance.csv             — per-event lineage convergence
+  generation_stats.csv              — per-generation aggregates
+  fork_roi.csv                      — per-fork cost/benefit analysis
+  preferred_difficulty_over_time.csv — per-event agent ambition trajectory
+  challenge_solve_stats.csv         — per-challenge difficulty and solve timing
 """
 
 from __future__ import annotations
@@ -42,6 +44,12 @@ from .lineage import (
     fork_roi,
     founder_dominance_over_time,
     lineage_summary,
+)
+from .challenges import (
+    preferred_difficulty_over_time,
+    challenge_solve_stats,
+    difficulty_decay_summary,
+    reward_decay_over_time,
 )
 
 
@@ -218,6 +226,21 @@ def generate(run_dir: str | Path, output_dir: str | Path | None = None) -> Path:
     _write_csv(output_dir / "per_agent_cycles.csv", per_agent_cycle_rows)
 
     # -----------------------------------------------------------------------
+    # Challenge difficulty
+    # -----------------------------------------------------------------------
+    print("Computing challenge difficulty...")
+    pref_diff_rows = preferred_difficulty_over_time(run)
+    _write_csv(output_dir / "preferred_difficulty_over_time.csv", pref_diff_rows)
+
+    ch_solve_rows = challenge_solve_stats(run)
+    _write_csv(output_dir / "challenge_solve_stats.csv", ch_solve_rows)
+
+    reward_rows = reward_decay_over_time(run)
+    _write_csv(output_dir / "reward_decay_over_time.csv", reward_rows)
+
+    diff_decay = difficulty_decay_summary(pref_diff_rows)
+
+    # -----------------------------------------------------------------------
     # MODES scores
     # -----------------------------------------------------------------------
     print("Computing MODES scores...")
@@ -238,6 +261,7 @@ def generate(run_dir: str | Path, output_dir: str | Path | None = None) -> Path:
         "final_diversity": diversity_rows[-1] if diversity_rows else None,
         "final_memory": memory_rows[-1] if memory_rows else None,
         "final_founder_dominance": founder_rows[-1] if founder_rows else None,
+        "difficulty_decay": diff_decay,
     }
 
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
