@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Challenge, ChallengeCategory } from "../types/index.js";
+import type { SeededRng } from "../util/rng.js";
+
+// Module-level RNG — defaults to Math.random(), overridden when a seed is injected
+let _random: () => number = () => Math.random();
 
 // Difficulty → base reward (TEQ from pool, before depletion/multipliers)
 export const DIFFICULTY_REWARDS: Record<number, number> = {
@@ -31,7 +35,7 @@ const DIFFICULTY_EXPIRY: Record<number, number> = {
 // ── Utility ──
 
 function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(_random() * (max - min + 1)) + min;
 }
 
 // ── Data generators ── (reused from task-generator.ts)
@@ -115,7 +119,7 @@ function columnValue(name: string): string {
 
 function generateColumnExtractData(): Record<string, string> {
   const numCols = randomInt(15, 20);
-  const shuffled = [...COLUMN_POOL].sort(() => Math.random() - 0.5);
+  const shuffled = [...COLUMN_POOL].sort(() => _random() - 0.5);
   const columns = shuffled.slice(0, numCols);
   const target = columns[randomInt(0, columns.length - 1)]!;
 
@@ -184,7 +188,7 @@ function generateQuotedCsvData(): string {
   for (let i = 0; i < 1000; i++) {
     const region = regions[randomInt(0, regions.length - 1)]!;
     const amount = (randomInt(100, 99900) / 100).toFixed(2);
-    const useQuoted = Math.random() < 0.2;
+    const useQuoted = _random() < 0.2;
     const product = useQuoted
       ? quotedProducts[randomInt(0, quotedProducts.length - 1)]!
       : simpleProducts[randomInt(0, simpleProducts.length - 1)]!;
@@ -206,8 +210,8 @@ function generateMixedCaseWords(): string {
   const words: string[] = [];
   for (let i = 0; i < 500; i++) {
     const base = baseWords[randomInt(0, baseWords.length - 1)]!;
-    if (Math.random() < 0.3) {
-      const variant = Math.random() < 0.5
+    if (_random() < 0.3) {
+      const variant = _random() < 0.5
         ? base.charAt(0).toUpperCase() + base.slice(1)
         : base.toUpperCase();
       words.push(variant);
@@ -222,7 +226,7 @@ function generateDirtyNumbers(): string {
   const lines: string[] = [];
   for (let i = 0; i < 500; i++) {
     const value = randomInt(100, 999999) / 100;
-    const r = Math.random();
+    const r = _random();
     if (r < 0.40) {
       lines.push(value.toFixed(2));
     } else if (r < 0.65) {
@@ -334,7 +338,7 @@ function generateLargeLogForPipeline(lines: number): string {
 
   const result: string[] = [];
   for (let i = 0; i < lines; i++) {
-    const r = Math.random();
+    const r = _random();
     let level = "INFO";
     let cumulative = 0;
     for (let j = 0; j < levels.length; j++) {
@@ -526,7 +530,7 @@ function generateMissingFunctionData(): Record<string, string> {
     },
     () => {
       const words = ["hello", "world", "foo", "bar", "baz", "python", "code"];
-      const shuffled = [...words].sort(() => Math.random() - 0.5).slice(0, randomInt(4, 6));
+      const shuffled = [...words].sort(() => _random() - 0.5).slice(0, randomInt(4, 6));
       const expected = [...shuffled].sort().join(",");
       return {
         main: `from helpers import sort_words\n\nwords = ${JSON.stringify(shuffled)}\nresult = sort_words(words)\nprint(",".join(result))`,
@@ -593,7 +597,7 @@ function generatePpmPixelCountData(): Record<string, string> {
   for (let y = 0; y < h; y++) {
     const row: string[] = [];
     for (let x = 0; x < w; x++) {
-      if (Math.random() < 0.3) {
+      if (_random() < 0.3) {
         row.push(`${randomInt(0, 200)} ${randomInt(0, 200)} ${randomInt(0, 200)}`);
         nonBgCount++;
       } else {
@@ -831,7 +835,7 @@ function generateChecksumData(): Record<string, string> {
     const line = `Line ${i + 1}: data_${randomInt(1000, 9999)}`;
     lines.push(line);
     const checksum = Array.from(line).reduce((s, c) => s + c.charCodeAt(0), 0);
-    if (Math.random() < 0.3) {
+    if (_random() < 0.3) {
       checksums.push(`${checksum + randomInt(1, 100)}`);
       badLines.push(i + 1);
     } else {
@@ -947,7 +951,7 @@ function generateGraphData(): Record<string, string> {
   }
   // Add some extra edges
   for (let i = 0; i < nodeCount; i++) {
-    if (Math.random() < 0.3) {
+    if (_random() < 0.3) {
       const j = randomInt(0, nodeCount - 1);
       if (i !== j) {
         edges.push([nodes[i]!, nodes[j]!]);
@@ -2222,6 +2226,10 @@ export interface GeneratedChallenge {
 }
 
 export class ChallengeGenerator {
+  constructor(rng?: SeededRng) {
+    if (rng) _random = () => rng.random();
+  }
+
   generate(difficulty: number, globalCycle: number): GeneratedChallenge {
     const effectiveDifficulty = Math.min(Math.max(difficulty, 1), 5);
     const templates = TEMPLATES.filter(t => t.difficulty === effectiveDifficulty);
@@ -2269,7 +2277,7 @@ export class ChallengeGenerator {
   generateWeighted(globalCycle: number): GeneratedChallenge {
     // Bell curve: more mid-difficulty challenges, fewer at extremes
     const weights = [0.15, 0.25, 0.30, 0.20, 0.10]; // diff 1-5
-    const r = Math.random();
+    const r = _random();
     let cumulative = 0;
     let difficulty = 3;
     for (let i = 0; i < weights.length; i++) {

@@ -4,6 +4,7 @@ import type { Challenge } from "../types/index.js";
 import { ChallengeGenerator, DIFFICULTY_EXPECTED_COST } from "./challenge-generator.js";
 import type { GeneratedChallenge } from "./challenge-generator.js";
 import type { Executor } from "../executor/index.js";
+import type { SeededRng } from "../util/rng.js";
 
 // Depletion: each solve halves the remaining reward
 function depletionFactor(solveCount: number): number {
@@ -29,10 +30,12 @@ export class ChallengePool {
   private sharedDir: string;
   private globalCycle = 0;
   private seeded = false;
+  private _random: () => number;
 
-  constructor(sharedDir: string, generator?: ChallengeGenerator) {
+  constructor(sharedDir: string, generator?: ChallengeGenerator, rng?: SeededRng) {
     this.sharedDir = sharedDir;
     this.generator = generator ?? new ChallengeGenerator();
+    this._random = rng ? () => rng.random() : () => Math.random();
   }
 
   /** Target number of active challenges: n + floor(sqrt(n)). More than agents → temporal niches. */
@@ -74,8 +77,8 @@ export class ChallengePool {
     } else {
       // Subsequent refreshes: stochastic trickle so agents can't predict timing.
       // Each tick has a 40% chance of adding challenges (0, 1, or 2).
-      if (this.challenges.size < target && Math.random() < 0.4) {
-        const count = Math.random() < 0.5 ? 1 : 2;
+      if (this.challenges.size < target && this._random() < 0.4) {
+        const count = this._random() < 0.5 ? 1 : 2;
         let added = 0;
         while (this.challenges.size < target && added < count) {
           this.addChallenge(this.generator.generateWeighted(globalCycle));
@@ -213,8 +216,8 @@ export class ChallengePool {
   }
 
   /** Restore pool state from a previous run. */
-  static restore(path: string, sharedDir: string, generator?: ChallengeGenerator): ChallengePool {
-    const pool = new ChallengePool(sharedDir, generator);
+  static restore(path: string, sharedDir: string, generator?: ChallengeGenerator, rng?: SeededRng): ChallengePool {
+    const pool = new ChallengePool(sharedDir, generator, rng);
     if (!existsSync(path)) return pool;
 
     try {

@@ -25,6 +25,7 @@ const { values } = parseArgs({
     rewind: { type: "string" },
     "max-cycles": { type: "string" },
     "break-cycles": { type: "string" },
+    "env-seed": { type: "string" },
   },
 });
 
@@ -101,6 +102,7 @@ async function main() {
     noSnapshots: values["no-snapshots"],
     maxCycles: values["max-cycles"] ? parseInt(values["max-cycles"], 10) : undefined,
     breakCycles: values["break-cycles"] ? parseInt(values["break-cycles"], 10) : undefined,
+    seed: values["env-seed"] ? parseInt(values["env-seed"], 10) : undefined,
   });
 
   const shutdown = async () => {
@@ -118,7 +120,8 @@ async function main() {
     await arena.resume(resumeDir);
   } else {
     console.log(`=== TERM-ITE ARENA ===`);
-    console.log(`Agents: ${agentCount} | Budget: ${totalBudget}${model ? ` | Model: ${modelArg}` : ""}${seedPaths.length ? ` | Seeds: ${seedPaths.length}` : ""}`);
+    const envSeed = values["env-seed"] ? parseInt(values["env-seed"], 10) : undefined;
+    console.log(`Agents: ${agentCount} | Budget: ${totalBudget}${model ? ` | Model: ${modelArg}` : ""}${seedPaths.length ? ` | Seeds: ${seedPaths.length}` : ""}${envSeed != null ? ` | Env seed: ${envSeed}` : ""}`);
     await arena.start();
   }
 

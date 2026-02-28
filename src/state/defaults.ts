@@ -62,11 +62,12 @@ Output JSON (all fields optional):
 
 RULES:
 - Prefer procedural and semantic memories over episodic. Raw action logs rot fast.
-- Consolidate repeated failures into one procedural rule (e.g. "use sort -n for numeric data").
+- Procedural and semantic memories survive splits. Episodic memories do not.
+- Consolidate repeated failures into one procedural rule.
 - Forget episodic memories that duplicate an existing procedural rule.
-- If the same mistake appears in 3+ memories, promote to a procedural rule and forget the episodes.
+- If the same mistake appears in 2+ memories, promote to a procedural rule and forget the episodes.
 - Compress old memories when budget is tight. Forget duplicates.
-- Prompt rewrites (promptRewrite, resolveRewrite, memorizeRewrite) replace the corresponding prompt for future cycles.`;
+- Prompt rewrites replace the corresponding prompt for ALL future cycles and increase base cost. Only rewrite if the current prompt is actively wrong.`;
 
 export const DEFAULT_ROUTING: RoutingConfig = {
   thinking: { model: "claude-sonnet-4-6", maxTokens: 2048, maxCycleCost: 150_000 },
