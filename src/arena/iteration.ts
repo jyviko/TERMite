@@ -60,14 +60,14 @@ Return JSON: { "systemPrompt": "..." }`;
 
       const parsed = parseIterateResponse(text);
 
-      // Reject if the iterated prompt is longer than the source — prevents bloat across generations
+      // Reject if the iterated prompt exceeds the ceiling — prevents unbounded bloat
+      const MAX_SYSTEM_PROMPT_LENGTH = 762;
       const candidatePrompt = parsed.systemPrompt;
-      const sourcePrompt = params.sourceConfig.systemPrompt;
-      const useCandidate = candidatePrompt != null && candidatePrompt.length <= sourcePrompt.length;
+      const useCandidate = candidatePrompt != null && candidatePrompt.length <= MAX_SYSTEM_PROMPT_LENGTH;
 
       const next = new Config({
         ...params.sourceConfig.toJSON(),
-        systemPrompt: useCandidate ? candidatePrompt : sourcePrompt,
+        systemPrompt: useCandidate ? candidatePrompt : params.sourceConfig.systemPrompt,
         version: params.sourceConfig.version + 1,
         promptHistory: [],
       });
