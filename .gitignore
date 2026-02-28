@@ -11,3 +11,5 @@ saves/
 arena-workspace/
 .claude-o/
 worktrees/
+*.pyc
+__pycache__/
