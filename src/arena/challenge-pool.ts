@@ -48,9 +48,16 @@ export class ChallengePool {
   refresh(globalCycle: number, activeAgentCount: number): void {
     this.globalCycle = globalCycle;
 
-    // Remove expired challenges
+    // Remove expired or exhausted challenges.
+    // A challenge is exhausted when its effective reward (base × 0.5^solves) drops
+    // below the minimum viable cycle cost — it's net-negative to attempt and just
+    // blocks a pool slot that could hold a fresh challenge.
+    const MIN_VIABLE_REWARD = 10_000;
     for (const [id, challenge] of this.challenges) {
-      if (challenge.expiresAtCycle <= globalCycle) {
+      const expired = challenge.expiresAtCycle <= globalCycle;
+      const effectiveReward = challenge.baseReward * Math.pow(0.5, challenge.solvedBy.length);
+      const exhausted = effectiveReward < MIN_VIABLE_REWARD;
+      if (expired || exhausted) {
         this.challenges.delete(id);
       }
     }
