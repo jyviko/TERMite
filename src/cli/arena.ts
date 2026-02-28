@@ -9,7 +9,7 @@ loadEnv();
 const { values } = parseArgs({
   options: {
     agents: { type: "string", default: "3" },
-    budget: { type: "string", default: "500000" },
+    budget: { type: "string" },
     workspace: { type: "string", default: "./arena-workspace" },
     "api-key": { type: "string" },
     "base-url": { type: "string" },
