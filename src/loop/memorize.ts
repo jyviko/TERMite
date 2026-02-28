@@ -72,6 +72,7 @@ export async function runMemorizePhase(
       system: prompt,
       messages: [{ role: "user", content: "Manage memory." }],
       maxTokens: config.routing.memorize.maxTokens,
+      skipCache: true,
     });
 
     const text = extractText(response.content);

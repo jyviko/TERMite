@@ -45,6 +45,7 @@ export class Resolver {
         system: prompt,
         messages: [{ role: "user", content: "Evaluate." }],
         maxTokens: params.config.routing.resolve.maxTokens,
+        skipCache: true,
       });
 
       const text = extractText(response.content);

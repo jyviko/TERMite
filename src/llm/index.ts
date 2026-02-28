@@ -29,6 +29,8 @@ export interface ChatParams {
   tools?: Anthropic.Tool[];
   maxTokens: number;
   temperature?: number;
+  /** Skip prompt caching (no cache_control breakpoints). Use for single-shot calls. */
+  skipCache?: boolean;
 }
 
 const MAX_RETRIES = 5;
@@ -71,12 +73,19 @@ export class LLM {
   }
 
   async chat(params: ChatParams): Promise<LLMResponse> {
+    const cache = !params.skipCache;
     const systemBlocks: Anthropic.TextBlockParam[] = params.system
-      ? [{ type: "text" as const, text: params.system, cache_control: { type: "ephemeral" as const } }]
+      ? [cache
+          ? { type: "text" as const, text: params.system, cache_control: { type: "ephemeral" as const } }
+          : { type: "text" as const, text: params.system }]
       : [];
 
-    const tools = params.tools ? this.withCacheControl(params.tools) : undefined;
-    const messages = this.withMessageCacheBreakpoint(params.messages);
+    const tools = params.tools
+      ? (cache ? this.withCacheControl(params.tools) : params.tools)
+      : undefined;
+    const messages = cache
+      ? this.withMessageCacheBreakpoint(params.messages)
+      : params.messages;
 
     await this.acquireSlot();
     try {
