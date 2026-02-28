@@ -9,7 +9,6 @@ import { createInterface } from "node:readline";
 
 const WORKSPACE = "/workspace";
 const TOOLS_DIR = "/workspace/tools";
-const MAX_OUTPUT = 4000;
 const SHELL_TIMEOUT = 60_000;
 
 interface Command {
@@ -32,11 +31,6 @@ function respond(res: Response): void {
   process.stdout.write(JSON.stringify(res) + "\n");
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max) + `\n... (truncated, ${s.length} total chars)`;
-}
-
 function handlePing(cmd: Command): Response {
   return { id: cmd.id, ok: true, result: "pong" };
 }
@@ -54,14 +48,14 @@ function handleExecuteShell(cmd: Command): Response {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
-    return { id: cmd.id, ok: true, result: truncate(output, MAX_OUTPUT) };
+    return { id: cmd.id, ok: true, result: output };
   } catch (err: unknown) {
     const e = err as { stdout?: string; stderr?: string; message?: string };
     const output = (e.stdout ?? "") + (e.stderr ?? "");
     return {
       id: cmd.id,
       ok: false,
-      error: truncate(output || e.message || "Shell execution failed", MAX_OUTPUT),
+      error: output || e.message || "Shell execution failed",
     };
   }
 }
@@ -88,14 +82,14 @@ function handleExecuteTool(cmd: Command): Response {
       input: cmd.input ?? "",
       stdio: ["pipe", "pipe", "pipe"],
     });
-    return { id: cmd.id, ok: true, result: truncate(output, MAX_OUTPUT) };
+    return { id: cmd.id, ok: true, result: output };
   } catch (err: unknown) {
     const e = err as { stdout?: string; stderr?: string; message?: string };
     const output = (e.stdout ?? "") + (e.stderr ?? "");
     return {
       id: cmd.id,
       ok: false,
-      error: truncate(output || e.message || "Tool execution failed", MAX_OUTPUT),
+      error: output || e.message || "Tool execution failed",
     };
   }
 }
