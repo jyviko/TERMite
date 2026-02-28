@@ -331,14 +331,14 @@ describe("AgentStateMachine", () => {
     expect(state.config.version).toBeGreaterThanOrEqual(1);
   });
 
-  it("resolve income is credited based on outcome and relevance", async () => {
+  it("no income without challenge bounty", async () => {
     const llm = new MockLLM();
     // Think+Execute
     llm.addResponse(
       [{ type: "text", text: "Explored.", citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
     );
-    // Resolve — success with high relevance
+    // Resolve — success with high relevance but no task reward
     llm.addResponse(
       [{ type: "text", text: '{"outcome":"success","value":0.9,"energyJustified":true,"lesson":"Good work","goalComplete":false}', citations: null }] as Anthropic.ContentBlock[],
       "end_turn",
@@ -351,7 +351,6 @@ describe("AgentStateMachine", () => {
 
     const executor = new MockExecutor();
     const state = new AgentStateManager({ budget: 500_000 });
-    const initialEarned = state.energy.earned;
 
     const machine = new AgentStateMachine(
       llm,
@@ -363,9 +362,9 @@ describe("AgentStateMachine", () => {
 
     await collectEvents(machine.run(), 20);
 
-    // Success outcome + high relevance should yield income
-    expect(state.energy.earned).toBeGreaterThan(initialEarned);
-    expect(state.energy.cycleHistory[0]!.income).toBeGreaterThan(0);
+    // No challenge bounty — income is zero (bounty-only economy)
+    expect(state.energy.earned).toBe(0);
+    expect(state.energy.cycleHistory[0]!.income).toBe(0);
   });
 
   it("resolve and memorize receive state block with drives and memory distribution", async () => {

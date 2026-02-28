@@ -161,7 +161,7 @@ describe("Full Loop Integration", () => {
     expect(cycleMem.context).toContain("Cycle 0");
     expect(cycleMem.content).toContain("Outcome: success");
 
-    // Verify income was earned from successful resolve
-    expect(state.energy.earned).toBeGreaterThan(0);
+    // No challenge bounty in this test — income is bounty-only now
+    expect(state.energy.earned).toBe(0);
   });
 });

@@ -28,7 +28,7 @@ export interface PoolEvent {
 }
 
 const DEFAULT_CONFIG: TEQPoolConfig = {
-  initialBalance: 10_000_000,
+  initialBalance: 25_000_000,
   regenPerCycle: 50_000,
   maxBalance: 25_000_000,
 };

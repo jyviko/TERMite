@@ -86,14 +86,24 @@ export class Arena {
   private runDir = "";
   private snapshots: SnapshotManager | null = null;
 
+  /** Base pool size for Haiku (1.0×). Scales up proportionally for costlier models. */
+  private static readonly BASE_POOL = 10_000_000;
+
+  /** Pool size scaled to the configured model's token cost. */
+  private scaledPoolSize(): number {
+    const multiplier = lookupBountyMultiplier(this.config.model ?? "claude-haiku-4-5-20251001");
+    return Math.floor(Arena.BASE_POOL * multiplier);
+  }
+
   constructor(config: ArenaConfig) {
     this.config = config;
     this.llm = new LLM({ apiKey: config.apiKey, baseUrl: config.baseUrl });
     this.sharedBudget = new SharedBudget(config.totalBudget);
+    const scaledPool = this.scaledPoolSize();
     this.teqPool = TEQPool.initialize({
-      initialBalance: config.poolInitialBalance,
+      initialBalance: config.poolInitialBalance ?? scaledPool,
       regenPerCycle: config.poolRegenPerCycle,
-      maxBalance: config.poolMaxBalance,
+      maxBalance: config.poolMaxBalance ?? scaledPool,
     });
     this.challengeGenerator = new ChallengeGenerator();
     this.challengePool = new ChallengePool("", this.challengeGenerator); // sharedDir set in start()/resume()
@@ -102,7 +112,7 @@ export class Arena {
 
   /** Scale pool regen rate sublinearly with population to create carrying capacity. */
   private calibratePool(): void {
-    const BASE_REGEN_PER_AGENT = 50_000;
+    const BASE_REGEN_PER_AGENT = 100_000;
     const entries = Array.from(this.agents.values()).filter(e => e.active);
     if (entries.length === 0) return;
 
@@ -199,10 +209,11 @@ export class Arena {
     // Restore pool state
     const poolPath = join(this.runDir, "shared", "_pool.json");
     TEQPool.reset();
+    const scaledPool = this.scaledPoolSize();
     this.teqPool = await TEQPool.loadOrCreate(poolPath, {
-      initialBalance: this.config.poolInitialBalance,
+      initialBalance: this.config.poolInitialBalance ?? scaledPool,
       regenPerCycle: this.config.poolRegenPerCycle,
-      maxBalance: this.config.poolMaxBalance,
+      maxBalance: this.config.poolMaxBalance ?? scaledPool,
     });
 
     // Restore challenge pool
@@ -566,8 +577,7 @@ echo "__VERIFY__"`;
       const entry = this.agents.get(id);
       if (!entry) return "FAIL: agent not found";
 
-      const model = entry.state.config.routing.thinking.model;
-      const result = await this.challengePool.attempt(trimmed, id, entry.executor, model);
+      const result = await this.challengePool.attempt(trimmed, id, entry.executor);
 
       if (result.passed && result.reward != null && result.difficulty != null) {
         entry.stateMachine.setTaskReward(result.reward, result.difficulty);

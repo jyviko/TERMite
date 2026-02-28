@@ -105,21 +105,15 @@ export function lookupBountyMultiplier(model: string): number {
   return 1.0;
 }
 
-// Base income grants — credited directly, never drawn from pool.
-const BASE_SUCCESS_INCOME = 5000;
-const BASE_PARTIAL_INCOME = 2000;
-const MAX_RELEVANCE_INCOME = 2500;
-
 /**
- * Compute per-cycle income: base grants (direct) + bounty (from pool).
+ * Compute per-cycle income: bounty from the shared TEQ pool.
  *
- * Base income rewards outcome quality and goal relevance — granted directly.
- * Bounty is the task reward withdrawn from the shared TEQ pool, scaled by
- * model cost multiplier and efficiency ratio.
+ * No base income — the only way to earn is by solving challenges.
+ * This forces agents to seek productive work or conserve energy.
  */
 export async function computeIncome(
-  goalRelevance: number,
-  outcome: Outcome,
+  _goalRelevance: number,
+  _outcome: Outcome,
   taskReward: number | null,
   pool: TEQPool,
   cycleCost?: number,
@@ -128,21 +122,7 @@ export async function computeIncome(
   agentId?: string,
 ): Promise<{ bounty: number; base: number; requested: number; sources: string[] }> {
   const sources: string[] = [];
-
-  // Base income — granted directly, not from pool
-  let base = 0;
-  if (outcome === "success") {
-    base += BASE_SUCCESS_INCOME;
-    sources.push(`success:${BASE_SUCCESS_INCOME}`);
-  } else if (outcome === "partial") {
-    base += BASE_PARTIAL_INCOME;
-    sources.push(`partial:${BASE_PARTIAL_INCOME}`);
-  }
-  const relevanceIncome = Math.floor(MAX_RELEVANCE_INCOME * goalRelevance);
-  if (relevanceIncome > 0) {
-    base += relevanceIncome;
-    sources.push(`relevance:${relevanceIncome}`);
-  }
+  const base = 0;
 
   // Bounty — task reward withdrawn from pool
   let bountyRequested = 0;
