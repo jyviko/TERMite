@@ -986,6 +986,9 @@ echo "__VERIFY__"`;
       case "error":
         console.error(`${prefix} \x1b[31mERROR: ${event.message}${RESET}`);
         break;
+      case "idle":
+        console.log(`${prefix} ${DIM}idle ${event.seconds}s${RESET}`);
+        break;
     }
   }
 

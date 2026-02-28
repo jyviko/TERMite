@@ -168,4 +168,5 @@ export type AgentEvent =
   | { type: "error"; message: string }
   | { type: "state_change"; from: AgentMode; to: AgentMode }
   | { type: "phase_change"; phase: "executing" | "resolving" | "memorizing" }
-  | { type: "tools_available"; tools: string[] };
+  | { type: "tools_available"; tools: string[] }
+  | { type: "idle"; seconds: number };

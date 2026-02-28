@@ -29,6 +29,7 @@ export interface MemorizeOps {
   promptRewrite?: string | null;
   memorizeRewrite?: string | null;
   resolveRewrite?: string | null;
+  idleSeconds?: number;
 }
 
 export function parseMemorizeResponse(text: string): MemorizeOps {
@@ -57,6 +58,9 @@ export function parseMemorizeResponse(text: string): MemorizeOps {
         : typeof parsed.resolve_rewrite === "string"
           ? parsed.resolve_rewrite
           : undefined,
+      idleSeconds: typeof parsed.idleSeconds === "number"
+        ? Math.max(0, Math.min(60, Math.floor(parsed.idleSeconds)))
+        : undefined,
     };
   } catch {
     return {};

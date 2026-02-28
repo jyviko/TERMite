@@ -57,7 +57,8 @@ Output JSON (all fields optional):
   "consolidate": {"sourceIds": [...], "newContent": "merged summary", "importance": 0.8},
   "promptRewrite": "rewritten system prompt",
   "memorizeRewrite": "rewritten version of THIS prompt",
-  "resolveRewrite": "rewritten resolve prompt"
+  "resolveRewrite": "rewritten resolve prompt",
+  "idleSeconds": 0-60
 }
 
 RULES:

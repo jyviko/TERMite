@@ -10,7 +10,7 @@ import type { DriveSystem } from "../state/drives.js";
 import { AgentStateManager } from "../state/agent-state.js";
 import { AgenticLoop, type ToolExecutor } from "./agentic-loop.js";
 import { parseResolveResponse, RESOLVE_ERROR_DEFAULT, computeIncome, lookupBountyMultiplier } from "./resolve.js";
-import { parseMemorizeResponse, applyMemorizeOperations } from "./memorize.js";
+import { parseMemorizeResponse, applyMemorizeOperations, type MemorizeOps } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const BASE_MEMORY_TOKEN_BUDGET = 4000;
@@ -24,10 +24,11 @@ interface CycleContext {
   actions: string[];
   model: string;
   memoryOps: string[];
+  idleSeconds: number;
 }
 
 function freshCycle(): CycleContext {
-  return { sources: [], outcome: null, relevance: 0, actions: [], model: "", memoryOps: [] };
+  return { sources: [], outcome: null, relevance: 0, actions: [], model: "", memoryOps: [], idleSeconds: 0 };
 }
 
 // ── State machine ───────────────────────────────────────────────────
@@ -87,6 +88,12 @@ export class AgentStateMachine {
       yield* this.cycle();
       yield* this.finalizeCycle();
       await this.state.save(this.savePath);
+
+      // Agent-requested idle — conserve energy by waiting between cycles
+      if (this.cycleCtx.idleSeconds > 0) {
+        yield { type: "idle", seconds: this.cycleCtx.idleSeconds } as AgentEvent;
+        await new Promise((r) => setTimeout(r, this.cycleCtx.idleSeconds * 1000));
+      }
     }
 
     if (!this.state.active) {
@@ -165,7 +172,7 @@ export class AgentStateMachine {
       .replace("{stateBlock}", stateBlock)
       .replace("{populationBlock}", this.populationContext ?? "");
 
-    let memorizeOps = {};
+    let memorizeOps: MemorizeOps = {};
     try {
       const m = await this.loop.postTurn(memorizeMessage, this.state.config.routing.memorizeMaxTokens);
       memorizeOps = parseMemorizeResponse(m.text);
@@ -175,6 +182,7 @@ export class AgentStateMachine {
     }
 
     // 5. Apply memory operations (compress, forget, consolidate, promptRewrite)
+    this.cycleCtx.idleSeconds = memorizeOps.idleSeconds ?? 0;
     const oldTokens = this.state.memories.totalTokenCost;
     this.cycleCtx.memoryOps = applyMemorizeOperations(memorizeOps, this.state.memories, this.state.config);
     const newTokens = this.state.memories.totalTokenCost;
