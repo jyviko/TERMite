@@ -144,6 +144,7 @@ export class AgenticLoop {
       // Handle max_tokens truncation — must provide tool_results if any tool_use present
       if (response.stopReason === "max_tokens") {
         if (toolUseBlocks.length > 0) {
+          // API requires tool_result for every tool_use. Signal truncation and retry.
           this.messages.push({
             role: "user",
             content: toolUseBlocks.map((tb) => ({
@@ -152,13 +153,10 @@ export class AgenticLoop {
               content: "Truncated — not executed. Retry with shorter output.",
             })),
           });
-        } else {
-          this.messages.push({
-            role: "user",
-            content: "Your response was cut off. Continue from where you stopped.",
-          });
+          continue;
         }
-        continue;
+        // Pure text truncation — stop. Don't reward rambling with another iteration.
+        break;
       }
 
       if (toolUseBlocks.length === 0) {
