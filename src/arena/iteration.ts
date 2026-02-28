@@ -16,6 +16,7 @@ export class ConfigIterator {
     memories: Memory[];
     challengeHistory: ChallengeResult[];
     generation: number;
+    directive?: string;
   }): Promise<Config> {
     const formattedMemories = params.memories
       .sort((a, b) => b.importance - a.importance)
@@ -28,6 +29,10 @@ export class ConfigIterator {
       .map((q) => `difficulty ${q.difficulty}: ${q.passed ? "PASS" : "FAIL"}, reward ${q.reward}`)
       .join("\n");
 
+    const directiveBlock = params.directive
+      ? `\nSource agent's guidance for this copy:\n${params.directive}\n`
+      : "";
+
     const prompt = `You are iterating an agent's configuration for the next version.
 
 Current config (version ${params.generation}):
@@ -38,7 +43,7 @@ ${formattedMemories || "(none)"}
 
 Challenge history:
 ${formattedChallengeHistory || "(none)"}
-
+${directiveBlock}
 Given what you know from these memories and results — is there anything you would change about this prompt to help you be more efficient? Is there anything you could do better in the next cycle having known what you know now?
 
 Return JSON: { "systemPrompt": "..." }`;

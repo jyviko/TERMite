@@ -323,7 +323,7 @@ export class Arena {
       this.wireChallengeHandler(dir, machine);
 
       // Wire fork handler
-      machine.setForkHandler(() => this.handleForkRequest(dir));
+      machine.setForkHandler((directive) => this.handleForkRequest(dir, directive));
 
       // Wire signal handler
       machine.setSignalHandler((msg) => this.handleSignal(dir, state.cycleCount, msg));
@@ -554,7 +554,7 @@ export class Arena {
     this.wireChallengeHandler(id, machine);
 
     // Wire fork handler — agent calls fork tool, arena executes
-    machine.setForkHandler(() => this.handleForkRequest(id));
+    machine.setForkHandler((directive) => this.handleForkRequest(id, directive));
 
     // Wire signal handler — agent calls signal tool, arena mediates shared write
     machine.setSignalHandler((msg) => this.handleSignal(id, state.cycleCount, msg));
@@ -676,7 +676,7 @@ echo "__VERIFY__"`;
     });
   }
 
-  private async handleForkRequest(id: string): Promise<string> {
+  private async handleForkRequest(id: string, directive?: string): Promise<string> {
     const entry = this.agents.get(id);
     if (!entry) return "FORK_DENIED: agent not found";
 
@@ -722,6 +722,7 @@ echo "__VERIFY__"`;
         memories: entry.state.memories.memories,
         challengeHistory: entry.challengeHistory,
         generation: entry.state.generation,
+        directive: directive || undefined,
       });
 
       // Source invests half its reserves; copy gets investment + pool bonus

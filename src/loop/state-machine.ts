@@ -45,7 +45,7 @@ export class AgentStateMachine {
   private challengeHandler: ((input: string) => Promise<string>) | null = null;
 
   // Fork handler — provided by arena, called when agent uses fork tool
-  private forkHandler: (() => Promise<string>) | null = null;
+  private forkHandler: ((directive: string) => Promise<string>) | null = null;
 
   // Signal handler — provided by arena, called when agent uses signal tool
   private signalHandler: ((message: string) => Promise<string>) | null = null;
@@ -313,7 +313,7 @@ export class AgentStateMachine {
 
     // fork is an internal tool — arena handles the actual split
     if (name === "fork" && this.forkHandler) {
-      return this.forkHandler();
+      return this.forkHandler(toolInput);
     }
 
     const result = await this.executor.executeTool(`/workspace/tools/${name}`, toolInput);
@@ -470,7 +470,7 @@ export class AgentStateMachine {
   }
 
   /** Set the fork handler (provided by arena, executed when agent calls fork tool). */
-  setForkHandler(handler: () => Promise<string>): void {
+  setForkHandler(handler: (directive: string) => Promise<string>): void {
     this.forkHandler = handler;
   }
 

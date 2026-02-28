@@ -1,3 +1,3 @@
 #!/bin/bash
-# description: fork - Split. Create a copy with your memories, tools, and state. Costs 50% of your reserves.
+# description: fork - Split. Create a copy with your memories, tools, and state. Costs 50% of your reserves. Optional input: guidance for the copy's configuration.
 echo "__FORK__"
