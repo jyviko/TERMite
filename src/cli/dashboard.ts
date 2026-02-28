@@ -25,7 +25,8 @@ const workspaceRoot = values.workspace ?? "./arena-workspace";
 const REFRESH_INTERVAL = parseInt(values.interval ?? "1500", 10);
 
 let hideDead = false;
-let solvedFilter: number | null = null; // null = show all, N = show agents with exactly N solved
+let solvedFilter: number | null = null; // null = show all, N = show agents with >= N solved
+let viewMode: "cards" | "lineage" = "cards";
 
 /** Find the latest run-* directory, or use --run if specified */
 function findRunDir(): string {
@@ -409,6 +410,112 @@ function drawCard(buf: string[], org: AgentData, r0: number, c0: number, colW: n
   safe(buf, r, c0, "─".repeat(colW - 1), CYAN);
 }
 
+// ── Lineage tree view ───────────────────────────────────────────────
+
+interface TreeNode {
+  org: AgentData;
+  children: TreeNode[];
+}
+
+function buildTree(orgs: AgentData[]): TreeNode[] {
+  const byId = new Map<string, AgentData>();
+  for (const o of orgs) byId.set(gs(o, "id", "agent_id"), o);
+
+  const childrenOf = new Map<string, AgentData[]>();
+  const roots: AgentData[] = [];
+
+  for (const o of orgs) {
+    const src = gs(o, "sourceId");
+    if (!src || !byId.has(src)) {
+      roots.push(o);
+    } else {
+      const siblings = childrenOf.get(src) ?? [];
+      siblings.push(o);
+      childrenOf.set(src, siblings);
+    }
+  }
+
+  function build(org: AgentData): TreeNode {
+    const id = gs(org, "id", "agent_id");
+    const kids = (childrenOf.get(id) ?? [])
+      .sort((a, b) => gn(a, "createdAt") - gn(b, "createdAt"));
+    return { org, children: kids.map(build) };
+  }
+
+  return roots
+    .sort((a, b) => gn(a, "createdAt") - gn(b, "createdAt"))
+    .map(build);
+}
+
+function drawLineage(buf: string[], orgs: AgentData[], startRow: number, width: number): number {
+  const trees = buildTree(orgs);
+
+  // Summary line
+  const maxGen = Math.max(0, ...orgs.map((o) => gn(o, "generation")));
+  const forkCount = orgs.filter((o) => gs(o, "sourceId")).length;
+  const genCounts = new Map<number, number>();
+  for (const o of orgs) {
+    const g2 = gn(o, "generation");
+    genCounts.set(g2, (genCounts.get(g2) ?? 0) + 1);
+  }
+  const genParts: string[] = [];
+  for (let i = 0; i <= maxGen; i++) genParts.push(`g${i}:${genCounts.get(i) ?? 0}`);
+  safe(buf, startRow, 0, ` ${forkCount} forks  depth ${maxGen}  ${genParts.join("  ")}`, CYAN);
+
+  let row = startRow + 1;
+
+  function renderNode(node: TreeNode, prefix: string, isLast: boolean, isRoot: boolean): void {
+    const o = node.org;
+    const rawId = gs(o, "id", "agent_id");
+    const id = rawId.replace(/^(agent|org)-/, "").slice(0, 8);
+    const active = Boolean(g(o, "active"));
+    const status = active ? `${GREEN}\u25cf${RST}` : `${RED}\u2717${RST}`;
+    const gen = gn(o, "generation");
+    const cyc = gn(o, "cycleCount", "cycle_count");
+    const e = (g(o, "energy") ?? {}) as AgentData;
+    const res = gn(e, "reserves");
+    const cap = gn(e, "capacity") || 1;
+    const pct = Math.floor((res / cap) * 100);
+    const ec = pct > 40 ? GREEN : pct > 15 ? YELLOW : RED;
+    const net = gn(e, "earned") - gn(e, "spent");
+    const nc = net >= 0 ? GREEN : RED;
+    const cfg = (g(o, "config") ?? {}) as AgentData;
+    const v = gn(cfg, "version");
+    const mems = g(o, "memories");
+    const memArr = Array.isArray(mems) ? mems as AgentData[] : [];
+    let ep = 0, sem = 0, proc = 0;
+    for (const m of memArr) {
+      const t = gs(m, "type");
+      if (t === "episodic") ep++;
+      else if (t === "semantic") sem++;
+      else if (t === "procedural") proc++;
+    }
+    const solved = gn(o, "_challengesSolved");
+
+    const connector = isRoot ? " " : isLast ? " └─" : " ├─";
+    const line = `${prefix}${connector} ${status} ${BOLD}${id}${RST}`
+      + `  g${gen}  cyc:${cyc}`
+      + `  ${ec}${pct}%${RST}`
+      + `  ${nc}${fmtSigned(net)}${RST}`
+      + `  v${v}  C:${solved}`
+      + `  ${ep}e/${sem}s/${proc}p`;
+
+    safe(buf, row, 0, line.slice(0, width));
+    row++;
+
+    const childPrefix = isRoot ? prefix : prefix + (isLast ? "    " : " │  ");
+    for (let i = 0; i < node.children.length; i++) {
+      renderNode(node.children[i]!, childPrefix, i === node.children.length - 1, false);
+    }
+  }
+
+  for (let i = 0; i < trees.length; i++) {
+    renderNode(trees[i]!, "", i === trees.length - 1, true);
+  }
+
+  return row;
+}
+
 // ── Main render (matches Python draw exactly) ──────────────────────
 function render(): string {
   const [height, width] = getSize();
@@ -486,30 +593,36 @@ function render(): string {
     return buf.join("");
   }
 
-  // Grid layout (start at row 5 to leave room for header, pool, chart, bounties)
   const n = orgs.length;
-  const nCols = Math.max(1, Math.floor(width / MIN_COL_W));
-  const nGridRows = Math.ceil(n / nCols);
-  const colW = Math.floor(width / nCols);
 
-  for (let idx = 0; idx < n; idx++) {
-    const gridR = Math.floor(idx / nCols);
-    const gridC = idx % nCols;
-    const r0 = 5 + gridR * CARD_ROWS;
-    const c0 = gridC * colW;
+  if (viewMode === "lineage") {
+    // Lineage tree view
+    drawLineage(buf, orgs, 5, width);
+  } else {
+    // Grid card layout (start at row 5 to leave room for header, pool, chart, bounties)
+    const nCols = Math.max(1, Math.floor(width / MIN_COL_W));
+    const colW = Math.floor(width / nCols);
 
-    if (r0 + CARD_ROWS > height - 1) {
-      safe(buf, height - 2, 0, ` +${n - idx} more agents (resize terminal)`, YELLOW);
-      break;
+    for (let idx = 0; idx < n; idx++) {
+      const gridR = Math.floor(idx / nCols);
+      const gridC = idx % nCols;
+      const r0 = 5 + gridR * CARD_ROWS;
+      const c0 = gridC * colW;
+
+      if (r0 + CARD_ROWS > height - 1) {
+        safe(buf, height - 2, 0, ` +${n - idx} more agents (resize terminal)`, YELLOW);
+        break;
+      }
+
+      drawCard(buf, orgs[idx]!, r0, c0, colW);
     }
-
-    drawCard(buf, orgs[idx]!, r0, c0, colW);
   }
 
   // Footer
   const deadLabel = hideDead ? `${deadCount} hidden` : `${deadCount} dead`;
   const solvedLabel = solvedFilter !== null ? `>=${solvedFilter}` : "all";
-  safe(buf, height - 1, 0, ` [q]uit [d]ead [1-9]solved>= [0]all  ${n}/${allOrgs.length} shown (${deadLabel}) solved:${solvedLabel}`, CYAN);
+  const modeLabel = viewMode === "lineage" ? "tree" : "cards";
+  safe(buf, height - 1, 0, ` [q]uit [d]ead [l]ineage [1-9]solved>= [0]all  ${n}/${allOrgs.length} (${deadLabel}) solved:${solvedLabel} view:${modeLabel}`, CYAN);
 
   return buf.join("");
 }
@@ -530,6 +643,9 @@ if (process.stdin.isTTY) {
       cleanup();
     } else if (key === "d" || key === "D") {
       hideDead = !hideDead;
+      tick();
+    } else if (key === "l" || key === "L") {
+      viewMode = viewMode === "lineage" ? "cards" : "lineage";
       tick();
     } else if (key >= "1" && key <= "9") {
       solvedFilter = solvedFilter === Number(key) ? null : Number(key);

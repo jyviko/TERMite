@@ -3,6 +3,7 @@
  *
  * Usage:
  *     yarn report                          # latest run, all agents
+ *     yarn report --lineage               # lineage tree view
  *     yarn report --agent agent-abc12345   # detail view for one agent
  *     yarn report --agent abc1            # partial ID match
  *     yarn report --agent abc1 --json     # raw JSON for one agent
@@ -22,6 +23,7 @@ const { values } = parseArgs({
     run: { type: "string" },
     agent: { type: "string" },
     json: { type: "boolean", default: false },
+    lineage: { type: "boolean", default: false },
   },
 });
 
@@ -602,6 +604,105 @@ function renderAgentDetail(agent: AgentState): void {
   console.log();
 }
 
+// ── Lineage tree ────────────────────────────────────────────────────
+
+interface TreeNode {
+  agent: AgentState;
+  children: TreeNode[];
+}
+
+function buildLineageTree(agents: AgentState[]): TreeNode[] {
+  const byId = new Map<string, AgentState>();
+  for (const a of agents) byId.set(a.id, a);
+
+  const childrenOf = new Map<string, AgentState[]>();
+  const roots: AgentState[] = [];
+
+  for (const a of agents) {
+    if (!a.sourceId || !byId.has(a.sourceId)) {
+      roots.push(a);
+    } else {
+      const siblings = childrenOf.get(a.sourceId) ?? [];
+      siblings.push(a);
+      childrenOf.set(a.sourceId, siblings);
+    }
+  }
+
+  function buildNode(agent: AgentState): TreeNode {
+    const kids = (childrenOf.get(agent.id) ?? [])
+      .sort((a, b) => a.createdAt - b.createdAt);
+    return { agent, children: kids.map(buildNode) };
+  }
+
+  return roots
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map(buildNode);
+}
+
+function renderLineage(agents: AgentState[]): void {
+  const trees = buildLineageTree(agents);
+
+  // Summary
+  const maxGen = Math.max(...agents.map((a) => a.generation));
+  const genCounts = new Map<number, number>();
+  for (const a of agents) genCounts.set(a.generation, (genCounts.get(a.generation) ?? 0) + 1);
+  const forkCount = agents.filter((a) => a.sourceId).length;
+  const activeCount = agents.filter((a) => a.active).length;
+
+  console.log(`${BOLD}${CYAN}── Lineage ────────────────────────────────────────────${RST}`);
+  console.log(`  ${agents.length} agents  ${activeCount} active  ${forkCount} forks  max depth ${maxGen}`);
+  const genParts: string[] = [];
+  for (let g = 0; g <= maxGen; g++) {
+    genParts.push(`gen${g}:${genCounts.get(g) ?? 0}`);
+  }
+  console.log(`  ${DIM}${genParts.join("  ")}${RST}`);
+  console.log();
+
+  // Tree rendering
+  function renderNode(node: TreeNode, prefix: string, isLast: boolean, isRoot: boolean): void {
+    const a = node.agent;
+    const id = a.id.slice(-8);
+    const status = a.active ? `${GREEN}●${RST}` : `${RED}✗${RST}`;
+    const cyc = a.cycleCount;
+    const e = a.energy;
+    const pct = e.capacity > 0 ? Math.floor((e.reserves / e.capacity) * 100) : 0;
+    const eColor = pct > 40 ? GREEN : pct > 15 ? YELLOW : RED;
+    const net = e.earned - e.spent;
+    const netColor = net >= 0 ? GREEN : RED;
+    const memTypes = { ep: 0, sem: 0, proc: 0 };
+    for (const m of a.memories) {
+      if (m.type === "episodic") memTypes.ep++;
+      else if (m.type === "semantic") memTypes.sem++;
+      else if (m.type === "procedural") memTypes.proc++;
+    }
+    const cfg = a.config;
+    const ml = modelLabel(cfg.routing?.thinking?.model);
+    const mlColor = ml === "S" ? MAG : ml === "H" ? CYAN : "";
+
+    const connector = isRoot ? "" : isLast ? "└─ " : "├─ ";
+    const line = `${prefix}${connector}${status} ${BOLD}${id}${RST}`
+      + `  g${a.generation}`
+      + `  ${mlColor}[${ml}]${RST}`
+      + `  cyc:${cyc}`
+      + `  ${eColor}${pct}%${RST}`
+      + `  net:${netColor}${fmtSigned(net)}${RST}`
+      + `  v${cfg.version}`
+      + `  mem:${memTypes.ep}e/${memTypes.sem}s/${memTypes.proc}p`;
+
+    console.log(line);
+
+    const childPrefix = isRoot ? prefix : prefix + (isLast ? "   " : "│  ");
+    for (let i = 0; i < node.children.length; i++) {
+      renderNode(node.children[i]!, childPrefix, i === node.children.length - 1, false);
+    }
+  }
+
+  for (let i = 0; i < trees.length; i++) {
+    renderNode(trees[i]!, "  ", i === trees.length - 1, true);
+  }
+  console.log();
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 function main(): void {
   const runDir = findRunDir();
@@ -616,6 +717,16 @@ function main(): void {
   if (agents.length === 0) {
     console.error(`${YELLOW}No agents found in ${runDir}${RST}`);
     process.exit(1);
+  }
+
+  // Lineage tree mode
+  if (values.lineage) {
+    const runName = runDir.split("/").pop() ?? runDir;
+    console.log();
+    console.log(`${BOLD}${CYAN} TERM Lineage${RST}  ${DIM}${runName}${RST}`);
+    console.log();
+    renderLineage(agents);
+    return;
   }
 
   // Single Agent detail mode
