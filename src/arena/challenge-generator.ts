@@ -127,7 +127,7 @@ function generateColumnExtractData(): Record<string, string> {
 
   return {
     "dataset.csv": header + "\n" + rows.join("\n"),
-    ".meta": target,
+    "target.txt": target,
   };
 }
 
@@ -744,7 +744,7 @@ function generateFindFilesData(): Record<string, string> {
       if (ext === targetExt) count++;
     }
   }
-  files[".meta"] = targetExt;
+  files["target.txt"] = targetExt;
   files[".expected"] = String(count);
   return files;
 }
@@ -768,6 +768,10 @@ function generateDirectorySizeData(): Record<string, string> {
     .map(([dir, size]) => `${dir},${size}`)
     .join("\n");
   files[".expected"] = expected;
+  files["instructions.txt"] =
+    "Compute the total byte count (wc -c) of all files in each subdirectory under tree/.\n" +
+    "Output to sizes.csv with format: dir,bytes (one line per subdirectory, sorted by bytes descending).\n" +
+    "Use relative paths from tree/ (e.g. data/logs,1523).";
   return files;
 }
 
@@ -1384,7 +1388,7 @@ if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0; else echo "FAIL: outpu
     difficulty: 3,
     makeVerifyScript: (id) => `#!/bin/bash
 ${paths(id)}
-TARGET=$(cat "$CDIR/.meta")
+TARGET=$(cat "$CDIR/target.txt")
 HEADER=$(head -1 "$CDIR/dataset.csv")
 COL_NUM=$(echo "$HEADER" | tr ',' '\\n' | grep -n "^$TARGET$" | head -1 | cut -d: -f1)
 if [ -z "$COL_NUM" ]; then echo "FAIL: internal error"; exit 1; fi
@@ -1460,7 +1464,7 @@ for (let i = 1; i < raw.length; i++) {
   const fields = [];
   let field = '', inQuote = false;
   for (const ch of line) {
-    if (ch === '\"' ) { inQuote = !inQuote; }
+    if (ch === '\\"' ) { inQuote = !inQuote; }
     else if (ch === ',' && !inQuote) { fields.push(field.trim()); field = ''; }
     else { field += ch; }
   }
@@ -2229,6 +2233,22 @@ export class ChallengeGenerator {
     const id = `c-${randomUUID().slice(0, 8)}`;
     const dataFiles = template.dataGenerator?.() ?? {};
 
+    // Embed dotfile values directly in verify script so it never reads from
+    // the shared mount (containers block dotfile access on bind mounts).
+    let verifyScript = template.makeVerifyScript(id);
+    for (const [name, content] of Object.entries(dataFiles)) {
+      if (!name.startsWith(".")) continue;
+      const b64 = Buffer.from(content).toString("base64");
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(
+        `\\$\\(cat "\\$CDIR/${escaped}"(\\s*\\|[^)]+)?\\)`,
+        "g",
+      );
+      verifyScript = verifyScript.replace(re, (_match, transform) => {
+        return `$(echo '${b64}' | base64 -d${transform || ""})`;
+      });
+    }
+
     const challenge: Challenge = {
       id,
       category: template.category,
@@ -2237,7 +2257,7 @@ export class ChallengeGenerator {
       baseReward: DIFFICULTY_REWARDS[effectiveDifficulty] ?? 150_000,
       expiresAtCycle: globalCycle + (DIFFICULTY_EXPIRY[effectiveDifficulty] ?? 20),
       dataDir: `challenges/${id}`,
-      verifyScript: template.makeVerifyScript(id),
+      verifyScript,
       solvedBy: [],
       appearedAtCycle: globalCycle,
     };

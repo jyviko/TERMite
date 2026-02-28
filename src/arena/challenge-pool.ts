@@ -95,6 +95,7 @@ export class ChallengePool {
     const challengeDir = join(this.sharedDir, challenge.dataDir);
     mkdirSync(challengeDir, { recursive: true });
     for (const [name, content] of Object.entries(dataFiles)) {
+      if (name.startsWith(".")) continue; // Verify-only data — embedded in script
       const filePath = join(challengeDir, name);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, content, "utf-8");
@@ -140,7 +141,7 @@ export class ChallengePool {
   ): Promise<ChallengeAttemptResult> {
     const challenge = this.challenges.get(challengeId);
     if (!challenge) {
-      return { passed: false, message: `FAIL: unknown challenge ID "${challengeId}"` };
+      return { passed: false, message: `NOT_FOUND: challenge "${challengeId}" does not exist or has expired. Run check with no arguments to list active challenges.` };
     }
 
     // Run verify script via executor (inside agent's container)

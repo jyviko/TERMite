@@ -87,17 +87,15 @@ describe("ChallengePool", () => {
     expect(pool.size).toBe(3);
 
     // Subsequent refreshes are stochastic — each tick may add 0, 1, or 2.
-    // After enough ticks, pool should reach target. Never exceed it.
+    // Track peak size because challenges expire over time (min expiry 15 cycles).
+    let maxSize = pool.size;
     for (let cycle = 1; cycle <= 50; cycle++) {
       pool.refresh(cycle, 4);
+      if (pool.size > maxSize) maxSize = pool.size;
       expect(pool.size).toBeLessThanOrEqual(6);
     }
-    // After 50 ticks with 40% chance each, pool should have filled
-    expect(pool.size).toBe(6);
-
-    // Extra refresh at target: no overshoot
-    pool.refresh(51, 4);
-    expect(pool.size).toBe(6);
+    // Pool should have reached target at some point during the 50 ticks
+    expect(maxSize).toBe(6);
 
     rmSync(sharedDir, { recursive: true, force: true });
   });
