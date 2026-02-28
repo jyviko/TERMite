@@ -16,6 +16,7 @@ import { TEQPool } from "./teq-pool.js";
 import { SnapshotManager } from "./snapshots.js";
 import { ChallengePool } from "./challenge-pool.js";
 import { ChallengeGenerator } from "./challenge-generator.js";
+import { SeededRng } from "../util/rng.js";
 
 interface AgentEntry {
   stateMachine: AgentStateMachine;
@@ -40,6 +41,8 @@ export interface ArenaConfig {
   noSnapshots?: boolean;
   maxCycles?: number;
   breakCycles?: number;
+  /** Fixed seed for environment randomness (challenges, pool trickle, config mutations). */
+  seed?: number;
 }
 
 // ANSI color palette for per-agent log coloring
@@ -85,6 +88,7 @@ export class Arena {
   private challengePool: ChallengePool;
   private challengeGenerator: ChallengeGenerator;
   private iterator: ConfigIterator;
+  private rng: SeededRng | undefined;
   private config: ArenaConfig;
   private runDir = "";
   private snapshots: SnapshotManager | null = null;
@@ -96,7 +100,7 @@ export class Arena {
   private _breakTriggered = false; // debounce: only one prompt at a time
 
   /** Base pool size for Haiku (1.0×). Scales up proportionally for costlier models. */
-  private static readonly BASE_POOL = 10_000_000;
+  private static readonly BASE_POOL = 5_000_000;
 
   /** Pool size scaled to the configured model's token cost. */
   private scaledPoolSize(): number {
@@ -114,14 +118,15 @@ export class Arena {
       regenPerCycle: config.poolRegenPerCycle,
       maxBalance: config.poolMaxBalance ?? scaledPool,
     });
-    this.challengeGenerator = new ChallengeGenerator();
-    this.challengePool = new ChallengePool("", this.challengeGenerator); // sharedDir set in start()/resume()
-    this.iterator = new ConfigIterator(this.llm);
+    this.rng = config.seed != null ? new SeededRng(config.seed) : undefined;
+    this.challengeGenerator = new ChallengeGenerator(this.rng);
+    this.challengePool = new ChallengePool("", this.challengeGenerator, this.rng?.fork()); // sharedDir set in start()/resume()
+    this.iterator = new ConfigIterator(this.llm, this.rng?.fork());
   }
 
   /** Scale pool regen rate sublinearly with population to create carrying capacity. */
   private calibratePool(): void {
-    const BASE_REGEN_PER_AGENT = 100_000;
+    const BASE_REGEN_PER_AGENT = 50_000;
     const entries = Array.from(this.agents.values()).filter(e => e.active);
     if (entries.length === 0) return;
 
@@ -147,7 +152,7 @@ export class Arena {
 
     // Initialize challenge pool with shared directory
     const sharedDir = resolve(join(this.runDir, "shared"));
-    this.challengePool = new ChallengePool(sharedDir, this.challengeGenerator);
+    this.challengePool = new ChallengePool(sharedDir, this.challengeGenerator, this.rng?.fork());
 
     // Keep a stable "latest" symlink pointing to this run
     const latestLink = join(this.config.workspaceRoot, "latest");
@@ -175,10 +180,14 @@ export class Arena {
       try {
         const ancestor = await AgentStateManager.load(seedPath);
 
-        // Only carry over procedural and semantic memories — episodic memories
-        // are context-specific to the parent's task and pollute the new context
+        // Carry over procedural, semantic, and high-value episodic memories.
+        // Low-importance episodic is context-specific noise, but high-importance
+        // episodes carry operational knowledge not yet crystallized.
+        const EPISODIC_INHERIT_THRESHOLD = 0.8;
         const distilled = new MemoryStore(
-          ancestor.memories.memories.filter((m) => m.type !== "episodic"),
+          ancestor.memories.memories.filter(
+            (m) => m.type !== "episodic" || m.importance >= EPISODIC_INHERIT_THRESHOLD,
+          ),
         );
 
         const totalMem = ancestor.memories.memories.length;
@@ -233,7 +242,7 @@ export class Arena {
     // Restore challenge pool
     const sharedDir = resolve(join(this.runDir, "shared"));
     const challengeStatePath = join(sharedDir, "challenges", "_state.json");
-    this.challengePool = ChallengePool.restore(challengeStatePath, sharedDir, this.challengeGenerator);
+    this.challengePool = ChallengePool.restore(challengeStatePath, sharedDir, this.challengeGenerator, this.rng?.fork());
 
     // Kill any orphaned containers from this run
     const agentDirs = readdirSync(this.runDir).filter((d) => d.startsWith("agent-"));
@@ -685,9 +694,15 @@ echo "__VERIFY__"`;
     const requestedBonus = Math.floor(reserves * BONUS_RATIO);
     const poolBonus = await this.teqPool.withdraw(requestedBonus, id);
 
-    // Inherit procedural + semantic memories (episodic is context-specific)
+    // Inherit procedural + semantic memories, plus high-value episodic.
+    // Low-importance episodic is context-specific noise, but high-importance
+    // episodes (successes, critical discoveries) carry operational knowledge
+    // that the agent may not have crystallized into procedural rules yet.
+    const EPISODIC_INHERIT_THRESHOLD = 0.8;
     const inheritedMemories = new MemoryStore(
-      entry.state.memories.memories.filter((m) => m.type !== "episodic"),
+      entry.state.memories.memories.filter(
+        (m) => m.type !== "episodic" || m.importance >= EPISODIC_INHERIT_THRESHOLD,
+      ),
     );
 
     // Origin memory — copy knows where it came from (factual, not prescriptive)
