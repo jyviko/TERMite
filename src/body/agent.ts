@@ -10,7 +10,7 @@ import { createInterface } from "node:readline";
 const WORKSPACE = "/workspace";
 const TOOLS_DIR = "/workspace/tools";
 const MAX_OUTPUT = 4000;
-const SHELL_TIMEOUT = 30_000;
+const SHELL_TIMEOUT = 60_000;
 
 interface Command {
   id: string;

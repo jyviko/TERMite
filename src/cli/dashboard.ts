@@ -25,7 +25,7 @@ const workspaceRoot = values.workspace ?? "./arena-workspace";
 const REFRESH_INTERVAL = parseInt(values.interval ?? "1500", 10);
 
 let hideDead = false;
-let tierFilter: number | null = null; // null = show all, 1-6 = show only that tier
+let solvedFilter: number | null = null; // null = show all, N = show agents with exactly N solved
 
 /** Find the latest run-* directory, or use --run if specified */
 function findRunDir(): string {
@@ -171,7 +171,7 @@ function loadAgents(): AgentData[] {
       } catch {
         // No metrics file — legacy state.json may still have cycleHistory
       }
-      // Merge live tier from census (entry.json only exists after death/shutdown)
+      // Merge live challenge data from census
       const id = String(state.id ?? state.agent_id ?? "");
       const cEntry = census.get(id);
       if (cEntry) {
@@ -419,8 +419,8 @@ function render(): string {
 
   const allOrgs = loadAgents();
   let orgs = hideDead ? allOrgs.filter((o) => Boolean(g(o, "active"))) : allOrgs;
-  if (tierFilter !== null) {
-    orgs = orgs.filter((o) => gn(o, "_challengesSolved") >= (tierFilter ?? 0));
+  if (solvedFilter !== null) {
+    orgs = orgs.filter((o) => gn(o, "_challengesSolved") >= solvedFilter!);
   }
   const deadCount = allOrgs.length - allOrgs.filter((o) => Boolean(g(o, "active"))).length;
 
@@ -508,8 +508,8 @@ function render(): string {
 
   // Footer
   const deadLabel = hideDead ? `${deadCount} hidden` : `${deadCount} dead`;
-  const tierLabel = tierFilter !== null ? `T${tierFilter}` : "all";
-  safe(buf, height - 1, 0, ` [q]uit [d]ead [1-6]tier [0]all  ${n}/${allOrgs.length} shown (${deadLabel}) tier:${tierLabel}`, CYAN);
+  const solvedLabel = solvedFilter !== null ? `>=${solvedFilter}` : "all";
+  safe(buf, height - 1, 0, ` [q]uit [d]ead [1-9]solved>= [0]all  ${n}/${allOrgs.length} shown (${deadLabel}) solved:${solvedLabel}`, CYAN);
 
   return buf.join("");
 }
@@ -531,11 +531,11 @@ if (process.stdin.isTTY) {
     } else if (key === "d" || key === "D") {
       hideDead = !hideDead;
       tick();
-    } else if (key >= "1" && key <= "6") {
-      tierFilter = tierFilter === Number(key) ? null : Number(key);
+    } else if (key >= "1" && key <= "9") {
+      solvedFilter = solvedFilter === Number(key) ? null : Number(key);
       tick();
     } else if (key === "0") {
-      tierFilter = null;
+      solvedFilter = null;
       tick();
     }
   });
