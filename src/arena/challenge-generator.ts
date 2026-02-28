@@ -450,26 +450,29 @@ function generateFixPythonData(): Record<string, string> {
 function generateFixBashData(): Record<string, string> {
   const variants = [
     () => {
-      const items = Array.from({ length: randomInt(5, 15) }, () => `item ${randomInt(1, 100)}`);
+      // Bug: count starts at 1 instead of 0 (off-by-one)
+      const items = Array.from({ length: randomInt(5, 15) }, () => `item_${randomInt(1, 100)}`);
       return {
-        script: `#!/bin/bash\ncount=0\nfor f in ${items.join(" ")}; do\n  count=$((count + 1))\ndone\necho $count`,
+        script: `#!/bin/bash\ncount=1\nfor f in ${items.join(" ")}; do\n  count=$((count + 1))\ndone\necho $count`,
         expected: String(items.length),
       };
     },
     () => {
+      // Bug: adds i+1 instead of i (extra +1 per iteration)
       const n = randomInt(5, 20);
       const expected = ((n * (n + 1)) / 2);
       return {
-        script: `#!/bin/bash\nsum=0\nfor i in $(seq 1 ${n}); do\n  sum=$((sum + i))\ndone\necho "$sum"`,
+        script: `#!/bin/bash\nsum=0\nfor i in $(seq 1 ${n}); do\n  sum=$((sum + i + 1))\ndone\necho "$sum"`,
         expected: String(expected),
       };
     },
     () => {
+      // Bug: -lt instead of -gt (finds min instead of max)
       const values = Array.from({ length: randomInt(5, 10) }, () => randomInt(1, 100));
       let max = values[0]!;
       for (const v of values) if (v > max) max = v;
       return {
-        script: `#!/bin/bash\nvalues=(${values.join(" ")})\nmax=\${values[0]}\nfor v in "\${values[@]}"; do\n  if [ $v -gt $max ]; then\n    max=$v\n  fi\ndone\necho $max`,
+        script: `#!/bin/bash\nvalues=(${values.join(" ")})\nmax=\${values[0]}\nfor v in "\${values[@]}"; do\n  if [ "$v" -lt "$max" ]; then\n    max=$v\n  fi\ndone\necho $max`,
         expected: String(max),
       };
     },
@@ -489,11 +492,12 @@ function generateFixNodeData(): Record<string, string> {
       };
     },
     () => {
-      const strings = ["10", "9", "20", "3", "15", "7", "100", "1"];
-      const expected = strings.map(s => parseInt(s, 10)).filter(n => n > 5);
+      // Bug: accumulator initialized as "" causes string concat instead of addition
+      const nums = Array.from({ length: randomInt(4, 8) }, () => randomInt(1, 50));
+      const expected = nums.reduce((a, b) => a + b, 0);
       return {
-        script: `const data = ${JSON.stringify(strings)};\nconst result = data.map(s => parseInt(s)).filter(n => n > 5);\nconsole.log(result.join(","));`,
-        expected: expected.join(","),
+        script: `const nums = ${JSON.stringify(nums)};\nlet total = "";\nfor (const n of nums) { total += n; }\nconsole.log(total);`,
+        expected: String(expected),
       };
     },
     () => {
@@ -817,18 +821,31 @@ function generateHexDumpData(): Record<string, string> {
 function generateChecksumData(): Record<string, string> {
   const lines: string[] = [];
   const checksums: string[] = [];
-  const badLines: number[] = [];
+  let badLines: number[] = [];
   const lineCount = randomInt(10, 20);
   for (let i = 0; i < lineCount; i++) {
     const line = `Line ${i + 1}: data_${randomInt(1000, 9999)}`;
     lines.push(line);
-    // Simple checksum: sum of char codes mod 10000
     const checksum = Array.from(line).reduce((s, c) => s + c.charCodeAt(0), 0);
     if (Math.random() < 0.3) {
       checksums.push(`${checksum + randomInt(1, 100)}`);
       badLines.push(i + 1);
     } else {
       checksums.push(`${checksum}`);
+    }
+  }
+  // Guarantee at least 2 bad lines
+  if (badLines.length < 2) {
+    badLines = [];
+    for (let i = 0; i < checksums.length; i++) {
+      const line = lines[i]!;
+      const correct = Array.from(line).reduce((s, c) => s + c.charCodeAt(0), 0);
+      if (i < 2) {
+        checksums[i] = `${correct + randomInt(1, 100)}`;
+        badLines.push(i + 1);
+      } else {
+        checksums[i] = `${correct}`;
+      }
     }
   }
   return {
@@ -1276,6 +1293,18 @@ interface ChallengeTemplate {
 // ODIR = agent output dir (per-agent workspace)
 function paths(id: string): string {
   return `CDIR="/shared/challenges/${id}"\nODIR="/workspace/output/${id}"`;
+}
+
+// Helper: merge challenge data + agent output into a temp dir for code-fixing challenges.
+// Copies all challenge files first, then overlays agent output (fixed files overwrite originals).
+// Agent only needs to write files they changed — unchanged files come from challenge data.
+function mergedRun(id: string): string {
+  return `${paths(id)}
+WDIR=$(mktemp -d)
+trap 'rm -rf "$WDIR"' EXIT
+cp "$CDIR"/* "$WDIR/" 2>/dev/null
+cp "$ODIR"/* "$WDIR/" 2>/dev/null
+rm -f "$WDIR/.expected"`;
 }
 
 const TEMPLATES: ChallengeTemplate[] = [
@@ -1785,9 +1814,9 @@ if [ "$ALICE_LINE" -lt "$BOB_LINE" ]; then echo "PASS"; exit 0; else echo "FAIL:
     category: "discovery",
     difficulty: 2,
     makeVerifyScript: (id) => `#!/bin/bash
-${paths(id)}
+${mergedRun(id)}
 EXPECTED=$(cat "$CDIR/.expected")
-ACTUAL=$(cd "$ODIR" && python3 script.py 2>&1 | tr -d '[:space:]')
+ACTUAL=$(cd "$WDIR" && python3 script.py 2>&1 | tr -d '[:space:]')
 EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
 if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/script.py — fix the python script so it produces correct output"; exit 1; fi`,
     dataGenerator: generateFixPythonData,
@@ -1797,9 +1826,9 @@ if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: 
     category: "discovery",
     difficulty: 2,
     makeVerifyScript: (id) => `#!/bin/bash
-${paths(id)}
+${mergedRun(id)}
 EXPECTED=$(cat "$CDIR/.expected")
-ACTUAL=$(cd "$ODIR" && bash script.sh 2>&1 | tr -d '[:space:]')
+ACTUAL=$(cd "$WDIR" && bash script.sh 2>&1 | tr -d '[:space:]')
 EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
 if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/script.sh — fix the bash script so it produces correct output"; exit 1; fi`,
     dataGenerator: generateFixBashData,
@@ -1809,9 +1838,9 @@ if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: 
     category: "discovery",
     difficulty: 3,
     makeVerifyScript: (id) => `#!/bin/bash
-${paths(id)}
+${mergedRun(id)}
 EXPECTED=$(cat "$CDIR/.expected")
-ACTUAL=$(cd "$ODIR" && node script.js 2>&1 | tr -d '[:space:]')
+ACTUAL=$(cd "$WDIR" && node script.js 2>&1 | tr -d '[:space:]')
 EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
 if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/script.js — fix the node script so it produces correct output"; exit 1; fi`,
     dataGenerator: generateFixNodeData,
@@ -1821,9 +1850,9 @@ if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: 
     category: "discovery",
     difficulty: 3,
     makeVerifyScript: (id) => `#!/bin/bash
-${paths(id)}
+${mergedRun(id)}
 EXPECTED=$(cat "$CDIR/.expected")
-ACTUAL=$(cd "$ODIR" && python3 main.py 2>&1 | tr -d '[:space:]')
+ACTUAL=$(cd "$WDIR" && python3 main.py 2>&1 | tr -d '[:space:]')
 EXPECTED_TRIM=$(echo "$EXPECTED" | tr -d '[:space:]')
 if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/helpers.py — implement the missing function so main.py runs correctly"; exit 1; fi`,
     dataGenerator: generateMissingFunctionData,
@@ -1833,9 +1862,9 @@ if [ "$ACTUAL" = "$EXPECTED_TRIM" ]; then echo "PASS"; exit 0; else echo "FAIL: 
     category: "discovery",
     difficulty: 4,
     makeVerifyScript: (id) => `#!/bin/bash
-${paths(id)}
+${mergedRun(id)}
 EXPECTED=$(cat "$CDIR/.expected")
-ACTUAL=$(cd "$ODIR" && python3 main.py 2>&1)
+ACTUAL=$(cd "$WDIR" && python3 main.py 2>&1)
 if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/ — fix bugs across the python files so main.py produces correct output"; exit 1; fi`,
     dataGenerator: generateDebugMultifileData,
   },
@@ -1844,9 +1873,9 @@ if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: outpu
     category: "compositional",
     difficulty: 5,
     makeVerifyScript: (id) => `#!/bin/bash
-${paths(id)}
+${mergedRun(id)}
 EXPECTED=$(cat "$CDIR/.expected")
-ACTUAL=$(cd "$ODIR" && python3 main.py 2>&1)
+ACTUAL=$(cd "$WDIR" && python3 main.py 2>&1)
 if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0; else echo "FAIL: output/${id}/ — fix bugs and implement features from SPEC.md so main.py produces correct output"; exit 1; fi`,
     dataGenerator: generateFixAndExtendData,
   },
