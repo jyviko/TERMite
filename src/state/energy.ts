@@ -141,8 +141,8 @@ export class EnergyLedger {
     return added;
   }
 
-  computeBaseCost(memoryTokens: number, toolCount = 0): number {
-    this.baseCost = 50 + Math.floor(memoryTokens / 10) + toolCount * 20;
+  computeBaseCost(memoryTokens: number, toolCount = 0, baseFloor = 50): number {
+    this.baseCost = baseFloor + Math.floor(memoryTokens / 10) + toolCount * 20;
     return this.baseCost;
   }
 

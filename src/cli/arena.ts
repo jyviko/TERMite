@@ -55,7 +55,19 @@ async function main() {
   }
 
   const agentCount = parseInt(values.agents ?? "3", 10);
-  const totalBudget = parseInt(values.budget ?? "500000", 10);
+
+  // Default per-agent starting budget scales with model cost so agents have enough
+  // runway to discover and solve challenges before running out. Base is 500K per agent
+  // for Haiku (1×); Sonnet agents get 1.5M each (3×); Opus gets 2.5M each (5×).
+  const BASE_PER_AGENT_BUDGET = 500_000;
+  const modelMultiplier = (() => {
+    const m = values.model ?? "";
+    if (m.includes("opus")) return 5;
+    if (m.includes("sonnet")) return 3;
+    return 1; // haiku or unspecified
+  })();
+  const defaultBudget = BASE_PER_AGENT_BUDGET * modelMultiplier * agentCount;
+  const totalBudget = parseInt(values.budget ?? String(defaultBudget), 10);
 
   const MODEL_IDS: Record<string, string> = {
     haiku: "claude-haiku-4-5-20251001",

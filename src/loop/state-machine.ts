@@ -8,7 +8,7 @@ import type { Executor } from "../executor/index.js";
 import type { DriveSystem } from "../state/drives.js";
 import { AgentStateManager } from "../state/agent-state.js";
 import { AgenticLoop, type ToolExecutor } from "./agentic-loop.js";
-import { Resolver, computeIncome } from "./resolve.js";
+import { Resolver, computeIncome, lookupBountyMultiplier } from "./resolve.js";
 import { runMemorizePhase, applyMemorizeOperations } from "./memorize.js";
 import type { TEQPool } from "../arena/teq-pool.js";
 
@@ -196,7 +196,11 @@ export class AgentStateMachine {
       DRIVE_NAMES.map((n) => [n, this.state.drives.drives[n].level]),
     ) as Record<DriveName, number>;
 
-    this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.availableToolCount);
+    // Base floor scales with model cost: 250 for Haiku (1×), 750 for Sonnet (3×), 1250 for Opus (5×).
+    // Prevents cheap models from idling indefinitely at near-zero overhead.
+    const BASE_FLOOR = 250;
+    const modelFloor = Math.floor(BASE_FLOOR * lookupBountyMultiplier(this.state.config.routing.thinking.model));
+    this.state.energy.computeBaseCost(this.state.memories.totalTokenCost, this.availableToolCount, modelFloor);
     this.state.drives.update(
       this.state.energy,
       this.state.memories.memories,
