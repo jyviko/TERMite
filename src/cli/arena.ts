@@ -8,6 +8,7 @@ loadEnv();
 
 const { values } = parseArgs({
   options: {
+    help: { type: "boolean", short: "h", default: false },
     agents: { type: "string", default: "3" },
     budget: { type: "string" },
     workspace: { type: "string", default: "./arena-workspace" },
@@ -28,6 +29,39 @@ const { values } = parseArgs({
     "env-seed": { type: "string" },
   },
 });
+
+if (values.help) {
+  console.log(`
+Usage: yarn arena [options]
+
+Options:
+  --agents <n>              Number of agents to spawn (default: 3)
+  --model <name>            Model shorthand: haiku | sonnet | opus (default: haiku)
+  --budget <n>              Total shared TEQ budget across all agents
+  --workspace <path>        Arena workspace directory (default: ./arena-workspace)
+  --seed <path>             Seed an agent from a state.json path (repeatable)
+  --resume <run>            Resume a previous run: path, run ID, or "latest"
+
+  --pool-balance <n>        Override initial pool balance
+  --pool-regen <n>          Override pool regen per tick (disables auto-calibration)
+  --pool-max <n>            Override pool max balance
+
+  --max-cycles <n>          Pause and prompt after this many cumulative cycles
+  --break-cycles <n>        Subsequent pause interval (default: same as --max-cycles)
+
+  --snapshot-interval <s>   Snapshot interval in seconds
+  --no-snapshots            Disable snapshotting entirely
+  --list-snapshots          List snapshots for a run (requires --resume)
+  --rewind <id>             Rewind a run to a snapshot (requires --resume)
+
+  --api-key <key>           Anthropic API key (default: \$ANTHROPIC_API_KEY)
+  --base-url <url>          API base URL override
+  --env-seed <n>            Fixed seed for environment randomness (reproducibility)
+
+  -h, --help                Show this help message
+`);
+  process.exit(0);
+}
 
 async function main() {
   const workspaceRoot = values.workspace ?? "./arena-workspace";

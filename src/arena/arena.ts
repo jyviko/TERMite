@@ -126,7 +126,7 @@ export class Arena {
 
   /** Scale pool regen rate sublinearly with population to create carrying capacity. */
   private calibratePool(): void {
-    const BASE_REGEN_PER_AGENT = 50_000;
+    const BASE_REGEN_PER_AGENT = 10_000;
     const entries = Array.from(this.agents.values()).filter(e => e.active);
     if (entries.length === 0) return;
 
