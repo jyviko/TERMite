@@ -23,6 +23,8 @@ const { values } = parseArgs({
     "no-snapshots": { type: "boolean", default: false },
     "list-snapshots": { type: "boolean", default: false },
     rewind: { type: "string" },
+    "max-cycles": { type: "string" },
+    "break-cycles": { type: "string" },
   },
 });
 
@@ -97,6 +99,8 @@ async function main() {
     poolMaxBalance: values["pool-max"] ? parseInt(values["pool-max"], 10) : undefined,
     snapshotIntervalMs,
     noSnapshots: values["no-snapshots"],
+    maxCycles: values["max-cycles"] ? parseInt(values["max-cycles"], 10) : undefined,
+    breakCycles: values["break-cycles"] ? parseInt(values["break-cycles"], 10) : undefined,
   });
 
   const shutdown = async () => {

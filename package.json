@@ -11,7 +11,9 @@
     "live": "tsx src/cli/live.ts",
     "arena": "tsx src/cli/arena.ts",
     "dash": "tsx src/cli/dashboard.ts",
-    "report": "tsx src/cli/report.ts"
+    "report": "tsx src/cli/report.ts",
+    "interrogate": "tsx interrogate.ts arena-workspace/latest/agent-*/state.json",
+    "analyze": "python3 -m analysis.run arena-workspace/latest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2"

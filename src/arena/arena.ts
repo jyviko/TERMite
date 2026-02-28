@@ -1,4 +1,5 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync, readdirSync, symlinkSync, unlinkSync, lstatSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -37,6 +38,8 @@ export interface ArenaConfig {
   poolMaxBalance?: number;
   snapshotIntervalMs?: number;
   noSnapshots?: boolean;
+  maxCycles?: number;
+  breakCycles?: number;
 }
 
 // ANSI color palette for per-agent log coloring
@@ -85,6 +88,12 @@ export class Arena {
   private config: ArenaConfig;
   private runDir = "";
   private snapshots: SnapshotManager | null = null;
+
+  // Cycle breakpoint state
+  private _pauseGate: Promise<void> | null = null;
+  private _pauseResolve: (() => void) | null = null;
+  private _nextBreakAt: number | null = null;
+  private _breakTriggered = false; // debounce: only one prompt at a time
 
   /** Base pool size for Haiku (1.0×). Scales up proportionally for costlier models. */
   private static readonly BASE_POOL = 10_000_000;
@@ -139,6 +148,11 @@ export class Arena {
     // Initialize challenge pool with shared directory
     const sharedDir = resolve(join(this.runDir, "shared"));
     this.challengePool = new ChallengePool(sharedDir, this.challengeGenerator);
+
+    // Keep a stable "latest" symlink pointing to this run
+    const latestLink = join(this.config.workspaceRoot, "latest");
+    try { unlinkSync(latestLink); } catch { /* didn't exist or wasn't a symlink */ }
+    symlinkSync(this.runDir, latestLink);
 
     console.log(`Run directory: ${this.runDir}`);
 
@@ -339,8 +353,45 @@ export class Arena {
     this.calibratePool();
   }
 
+  private pauseAgents(): void {
+    if (this._pauseGate) return; // already paused
+    this._pauseGate = new Promise<void>((resolve) => {
+      this._pauseResolve = resolve;
+    });
+  }
+
+  private resumeAgents(): void {
+    this._pauseResolve?.();
+    this._pauseGate = null;
+    this._pauseResolve = null;
+  }
+
+  private totalCycles(): number {
+    let sum = 0;
+    for (const entry of this.agents.values()) sum += entry.state.cycleCount;
+    return sum;
+  }
+
+  private async promptContinue(cycleCount: number): Promise<boolean> {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise<boolean>((resolve) => {
+      rl.question(
+        `\n\x1b[33m[ARENA BREAKPOINT]\x1b[0m ${cycleCount} cumulative cycles reached. Continue? [Y/n] `,
+        (answer) => {
+          rl.close();
+          resolve(answer.trim().toLowerCase() !== "n");
+        },
+      );
+    });
+  }
+
   async run(): Promise<void> {
     const poolPath = join(this.runDir, "shared", "_pool.json");
+
+    // Initialize cycle breakpoint
+    if (this.config.maxCycles != null) {
+      this._nextBreakAt = this.config.maxCycles;
+    }
 
     // Regeneration timer: every 10s, add TEQs, refresh challenges, persist state
     // Only regenerate when at least one agent has completed a cycle (is actively running)
@@ -358,6 +409,25 @@ export class Arena {
         this.challengePool.persist(challengeStatePath);
       }
       await this.teqPool.persist(poolPath).catch(() => {});
+
+      // Cycle breakpoint check
+      if (this._nextBreakAt != null && !this._breakTriggered) {
+        const total = this.totalCycles();
+        if (total >= this._nextBreakAt) {
+          this._breakTriggered = true;
+          this.pauseAgents();
+          const cont = await this.promptContinue(total);
+          if (!cont) {
+            this.resumeAgents();
+            await this.shutdown();
+            process.exit(0);
+          }
+          const interval = this.config.breakCycles ?? this.config.maxCycles ?? 50;
+          this._nextBreakAt = total + interval;
+          this._breakTriggered = false;
+          this.resumeAgents();
+        }
+      }
     }, 10_000);
 
     // Peer visibility timer: every 15s, write census + peer tools
@@ -505,6 +575,9 @@ export class Arena {
   private async runAgent(id: string, entry: AgentEntry): Promise<void> {
     try {
       for await (const event of entry.stateMachine.run()) {
+        // Honour pause gate (cycle breakpoints)
+        if (this._pauseGate) await this._pauseGate;
+
         this.logEvent(id, entry.state.mode, event);
 
         // Check shared budget
