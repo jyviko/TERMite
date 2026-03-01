@@ -12,7 +12,7 @@ function defaultDrive(name: DriveName): Drive {
     acquire:    { level: 0.40, threshold: 0.25, decayRate: 0.05, growthRate: 0.15 },
     // Grow + coordinate start latent — activate through conditions
     grow:       { level: 0.10, threshold: 0.25, decayRate: 0.04, growthRate: 0.12 },
-    coordinate: { level: 0.10, threshold: 0.25, decayRate: 0.04, growthRate: 0.08 },
+    coordinate: { level: 0.10, threshold: 0.15, decayRate: 0.04, growthRate: 0.08 },
   };
   return { name, ...configs[name] };
 }
@@ -89,10 +89,11 @@ export class DriveSystem {
       grow.level -= grow.decayRate;
     }
 
-    // ── Coordinate: rises when grow is sustained above threshold ──
+    // ── Coordinate: rises on surplus (grow) or stagnation (explore) ──
+    const coordinateSignal = grow.level >= grow.threshold || explore.level >= explore.threshold;
     const coordinateGate = hasPostSplitContext
-      ? (grow.level >= grow.threshold && cycleCount >= 2)
-      : (grow.level >= grow.threshold && cycleCount >= 3);
+      ? (coordinateSignal && cycleCount >= 2)
+      : (coordinateSignal && cycleCount >= 3);
 
     if (coordinateGate) {
       coordinate.level += coordinate.growthRate;
@@ -162,7 +163,7 @@ export class DriveSystem {
 
   driveToGoal(drive: Drive): string {
     const goals: Record<DriveName, string> = {
-      explore: "Unmapped territory detected.",
+      explore: "Stagnation detected.",
       acquire: "Energy deficit.",
       grow: "Sustained surplus.",
       coordinate: "Other agents detected.",

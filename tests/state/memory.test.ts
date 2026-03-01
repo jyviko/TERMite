@@ -165,18 +165,19 @@ describe("MemoryStore", () => {
   });
 
   it("formatMetadataOnly marks budget-excluded memories", () => {
-    // Add memories with varying importance
-    store.add("high value fact", "procedural", 0.9, "Cycle 1");
-    store.add("low value noise", "episodic", 0.1, "Cycle 2");
+    // Episodic floor is unconditional — add two procedurals so one gets excluded from scored budget
+    store.add("recent cycle log", "episodic", 0.1, "Cycle 1");
+    store.add("high value fact", "procedural", 0.9, "Cycle 2");
+    store.add("another fact", "procedural", 0.8, "Cycle 3");
 
-    // formatAsMessages with tiny budget — only one memory fits (~6 tokens each)
+    // Tiny scored budget — only one procedural fits; episodic always included outside budget
     store.formatAsMessages(8);
 
     const output = store.formatMetadataOnly();
     const lines = output.split("\n");
-    // One line should have [not in context], the other should not
     const inContext = lines.filter((l) => !l.includes("[not in context]"));
     const excluded = lines.filter((l) => l.includes("[not in context]"));
+    // Episodic floor + one procedural in context; the other procedural excluded
     expect(inContext.length).toBeGreaterThanOrEqual(1);
     expect(excluded.length).toBeGreaterThanOrEqual(1);
   });

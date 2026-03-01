@@ -747,12 +747,24 @@ echo "__VERIFY__"`;
 
     const MIN_VIABLE_COPY = 20_000;
     const BONUS_RATIO = 0.1; // 10% of source reserves, from TEQ pool
-    const INVESTMENT_RATIO = 0.5; // Source invests 50% of reserves in copy
+
+    // Agent chooses investment stake: 25, 50, or 75% of reserves.
+    // Parse from first token of directive; default to 50%.
+    const VALID_PCTS = new Set([25, 50, 75]);
+    let investPct = 50;
+    let actualDirective = directive ?? "";
+    const firstToken = actualDirective.trim().split(/\s+/)[0] ?? "";
+    const parsedPct = parseInt(firstToken, 10);
+    if (VALID_PCTS.has(parsedPct)) {
+      investPct = parsedPct;
+      actualDirective = actualDirective.slice(firstToken.length).trim();
+    }
+
     const reserves = entry.state.energy.reserves;
-    const investment = Math.floor(reserves * INVESTMENT_RATIO);
+    const investment = Math.floor(reserves * (investPct / 100));
 
     if (investment < MIN_VIABLE_COPY) {
-      return `FORK_DENIED: insufficient reserves (copy needs at least ${MIN_VIABLE_COPY} TEQ, you have ${reserves})`;
+      return `FORK_DENIED: insufficient reserves (copy would receive ${investment.toLocaleString()} TEQ at ${investPct}%, minimum is ${MIN_VIABLE_COPY.toLocaleString()}, you have ${reserves.toLocaleString()})`;
     }
 
     // Pool bonus — environment subsidizes splits via TEQ pool
@@ -787,7 +799,7 @@ echo "__VERIFY__"`;
         memories: entry.state.memories.memories,
         challengeHistory: entry.challengeHistory,
         generation: entry.state.generation,
-        directive: directive || undefined,
+        directive: actualDirective || undefined,
       });
 
       // Source invests half its reserves; copy gets investment + pool bonus
@@ -799,12 +811,12 @@ echo "__VERIFY__"`;
 
       const gen = entry.state.generation + 1;
       console.log(
-        `[ARENA] ${id} split → ${copy} (gen ${gen}, invested ${investment} + ${poolBonus} bonus = ${copyReserves} TEQ)`,
+        `[ARENA] ${id} split → ${copy} (gen ${gen}, ${investPct}% = ${investment} + ${poolBonus} bonus = ${copyReserves} TEQ)`,
       );
 
       // Source records the split
       entry.state.memories.add(
-        `Split at cycle ${entry.state.cycleCount}. Invested ${investment.toLocaleString()} TEQ. ` +
+        `Split at cycle ${entry.state.cycleCount}. Invested ${investPct}% (${investment.toLocaleString()} TEQ). ` +
         `Copy ${copy} created with ${copyReserves.toLocaleString()} TEQ. ` +
         `Remaining reserves: ${entry.state.energy.reserves.toLocaleString()} TEQ.`,
         "semantic",

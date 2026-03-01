@@ -22,6 +22,7 @@ export interface LoopConfig {
 
 const DEFAULT_MAX_ITERATIONS = 99;
 const TOOL_RESULT_RETENTION_COUNT = 6;
+const MAX_TOOL_RESULT_CHARS = 12_000; // ~3k tokens — prevents runaway shell output from blowing context
 
 export class AgenticLoop {
   private llm: LLM;
@@ -184,10 +185,14 @@ export class AgenticLoop {
 
         yield { type: "tool_result", name: toolBlock.name, result };
 
+        const truncated = result.length > MAX_TOOL_RESULT_CHARS
+          ? result.slice(0, MAX_TOOL_RESULT_CHARS) + `\n[...truncated ${result.length - MAX_TOOL_RESULT_CHARS} chars]`
+          : result;
+
         toolResults.push({
           type: "tool_result",
           tool_use_id: toolBlock.id,
-          content: result,
+          content: truncated,
         });
       }
 

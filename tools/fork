@@ -1,3 +1,11 @@
 #!/bin/bash
-# description: fork - Split. Create a copy with your memories, tools, and state. Costs 50% of your reserves. Optional input: guidance for the copy's configuration.
-echo "__FORK__"
+# description: fork - Create an independent copy with your memories and tools. Both agents earn independently; you can later coordinate via signals or peers. Input: investment % (25, 50, or 75) and optional guidance, e.g. "50 focus on signals" or "25". Costs that % of your current reserves.
+INPUT="$(cat)"
+PCT="${INPUT%% *}"
+case "$PCT" in
+  25|50|75) ;;
+  *) PCT=50 ;;
+esac
+DIRECTIVE="${INPUT#* }"
+[ "$DIRECTIVE" = "$INPUT" ] && DIRECTIVE=""
+echo "__FORK__ $PCT${DIRECTIVE:+ $DIRECTIVE}"

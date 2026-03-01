@@ -158,27 +158,28 @@ describe("DriveSystem", () => {
     expect(ds.drives.grow.level).toBeGreaterThan(ds2.drives.grow.level);
   });
 
-  it("coordinate activates when grow exceeds threshold and agent is mature", () => {
-    const ds = new DriveSystem();
-    const energy = new EnergyLedger({ budget: 100000, reserves: 50000, capacity: 100000 });
+  it("coordinate activates via explore pathway (stagnation) and grow pathway (surplus)", () => {
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
 
-    // No profitable cycles → grow stays low → coordinate should decay
-    ds.update(energy, [], 5, 0);
-    const levelNoGrow = ds.drives.coordinate.level;
+    // Stagnation pathway: explore stays high → coordinate gate opens even without surplus
+    const dsExplore = new DriveSystem();
+    const energyFlat = new EnergyLedger({ budget: 100000, reserves: 50000, capacity: 100000 });
+    // No income → grow stays low, explore stays elevated
+    dsExplore.update(energyFlat, [], 5, 0);
+    expect(dsExplore.drives.explore.level).toBeGreaterThan(dsExplore.drives.explore.threshold);
+    expect(dsExplore.drives.coordinate.level).toBeGreaterThan(0.10); // gate opened via explore
 
-    // Profitable cycles push grow above threshold
+    // Surplus pathway: profitable cycles push grow above threshold
+    const dsGrow = new DriveSystem();
+    const energyRich = new EnergyLedger({ budget: 100000, reserves: 50000, capacity: 100000 });
     for (let i = 0; i < 10; i++) {
-      energy.burn(h, u);
-      energy.credit(5000);
-      energy.endCycle(i, "partial", "");
+      energyRich.burn(h, u);
+      energyRich.credit(5000);
+      energyRich.endCycle(i, "partial", "");
     }
-
-    // Fresh system with profitable history → grow pressure opens coordinate gate
-    const ds2 = new DriveSystem();
-    ds2.update(energy, [], 10, 0);
-    expect(ds2.drives.coordinate.level).toBeGreaterThan(levelNoGrow);
+    dsGrow.update(energyRich, [], 10, 0);
+    expect(dsGrow.drives.coordinate.level).toBeGreaterThan(0.10); // gate opened via grow
   });
 
   it("coordinate gate relaxes with split history", () => {
@@ -257,7 +258,7 @@ describe("DriveSystem", () => {
     const ds = new DriveSystem();
     const active = ds.activeDrives();
     // explore (0.40) and acquire (0.40) are above threshold (0.25)
-    // grow (0.10) and coordinate (0.10) are below threshold (0.25)
+    // grow (0.10) is below threshold (0.25); coordinate (0.10) is below threshold (0.15)
     expect(active.length).toBe(2);
     expect(active.map((d) => d.name)).toContain("explore");
     expect(active.map((d) => d.name)).toContain("acquire");
@@ -274,7 +275,7 @@ describe("DriveSystem", () => {
   it("driveToGoal returns a goal string", () => {
     const ds = new DriveSystem();
     const goal = ds.driveToGoal(ds.drives.explore);
-    expect(goal).toContain("Unmapped");
+    expect(goal).toContain("Stagnation");
   });
 
   it("serializes and deserializes with phase tracking", () => {

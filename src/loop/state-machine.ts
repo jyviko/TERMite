@@ -14,6 +14,8 @@ import { parseMemorizeResponse, applyMemorizeOperations, type MemorizeOps } from
 import type { TEQPool } from "../arena/teq-pool.js";
 
 const BASE_MEMORY_TOKEN_BUDGET = 4000;
+const MODEL_CONTEXT_WINDOW = 200_000;
+const PROMPT_OVERHEAD = 40_000; // system prompt + tools + awareness + in-cycle tool pairs + margin
 
 // ── Per-cycle mutable state ─────────────────────────────────────────
 
@@ -238,8 +240,13 @@ export class AgentStateMachine {
     };
 
     // Build messages: memory pairs (conversation history) + current awareness
-    // Agents that earn more get bigger memory budgets — compound interest
-    const memoryBudget = BASE_MEMORY_TOKEN_BUDGET + Math.floor(this.state.energy.earned / 200);
+    // Agents that earn more get bigger memory budgets — compound interest,
+    // capped so system + tools + memories + response never exceed the context window.
+    const maxMemoryBudget = MODEL_CONTEXT_WINDOW - route.maxTokens - PROMPT_OVERHEAD;
+    const memoryBudget = Math.min(
+      maxMemoryBudget,
+      BASE_MEMORY_TOKEN_BUDGET + Math.floor(this.state.energy.earned / 200),
+    );
     const memoryMessages: Anthropic.MessageParam[] = this.state.memories.formatAsMessages(memoryBudget);
 
     // Mark last memory message for caching so system+memories prefix is a cache hit

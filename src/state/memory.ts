@@ -93,24 +93,42 @@ export class MemoryStore {
    * Format memories as user/assistant message pairs for conversation injection.
    * Score-ranked selection, chronological output. This IS the agent's persistent history.
    */
-  formatAsMessages(tokenBudget: number): MessagePair[] {
-    // Select highest-scored memories that fit budget (not most recent)
-    const ranked = [...this.memories]
-      .sort((a, b) => this.effectiveScore(b) - this.effectiveScore(a));
-
-    const selected: Memory[] = [];
+  formatAsMessages(tokenBudget: number, recentEpisodicFloor = 4): MessagePair[] {
     this.injectedIds = new Set();
-    let totalTokens = 0;
-    for (const m of ranked) {
-      if (totalTokens + m.tokenCost > tokenBudget) continue;  // skip if too large, try next
+    const selected: Memory[] = [];
+
+    // 1. Guaranteed floor: last N episodic memories, on top of tokenBudget.
+    //    Thought continuity — agent always knows what it was doing in recent cycles.
+    //    These do NOT count against tokenBudget so scored memories get their full allocation.
+    const recentEpisodics = [...this.memories]
+      .filter((m) => m.type === "episodic")
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, recentEpisodicFloor);
+
+    for (const m of recentEpisodics) {
       selected.push(m);
       this.injectedIds.add(m.id);
-      totalTokens += m.tokenCost;
-      m.accessCount++;  // track access for scoring boost
+      m.accessCount++;
       m.lastAccessed = Date.now();
     }
 
-    // Sort selected by creation time for conversation coherence
+    // 2. Fill tokenBudget with highest-scored memories not already selected.
+    //    Procedural and semantic get their full budget unaffected by the episodic floor.
+    const ranked = [...this.memories]
+      .filter((m) => !this.injectedIds.has(m.id))
+      .sort((a, b) => this.effectiveScore(b) - this.effectiveScore(a));
+
+    let scoredTokens = 0;
+    for (const m of ranked) {
+      if (scoredTokens + m.tokenCost > tokenBudget) continue;
+      selected.push(m);
+      this.injectedIds.add(m.id);
+      scoredTokens += m.tokenCost;
+      m.accessCount++;
+      m.lastAccessed = Date.now();
+    }
+
+    // Sort all selected by creation time for conversation coherence
     selected.sort((a, b) => a.createdAt - b.createdAt);
 
     const messages: MessagePair[] = [];
