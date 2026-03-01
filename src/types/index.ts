@@ -143,6 +143,10 @@ export interface Challenge {
   verifyScript: string;         // bash script for deterministic verification
   solvedBy: string[];           // agent IDs (for depletion)
   appearedAtCycle: number;      // when this challenge was created
+  // Cooperative pairing (optional)
+  cooperativeRole?: "producer" | "consumer";
+  cooperativeCollabId?: string; // shared ID linking producer and consumer
+  cooperativeSourceFile?: string; // file to copy (producer) / expect (consumer)
 }
 
 export interface ChallengeResult {

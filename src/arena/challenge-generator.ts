@@ -2273,6 +2273,79 @@ export class ChallengeGenerator {
     return { challenge, dataFiles };
   }
 
+  /**
+   * Generate a cooperative producer-consumer pair sharing a collab ID.
+   * Producer sorts a dataset and writes it to the agent's output dir.
+   * On producer solve the arena copies the output to /shared/collab/{collabId}/.
+   * Consumer reads /shared/collab/{collabId}/sorted.txt and computes the sum.
+   */
+  generateCooperativePair(globalCycle: number): { producer: GeneratedChallenge; consumer: GeneratedChallenge } {
+    const collabId = randomUUID().slice(0, 8);
+    const producerId = `c-${randomUUID().slice(0, 8)}`;
+    const consumerId = `c-${randomUUID().slice(0, 8)}`;
+    const numbers = generateNumbers(randomInt(3000, 5000), 1_000_000);
+
+    const producerVerify = `#!/bin/bash
+CDIR="/shared/challenges/${producerId}"
+ODIR="/workspace/output/${producerId}"
+EXPECTED=$(sort -n "$CDIR/numbers.txt")
+ACTUAL=$(cat "$ODIR/sorted.txt" 2>/dev/null)
+if [ "$EXPECTED" = "$ACTUAL" ]; then echo "PASS"; exit 0
+else echo "FAIL: output/${producerId}/sorted.txt — sort the numbers in $CDIR/numbers.txt numerically (one per line) and write to sorted.txt"; exit 1; fi`;
+
+    const consumerVerify = `#!/bin/bash
+COLLAB="/shared/collab/${collabId}/sorted.txt"
+ODIR="/workspace/output/${consumerId}"
+if [ ! -f "$COLLAB" ]; then
+  echo "FAIL: /shared/collab/${collabId}/sorted.txt not found"
+  exit 1
+fi
+EXPECTED=$(awk '{s+=$1} END {print s}' "$COLLAB")
+ACTUAL=$(cat "$ODIR/sum.txt" 2>/dev/null | tr -d '[:space:]')
+if [ "$ACTUAL" = "$EXPECTED" ]; then echo "PASS"; exit 0
+else echo "FAIL: output/${consumerId}/sum.txt — write the sum of all numbers in /shared/collab/${collabId}/sorted.txt"; exit 1; fi`;
+
+    const producer: GeneratedChallenge = {
+      challenge: {
+        id: producerId,
+        category: "computational",
+        difficulty: 3,
+        title: "Sort Dataset",
+        baseReward: DIFFICULTY_REWARDS[3]!,
+        expiresAtCycle: globalCycle + 25,
+        dataDir: `challenges/${producerId}`,
+        verifyScript: producerVerify,
+        solvedBy: [],
+        appearedAtCycle: globalCycle,
+        cooperativeRole: "producer",
+        cooperativeCollabId: collabId,
+        cooperativeSourceFile: "sorted.txt",
+      },
+      dataFiles: { "numbers.txt": numbers },
+    };
+
+    const consumer: GeneratedChallenge = {
+      challenge: {
+        id: consumerId,
+        category: "computational",
+        difficulty: 3,
+        title: "Sum Sorted Dataset",
+        baseReward: DIFFICULTY_REWARDS[3]!,
+        expiresAtCycle: globalCycle + 35,
+        dataDir: `challenges/${consumerId}`,
+        verifyScript: consumerVerify,
+        solvedBy: [],
+        appearedAtCycle: globalCycle,
+        cooperativeRole: "consumer",
+        cooperativeCollabId: collabId,
+        cooperativeSourceFile: "sorted.txt",
+      },
+      dataFiles: {},
+    };
+
+    return { producer, consumer };
+  }
+
   /** Generate a challenge at a random difficulty weighted toward mid-range. */
   generateWeighted(globalCycle: number): GeneratedChallenge {
     // Bell curve: more mid-difficulty challenges, fewer at extremes

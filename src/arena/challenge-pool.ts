@@ -16,6 +16,7 @@ export interface ChallengeAttemptResult {
   message: string;
   reward?: number;
   difficulty?: number;
+  cooperativeProduced?: { collabId: string; sourceFile: string };
 }
 
 interface ChallengePoolState {
@@ -78,11 +79,16 @@ export class ChallengePool {
       // Subsequent refreshes: stochastic trickle so agents can't predict timing.
       // Each tick has a 40% chance of adding challenges (0, 1, or 2).
       if (this.challenges.size < target && this._random() < 0.4) {
-        const count = this._random() < 0.5 ? 1 : 2;
-        let added = 0;
-        while (this.challenges.size < target && added < count) {
-          this.addChallenge(this.generator.generateWeighted(globalCycle));
-          added++;
+        if (this._random() < 0.15 && this.challenges.size + 2 <= target) {
+          // 15% of ticks: add a cooperative producer-consumer pair (only if room for both)
+          this.addCooperativePair(globalCycle);
+        } else {
+          const count = this._random() < 0.5 ? 1 : 2;
+          let added = 0;
+          while (this.challenges.size < target && added < count) {
+            this.addChallenge(this.generator.generateWeighted(globalCycle));
+            added++;
+          }
         }
       }
     }
@@ -161,12 +167,20 @@ export class ChallengePool {
         challenge.solvedBy.push(agentId);
         this.persistManifest();
 
+        const cooperativeProduced =
+          challenge.cooperativeRole === "producer" &&
+          challenge.cooperativeCollabId &&
+          challenge.cooperativeSourceFile
+            ? { collabId: challenge.cooperativeCollabId, sourceFile: challenge.cooperativeSourceFile }
+            : undefined;
+
         return {
           passed: true,
           message: `PASS: ${challengeId} solved. Reward: ${reward.toLocaleString()} TEQ ` +
             `(${Math.round(challenge.baseReward / 1000)}K base × ${depletion.toFixed(2)} depletion)`,
           reward,
           difficulty: challenge.difficulty,
+          cooperativeProduced,
         };
       } else {
         return { passed: false, message: output.trim() };
@@ -203,6 +217,13 @@ export class ChallengePool {
     } catch {
       // Non-critical
     }
+  }
+
+  /** Add a cooperative producer-consumer pair. */
+  private addCooperativePair(globalCycle: number): void {
+    const { producer, consumer } = this.generator.generateCooperativePair(globalCycle);
+    this.addChallenge(producer);
+    this.addChallenge(consumer);
   }
 
   /** Persist full pool state (including verify scripts) for resume. */
