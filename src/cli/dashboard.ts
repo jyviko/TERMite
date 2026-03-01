@@ -399,7 +399,7 @@ function drawCard(buf: string[], org: AgentData, r0: number, c0: number, colW: n
     if (d && typeof d === "object" && d !== null) {
       const lv = (d as AgentData).level;
       if (typeof lv === "number") {
-        parts.push(`${name[0]!.toUpperCase()}${lv.toFixed(1)}`);
+        parts.push(`${name[0]!.toUpperCase()}${lv.toFixed(2)}`);
       }
     }
   }

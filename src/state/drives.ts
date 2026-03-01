@@ -2,16 +2,17 @@ import { DRIVE_NAMES } from "../types/index.js";
 import type { CycleRecord, Drive, DriveName, DrivePhaseTracking, Memory } from "../types/index.js";
 import type { EnergyLedger } from "./energy.js";
 
+/** Minimum drive level — no drive ever fully dies. */
+const DRIVE_FLOOR = 0.01;
+
 function defaultDrive(name: DriveName): Drive {
   const configs: Record<DriveName, Omit<Drive, "name">> = {
-    // Explore starts active — agents should explore early
-    explore: { level: 0.5, threshold: 0.3, decayRate: 0.06, growthRate: 0.12 },
-    // Acquire starts balanced with explore — neither dominates initially
-    acquire: { level: 0.5, threshold: 0.3, decayRate: 0.05, growthRate: 0.15 },
-    // Grow activates on surplus + accumulated knowledge
-    grow: { level: 0.0, threshold: 0.4, decayRate: 0.04, growthRate: 0.12 },
-    // Coordinate activates when agent has solved tasks (has something to share)
-    coordinate: { level: 0.0, threshold: 0.4, decayRate: 0.04, growthRate: 0.08 },
+    // Explore + acquire start dominant — agents explore and earn early
+    explore:    { level: 0.40, threshold: 0.25, decayRate: 0.06, growthRate: 0.12 },
+    acquire:    { level: 0.40, threshold: 0.25, decayRate: 0.05, growthRate: 0.15 },
+    // Grow + coordinate start latent — activate through conditions
+    grow:       { level: 0.10, threshold: 0.25, decayRate: 0.04, growthRate: 0.12 },
+    coordinate: { level: 0.10, threshold: 0.25, decayRate: 0.04, growthRate: 0.08 },
   };
   return { name, ...configs[name] };
 }
@@ -25,6 +26,8 @@ export class DriveSystem {
   constructor(drives?: Record<DriveName, Drive>, phaseTracking?: DrivePhaseTracking) {
     this.drives = drives ?? DriveSystem.defaultDrives();
     this.phaseTracking = phaseTracking ?? { ...DEFAULT_PHASE_TRACKING };
+    // Ensure sum=1 invariant (handles legacy state and rounding)
+    this.normalize();
   }
 
   static defaultDrives(): Record<DriveName, Drive> {
@@ -40,14 +43,18 @@ export class DriveSystem {
     const coordinate = this.drives.coordinate;
 
     // ═══════════════════════════════════════════════════════════════
-    // PRIMARY CONDITIONS: each drive's individual growth/decay logic
+    // UPDATE DRIVES: each drive's pressure + post-fork phase transition
+    // After all pressures, normalize() enforces sum=1.
+    // When one drive rises, others are proportionally compressed.
     // ═══════════════════════════════════════════════════════════════
 
-    // ── Explore: rises on OUTCOME STAGNATION (treadmill detection) ──
-    // When recent cycles show the same outcomes repeating, the agent
-    // needs to try something different. Also rises when procedural
-    // memory dominates — crystallized knowledge means it's time for
-    // new territory.
+    const hasSplitHistory = memories.some(
+      (m) => m.type === "semantic" &&
+        (m.context === "Split" || m.context === "Origin"),
+    );
+    const hasPostSplitContext = hasSplitHistory || generation > 0;
+
+    // ── Explore: rises on OUTCOME STAGNATION ──
     const recent = energy.cycleHistory.slice(-5);
     const outcomes = new Set(recent.map((c) => c.outcome));
     const stagnant = recent.length >= 5 && outcomes.size <= 2;
@@ -55,122 +62,92 @@ export class DriveSystem {
     const proceduralHeavy = proceduralCount >= 5;
 
     if (stagnant || proceduralHeavy) {
-      explore.level = Math.min(1, explore.level + explore.growthRate);
+      explore.level += explore.growthRate;
     } else if (outcomes.size >= 3) {
-      // Diverse outcomes = already exploring, relax
-      explore.level = Math.max(0, explore.level - explore.decayRate);
+      explore.level -= explore.decayRate;
     }
 
-    // ── Acquire: rises with deficit, COUPLED TO EXPLORE ──
+    // ── Acquire: rises with energy deficit ──
     const deficit = 1 - energy.ratio;
     const explorePenalty = explore.level < 0.2 ? 0.5 : 1.0;
-    acquire.level = Math.min(1, acquire.level + acquire.growthRate * deficit * explorePenalty);
+    acquire.level += acquire.growthRate * deficit * explorePenalty;
     if (energy.ratio > 0.6) {
-      acquire.level = Math.max(0, acquire.level - acquire.decayRate);
+      acquire.level -= acquire.decayRate;
     }
 
-    // ── Grow: rises on profitability + accumulated knowledge ──
+    // ── Grow: rises on profitability, decays faster after forking ──
     const window = energy.cycleHistory.slice(-10);
-    const windowNet = window.length >= 3
+    const windowNet = window.length >= 1
       ? window.reduce((sum, c) => sum + c.net, 0)
       : -1;
-    const inheritableKnowledge = memories.filter(
-      (m) => m.type === "procedural" || m.type === "semantic",
-    ).length;
-
-    // [LINK: Acquire → Grow] Consecutive positive-net cycles accelerate
-    // The transition: sustained earning → conditions favor splitting
     const consecutivePositive = countTrailingPositive(window);
     const earningMomentum = Math.min(2.0, 1.0 + consecutivePositive * 0.15);
 
-    if (windowNet > 0 && inheritableKnowledge >= 3) {
-      grow.level = Math.min(1, grow.level + grow.growthRate * earningMomentum);
-    } else if (windowNet > 0) {
-      grow.level = Math.min(1, grow.level + grow.growthRate * 0.3 * earningMomentum);
+    if (windowNet > 0) {
+      grow.level += grow.growthRate * earningMomentum;
     } else {
-      grow.level = Math.max(0, grow.level - grow.decayRate);
+      grow.level -= grow.decayRate;
     }
 
-    // ── Coordinate: rises when agent has SOLVED tasks recently ──
+    // ── Coordinate: rises with recent successes ──
     const recentSuccesses = energy.cycleHistory.slice(-10)
       .filter((c) => c.outcome === "success").length;
 
-    // [LINK: Grow → Coordinate] Split history relaxes the activation gate.
-    // Having peers makes coordination relevant even with fewer successes.
-    const hasSplitHistory = memories.some(
-      (m) => m.type === "semantic" &&
-        (m.context === "Split" || m.context === "Origin"),
-    );
-    const hasPostSplitContext = hasSplitHistory || generation > 0;
     const coordinateGate = hasPostSplitContext
-      ? (recentSuccesses >= 1 && cycleCount >= 5)
-      : (recentSuccesses >= 2 && cycleCount >= 10);
+      ? (recentSuccesses >= 1 && cycleCount >= 2)
+      : (recentSuccesses >= 1 && cycleCount >= 3);
 
     if (coordinateGate) {
-      coordinate.level = Math.min(1, coordinate.level + coordinate.growthRate);
+      coordinate.level += coordinate.growthRate;
     } else {
-      coordinate.level = Math.max(0, coordinate.level - coordinate.decayRate);
+      coordinate.level -= coordinate.decayRate;
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // CROSS-DRIVE LINKS: phase transition signals
-    // Cycle: explore → acquire → grow → coordinate → explore
+    // CROSS-DRIVE LINKS: intentional phase transition signals
     // ═══════════════════════════════════════════════════════════════
 
-    // [LINK: Grow → Coordinate] Grow peak + split history → coordinate boost
+    // [LINK: Grow → Coordinate] Grow peak + split context → coordinate boost
     if (hasPostSplitContext && grow.level >= grow.threshold) {
-      coordinate.level = Math.min(1, coordinate.level + coordinate.growthRate * 0.3);
+      coordinate.level += coordinate.growthRate * 0.5;
     }
 
-    // [LINK: Coordinate → Explore] Prolonged coordination → exploration pressure
-    if (coordinate.level >= coordinate.threshold) {
-      this.phaseTracking.coordinateActiveCycles++;
-    } else {
-      // Coordinate dropped below threshold — boost explore if it was active long enough
-      if (this.phaseTracking.coordinateActiveCycles >= 3) {
-        explore.level = Math.min(1, explore.level + explore.growthRate * 0.5);
-      }
-      this.phaseTracking.coordinateActiveCycles = 0;
-    }
-    // Sustained coordination creates fatigue: explore rises, coordinate erodes
+    // Sustained coordination fatigue: explore rises, coordinate erodes
     if (this.phaseTracking.coordinateActiveCycles >= 5) {
       const fatigue = Math.min(
         0.08,
         (this.phaseTracking.coordinateActiveCycles - 4) * 0.02,
       );
-      explore.level = Math.min(1, explore.level + fatigue);
-      coordinate.level = Math.max(0, coordinate.level - fatigue);
-    }
-
-    // [LINK: Explore ← Coordinate feedback]
-    // Active coordination suppresses explore — found what you need through peers
-    if (coordinate.level >= coordinate.threshold && coordinate.level > explore.level) {
-      explore.level = Math.max(0, explore.level - explore.decayRate * 0.5);
+      explore.level += fatigue;
+      coordinate.level -= fatigue;
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // MUTUAL SUPPRESSION: non-adjacent drives inhibit each other
-    // The stronger of each non-adjacent pair suppresses the weaker.
-    // This prevents all four drives from saturating simultaneously.
+    // NORMALIZE: conserved quantity — sum of all drives = 1
+    // Replaces mutual suppression — competition is structural.
     // ═══════════════════════════════════════════════════════════════
-    const suppressionRate = 0.05;
+    this.normalize();
 
-    // explore ↔ grow (non-adjacent)
-    if (explore.level >= explore.threshold && grow.level >= grow.threshold) {
-      if (explore.level >= grow.level) {
-        grow.level = Math.max(0, grow.level - suppressionRate);
-      } else {
-        explore.level = Math.max(0, explore.level - suppressionRate);
+    // ── Phase tracking (on normalized values) ──
+    if (coordinate.level >= coordinate.threshold) {
+      this.phaseTracking.coordinateActiveCycles++;
+    } else {
+      if (this.phaseTracking.coordinateActiveCycles >= 3) {
+        explore.level += explore.growthRate * 0.5;
+        this.normalize();
       }
+      this.phaseTracking.coordinateActiveCycles = 0;
     }
+  }
 
-    // acquire ↔ coordinate (non-adjacent)
-    if (acquire.level >= acquire.threshold && coordinate.level >= coordinate.threshold) {
-      if (acquire.level >= coordinate.level) {
-        coordinate.level = Math.max(0, coordinate.level - suppressionRate);
-      } else {
-        acquire.level = Math.max(0, acquire.level - suppressionRate);
-      }
+  /** Clamp all drives to floor then scale so sum = 1. */
+  private normalize(): void {
+    for (const name of DRIVE_NAMES) {
+      this.drives[name].level = Math.max(DRIVE_FLOOR, this.drives[name].level);
+    }
+    const sum = DRIVE_NAMES.reduce((s, n) => s + this.drives[n].level, 0);
+    for (const name of DRIVE_NAMES) {
+      this.drives[name].level /= sum;
     }
   }
 

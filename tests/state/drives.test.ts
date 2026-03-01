@@ -23,25 +23,70 @@ function makeMemory(
   };
 }
 
+function driveSum(ds: DriveSystem): number {
+  return ds.drives.explore.level + ds.drives.acquire.level
+    + ds.drives.grow.level + ds.drives.coordinate.level;
+}
+
 describe("DriveSystem", () => {
-  it("initializes with default drives", () => {
+  it("initializes with default drives summing to 1", () => {
     const ds = new DriveSystem();
-    expect(ds.drives.explore.level).toBe(0.5);
-    expect(ds.drives.acquire.level).toBe(0.5);
-    expect(ds.drives.grow.level).toBe(0.0);
-    expect(ds.drives.coordinate.level).toBe(0.0);
+    expect(ds.drives.explore.level).toBeCloseTo(0.40);
+    expect(ds.drives.acquire.level).toBeCloseTo(0.40);
+    expect(ds.drives.grow.level).toBeCloseTo(0.10);
+    expect(ds.drives.coordinate.level).toBeCloseTo(0.10);
+    expect(driveSum(ds)).toBeCloseTo(1.0);
+  });
+
+  it("sum=1 invariant holds after every update", () => {
+    const ds = new DriveSystem();
+    const energy = new EnergyLedger({ budget: 10000 });
+    const h = "claude-haiku-4-5-20251001";
+    const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
+
+    // Several cycles with mixed outcomes
+    energy.burn(h, u);
+    energy.credit(500);
+    energy.endCycle(0, "success", "");
+    ds.update(energy, [], 1, 0);
+    expect(driveSum(ds)).toBeCloseTo(1.0);
+
+    energy.burn(h, u);
+    energy.endCycle(1, "failure", "");
+    ds.update(energy, [], 2, 0);
+    expect(driveSum(ds)).toBeCloseTo(1.0);
+
+    energy.burn(h, u);
+    energy.credit(200);
+    energy.endCycle(2, "partial", "");
+    ds.update(energy, [], 3, 0);
+    expect(driveSum(ds)).toBeCloseTo(1.0);
+  });
+
+  it("normalizes legacy state on construction", () => {
+    // Simulate old-format drives that sum to != 1
+    const ds = DriveSystem.fromJSON({
+      explore:    { name: "explore", level: 0.5, threshold: 0.3, decayRate: 0.06, growthRate: 0.12 },
+      acquire:    { name: "acquire", level: 0.65, threshold: 0.3, decayRate: 0.05, growthRate: 0.15 },
+      grow:       { name: "grow", level: 0.0, threshold: 0.4, decayRate: 0.04, growthRate: 0.12 },
+      coordinate: { name: "coordinate", level: 0.0, threshold: 0.4, decayRate: 0.04, growthRate: 0.08 },
+    });
+    expect(driveSum(ds)).toBeCloseTo(1.0);
+    // Floor prevents drives at exactly 0
+    expect(ds.drives.grow.level).toBeGreaterThan(0);
+    expect(ds.drives.coordinate.level).toBeGreaterThan(0);
   });
 
   it("explore grows on stagnation", () => {
     const ds = new DriveSystem();
-    ds.drives.explore.level = 0.5;
+    const initialExplore = ds.drives.explore.level;
     const energy = new EnergyLedger({ budget: 10000 });
     // Simulate 5 cycles with identical outcomes → stagnation
     for (let i = 0; i < 5; i++) {
       energy.endCycle(i, "failure", "");
     }
     ds.update(energy, [], 5, 0);
-    expect(ds.drives.explore.level).toBeGreaterThan(0.5);
+    expect(ds.drives.explore.level).toBeGreaterThan(initialExplore);
   });
 
   it("explore decays on diverse outcomes", () => {
@@ -55,182 +100,160 @@ describe("DriveSystem", () => {
     energy.endCycle(3, "uncertain", "");
     energy.endCycle(4, "success", "");
     ds.update(energy, [], 5, 0);
+    // After normalization with decay pressure, explore's share should drop
     expect(ds.drives.explore.level).toBeLessThan(0.8);
   });
 
   it("acquire growth scales with deficit", () => {
     const ds = new DriveSystem();
-    ds.drives.acquire.level = 0.3;
+    const initialAcquire = ds.drives.acquire.level;
     const energy = new EnergyLedger({ budget: 10000 });
     energy.burn("claude-haiku-4-5-20251001", { input: 8000, output: 0, cacheCreation: 0, cacheRead: 0 });
     ds.update(energy, [], 0, 0);
-    expect(ds.drives.acquire.level).toBeGreaterThan(0.3);
+    expect(ds.drives.acquire.level).toBeGreaterThan(initialAcquire);
   });
 
-  it("grow activates after consecutive positive cycles with knowledge", () => {
+  it("grow rises with profitability", () => {
     const ds = new DriveSystem();
+    const initialGrow = ds.drives.grow.level;
     const energy = new EnergyLedger({ budget: 10000, reserves: 1000, capacity: 10000 });
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
     energy.burn(h, u);
     energy.credit(500);
     energy.endCycle(0, "success", "");
-    energy.burn(h, u);
-    energy.credit(500);
-    energy.endCycle(1, "success", "");
-    energy.burn(h, u);
-    energy.credit(500);
-    energy.endCycle(2, "success", "");
 
-    ds.update(energy, [], 3, 0);
-    expect(ds.drives.grow.level).toBeGreaterThan(0);
+    ds.update(energy, [], 1, 0);
+    expect(ds.drives.grow.level).toBeGreaterThan(initialGrow);
   });
 
   it("grow accelerates with consecutive positive-net cycles", () => {
-    const ds = new DriveSystem();
-    const energy = new EnergyLedger({ budget: 100000, reserves: 50000, capacity: 100000 });
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
 
-    // 5 consecutive positive cycles
+    // Agent 1: 5 consecutive positive cycles (earning streak)
+    const ds = new DriveSystem();
+    const energy = new EnergyLedger({ budget: 100000, reserves: 50000, capacity: 100000 });
     for (let i = 0; i < 5; i++) {
       energy.burn(h, u);
       energy.credit(500);
       energy.endCycle(i, "success", "");
     }
+    ds.update(energy, [], 5, 0);
 
-    const knowledge = [
-      makeMemory("proc1", "", "procedural"),
-      makeMemory("proc2", "", "procedural"),
-      makeMemory("sem1", "", "semantic"),
-    ];
-
+    // Agent 2: broken streak (1 positive, 1 negative, 1 positive)
     const ds2 = new DriveSystem();
     const energy2 = new EnergyLedger({ budget: 100000, reserves: 50000, capacity: 100000 });
-    // Only 1 positive cycle (no streak)
     energy2.burn(h, u);
     energy2.credit(500);
     energy2.endCycle(0, "success", "");
     energy2.burn(h, u);
-    energy2.endCycle(1, "failure", ""); // break the streak
+    energy2.endCycle(1, "failure", "");
     energy2.burn(h, u);
     energy2.credit(500);
     energy2.endCycle(2, "success", "");
+    ds2.update(energy2, [], 3, 0);
 
-    ds.update(energy, knowledge, 5, 0);
-    ds2.update(energy2, knowledge, 3, 0);
-
-    // Agent with earning streak should have higher grow
+    // Streak agent should have higher grow share
     expect(ds.drives.grow.level).toBeGreaterThan(ds2.drives.grow.level);
   });
 
   it("coordinate activates with recent successes and maturity", () => {
     const ds = new DriveSystem();
     const energy = new EnergyLedger({ budget: 10000 });
-    // No successes → no coordinate
-    ds.update(energy, [], 5, 0);
-    expect(ds.drives.coordinate.level).toBe(0);
-
-    // Add successes to history
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
+
+    // No successes at cycle 5 → coordinate should decay
+    ds.update(energy, [], 5, 0);
+    const levelNoSuccesses = ds.drives.coordinate.level;
+
+    // Add successes to history
     for (let i = 0; i < 3; i++) {
       energy.burn(h, u);
       energy.credit(200);
       energy.endCycle(i, "success", "");
     }
 
-    ds.drives.coordinate.level = 0;
-    ds.update(energy, [], 10, 0);
-    expect(ds.drives.coordinate.level).toBeGreaterThan(0);
+    // Fresh system with successes at cycle 3 → coordinate gate opens
+    const ds2 = new DriveSystem();
+    ds2.update(energy, [], 3, 0);
+    expect(ds2.drives.coordinate.level).toBeGreaterThan(levelNoSuccesses);
   });
 
   it("coordinate gate relaxes with split history", () => {
-    const ds = new DriveSystem();
     const energy = new EnergyLedger({ budget: 10000 });
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
-
-    // Only 1 success (not enough for gen-0 gate of 2)
     energy.burn(h, u);
     energy.credit(200);
     energy.endCycle(0, "success", "");
 
-    // Gen-0 agent: coordinate should not activate with 1 success at cycle 5
-    ds.update(energy, [], 5, 0);
-    const levelGen0 = ds.drives.coordinate.level;
+    // Cycle 2: gen-0 gate needs cycleCount >= 3 → FAILS at cycle 2
+    const ds0 = new DriveSystem();
+    ds0.update(energy, [], 2, 0);
+    const levelGen0 = ds0.drives.coordinate.level;
 
-    // Gen-1 agent (post-split): coordinate should activate with 1 success at cycle 5
-    const ds2 = new DriveSystem();
-    ds2.update(energy, [], 5, 1);
-    const levelGen1 = ds2.drives.coordinate.level;
+    // Cycle 2: gen-1 gate needs cycleCount >= 2 → PASSES at cycle 2
+    const ds1 = new DriveSystem();
+    ds1.update(energy, [], 2, 1);
+    const levelGen1 = ds1.drives.coordinate.level;
 
     expect(levelGen1).toBeGreaterThan(levelGen0);
   });
 
-  it("non-adjacent drives suppress each other", () => {
+  it("normalization creates structural competition between drives", () => {
     const ds = new DriveSystem();
-    // Set explore and grow both above threshold
-    ds.drives.explore.level = 0.7;
-    ds.drives.grow.level = 0.6;
-
     const energy = new EnergyLedger({ budget: 10000 });
-    // Create stagnation to keep explore growing
-    for (let i = 0; i < 5; i++) {
-      energy.endCycle(i, "failure", "");
-    }
-    // Create positive net to keep grow growing
-    energy.credit(1000);
-    energy.endCycle(5, "success", "");
-    energy.credit(1000);
-    energy.endCycle(6, "success", "");
-    energy.credit(1000);
-    energy.endCycle(7, "success", "");
+    // Burn most energy → high deficit → acquire grows strongly
+    energy.burn("claude-haiku-4-5-20251001", { input: 9000, output: 0, cacheCreation: 0, cacheRead: 0 });
 
-    ds.update(energy, [], 8, 0);
+    const growBefore = ds.drives.grow.level;
+    ds.update(energy, [], 0, 0);
 
-    // Explore is stronger, so grow should be suppressed
-    // (explore had 0.7, grow had 0.6 — explore wins)
-    // Grow still grows from primary conditions but gets a -0.05 suppression
-    // The weaker of the non-adjacent pair gets suppressed
-    expect(ds.drives.explore.level).toBeGreaterThan(ds.drives.grow.level);
+    // Acquire grew due to deficit; normalization compressed grow
+    expect(ds.drives.acquire.level).toBeGreaterThan(ds.drives.grow.level);
+    // Grow's share shrank because acquire took more of the budget
+    expect(ds.drives.grow.level).toBeLessThan(growBefore);
+    expect(driveSum(ds)).toBeCloseTo(1.0);
   });
 
   it("coordinate exhaustion boosts explore", () => {
     const ds = new DriveSystem();
     ds.drives.coordinate.level = 0.6;
-    ds.drives.explore.level = 0.3;
+    ds.drives.explore.level = 0.2;
 
     const energy = new EnergyLedger({ budget: 10000 });
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
 
-    // Create successes so coordinate stays active
+    // Create successes so coordinate gate stays open
     for (let i = 0; i < 3; i++) {
       energy.burn(h, u);
       energy.credit(200);
       energy.endCycle(i, "success", "");
     }
 
-    // Run a few cycles — coordinate suppresses explore initially (link 4)
+    // Run updates to accumulate coordinateActiveCycles
     for (let i = 0; i < 4; i++) {
       ds.update(energy, [], 15, 0);
     }
     const exploreBefore = ds.drives.explore.level;
 
-    // Run more cycles — fatigue kicks in at coordinateActiveCycles >= 5
+    // Run more — fatigue kicks in at coordinateActiveCycles >= 5
     for (let i = 0; i < 4; i++) {
       ds.update(energy, [], 15, 0);
     }
     const exploreAfter = ds.drives.explore.level;
 
-    // After fatigue kicks in, explore should be rising relative to its suppressed level
     expect(exploreAfter).toBeGreaterThan(exploreBefore);
   });
 
   it("activeDrives returns drives above threshold", () => {
     const ds = new DriveSystem();
     const active = ds.activeDrives();
+    // explore (0.40) and acquire (0.40) are above threshold (0.25)
+    // grow (0.10) and coordinate (0.10) are below threshold (0.25)
     expect(active.length).toBe(2);
     expect(active.map((d) => d.name)).toContain("explore");
     expect(active.map((d) => d.name)).toContain("acquire");
@@ -254,7 +277,6 @@ describe("DriveSystem", () => {
     const ds = new DriveSystem();
     ds.drives.explore.level = 0.42;
 
-    // Simulate some phase tracking state
     const energy = new EnergyLedger({ budget: 10000 });
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
@@ -264,13 +286,15 @@ describe("DriveSystem", () => {
       energy.endCycle(i, "success", "");
     }
     ds.drives.coordinate.level = 0.5; // above threshold
-    ds.update(energy, [], 10, 0); // should increment coordinateActiveCycles
+    ds.update(energy, [], 10, 0);
 
     const json = ds.toJSON();
     const tracking = ds.phaseTrackingToJSON();
     const restored = DriveSystem.fromJSON(json, tracking);
 
-    expect(restored.drives.explore.level).toBe(ds.drives.explore.level);
+    // Levels are preserved (constructor normalizes, but they already sum to 1)
+    expect(restored.drives.explore.level).toBeCloseTo(ds.drives.explore.level);
+    expect(driveSum(restored)).toBeCloseTo(1.0);
     expect(restored.phaseTrackingToJSON().coordinateActiveCycles).toBe(
       tracking.coordinateActiveCycles,
     );
@@ -280,9 +304,9 @@ describe("DriveSystem", () => {
     const ds = new DriveSystem();
     ds.drives.explore.level = 0.42;
     const json = ds.toJSON();
-    // Old format: no phase tracking
     const restored = DriveSystem.fromJSON(json);
-    expect(restored.drives.explore.level).toBe(0.42);
+    // Constructor normalizes the restored drives
+    expect(driveSum(restored)).toBeCloseTo(1.0);
     expect(restored.phaseTrackingToJSON().coordinateActiveCycles).toBe(0);
   });
 });
