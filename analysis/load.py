@@ -50,26 +50,33 @@ def load_run(run_dir: str | Path) -> dict:
     if ledger_path.exists():
         run["pool_ledger"] = list(iter_jsonl(ledger_path))
 
+    def load_json_file(path, default=None):
+        try:
+            text = path.read_text().strip()
+            return json.loads(text) if text else (default if default is not None else {})
+        except (json.JSONDecodeError, OSError):
+            return default if default is not None else {}
+
     # Pool summary
     pool_path = shared / "_pool.json"
     if pool_path.exists():
-        run["pool_summary"] = json.loads(pool_path.read_text())
+        run["pool_summary"] = load_json_file(pool_path)
 
     # Census
     census_path = shared / "_census.json"
     if census_path.exists():
-        data = json.loads(census_path.read_text())
+        data = load_json_file(census_path)
         run["census"] = data.get("agents", [])
 
     # Challenge manifest
     manifest_path = shared / "challenges" / "_manifest.json"
     if manifest_path.exists():
-        run["challenges"] = json.loads(manifest_path.read_text())
+        run["challenges"] = load_json_file(manifest_path, default=[])
 
     # Challenge pool state (includes evicted challenges if still present)
     state_path = shared / "challenges" / "_state.json"
     if state_path.exists():
-        run["challenge_state"] = json.loads(state_path.read_text())
+        run["challenge_state"] = load_json_file(state_path)
 
     # Per-agent data
     for agent_dir in sorted(root.iterdir()):
@@ -81,10 +88,17 @@ def load_run(run_dir: str | Path) -> dict:
         state_path = agent_dir / "state.json"
         entry_path = agent_dir / "entry.json"
 
+        def load_json(path):
+            try:
+                text = path.read_text().strip()
+                return json.loads(text) if text else {}
+            except (json.JSONDecodeError, OSError):
+                return {}
+
         agent = {
             "metrics": list(iter_jsonl(metrics_path)) if metrics_path.exists() else [],
-            "state": json.loads(state_path.read_text()) if state_path.exists() else {},
-            "entry": json.loads(entry_path.read_text()) if entry_path.exists() else {},
+            "state": load_json(state_path) if state_path.exists() else {},
+            "entry": load_json(entry_path) if entry_path.exists() else {},
         }
         run["agents"][agent_id] = agent
 
