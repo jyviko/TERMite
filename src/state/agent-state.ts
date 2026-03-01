@@ -1,5 +1,5 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentMode, AgentState } from "../types/index.js";
 import { EnergyLedger } from "./energy.js";
@@ -78,8 +78,13 @@ export class AgentStateManager {
 
   async save(path: string): Promise<void> {
     const data = this.toJSON();
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify(data, null, 2), "utf-8");
+    const dir = dirname(path);
+    await mkdir(dir, { recursive: true });
+    // Atomic write: write to temp file then rename, so a crash mid-write
+    // never leaves a truncated state.json.
+    const tmp = join(dir, `.state.${process.pid}.tmp`);
+    await writeFile(tmp, JSON.stringify(data, null, 2), "utf-8");
+    await rename(tmp, path);
   }
 
   static async load(path: string): Promise<AgentStateManager> {
