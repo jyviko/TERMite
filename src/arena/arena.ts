@@ -136,9 +136,12 @@ export class Arena {
     }, 0);
     const avgMultiplier = totalMultiplier / entries.length;
 
-    // sqrt(n) makes each additional agent contribute less regen than the last.
-    // 8 Sonnet agents: sqrt(8) × 50K × 3.0 ≈ 424K/tick — viable but scarce.
-    // 80 agents: sqrt(80) × 50K × 3.0 ≈ 1.34M/tick — heavy competition.
+    // sqrt(n) makes each additional agent contribute less regen than the last,
+    // while withdrawal pressure scales linearly — this creates carrying capacity.
+    // 4 Haiku agents:  sqrt(4)  × 10K × 1.0 =  20K/tick — mild pressure
+    // 8 Haiku agents:  sqrt(8)  × 10K × 1.0 =  28K/tick — meaningful scarcity
+    // 8 Sonnet agents: sqrt(8)  × 10K × 3.0 =  85K/tick — viable but scarce
+    // 20 Haiku agents: sqrt(20) × 10K × 1.0 =  45K/tick — heavy competition
     const scaledRegen = Math.floor(BASE_REGEN_PER_AGENT * Math.sqrt(entries.length) * avgMultiplier);
     this.teqPool.setRegenRate(scaledRegen);
   }
@@ -156,9 +159,9 @@ export class Arena {
     this.challengePool = new ChallengePool(sharedDir, this.challengeGenerator, this.rng?.fork());
 
     // Keep a stable "latest" symlink pointing to this run
-    const latestLink = join(this.config.workspaceRoot, "latest");
+    const latestLink = resolve(join(this.config.workspaceRoot, "latest"));
     try { unlinkSync(latestLink); } catch { /* didn't exist or wasn't a symlink */ }
-    symlinkSync(this.runDir, latestLink);
+    symlinkSync(resolve(this.runDir), latestLink);
 
     console.log(`Run directory: ${this.runDir}`);
 
