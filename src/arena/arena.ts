@@ -76,6 +76,7 @@ const SIGNAL_COST = 500;         // TEQ cost per signal
 const SIGNAL_MAX_LENGTH = 256;   // Max message length
 const SIGNAL_TTL_MS = 5 * 60_000; // Signals expire after 5 minutes
 const SPLIT_REPORT_CYCLE_THRESHOLD = 10; // Cycles before split report is sent
+const ROYALTY_RATE = 0.05;       // Fraction of a solve bounty distributed to signal contributors
 
 export class Arena {
   private agents = new Map<string, AgentEntry>();
@@ -276,7 +277,13 @@ export class Arena {
         continue; // Corrupted entry.json — skip agent
       }
 
-      const state = await AgentStateManager.load(statePath);
+      let state: AgentStateManager;
+      try {
+        state = await AgentStateManager.load(statePath);
+      } catch {
+        skipped++;
+        continue; // Corrupted state.json — skip agent
+      }
 
       // Load cycle history from metrics.jsonl (SSoT for per-cycle records)
       const metricsPath = join(this.runDir, dir, "metrics.jsonl");
@@ -670,10 +677,65 @@ echo "__VERIFY__"`;
           reward: result.reward,
           cyclesSinceAppeared: 0,
         });
+
+        // Distribute royalty to signal contributors (non-blocking)
+        this.distributeSignalRoyalty(result.reward).catch(() => {});
+
+        // Cooperative producer: copy output file to shared collab dir
+        if (result.cooperativeProduced) {
+          const { collabId, sourceFile } = result.cooperativeProduced;
+          const srcPath = join(this.runDir, id, "workspace", "output", trimmed, sourceFile);
+          const dstDir = join(this.runDir, "shared", "collab", collabId);
+          try {
+            mkdirSync(dstDir, { recursive: true });
+            copyFileSync(srcPath, join(dstDir, sourceFile));
+            console.log(`[ARENA] Collab: ${id} produced → shared/collab/${collabId}/${sourceFile}`);
+          } catch {
+            // Non-fatal: agent may not have written the file yet (solve was partial)
+          }
+        }
       }
 
       return result.message;
     });
+  }
+
+  /**
+   * Distribute a royalty funded from the TEQ pool to agents with active signals.
+   * Each contributing agent's share is proportional to their signal count.
+   */
+  private async distributeSignalRoyalty(solveBounty: number): Promise<void> {
+    const now = Date.now();
+    const activeSignals = this.signals.filter((s) => s.expiresAt > now);
+    if (activeSignals.length === 0) return;
+
+    const signalCounts = new Map<string, number>();
+    for (const s of activeSignals) {
+      signalCounts.set(s.from, (signalCounts.get(s.from) ?? 0) + 1);
+    }
+
+    const totalRoyalty = await this.teqPool.withdraw(
+      Math.floor(solveBounty * ROYALTY_RATE),
+      "royalty",
+    );
+    if (totalRoyalty === 0) return;
+
+    const totalSignals = activeSignals.length;
+    let uncredited = totalRoyalty;
+    for (const [agentId, count] of signalCounts) {
+      const share = Math.floor(totalRoyalty * count / totalSignals);
+      if (share === 0) continue;
+      const contributor = this.agents.get(agentId);
+      if (!contributor || !contributor.state.active) continue;
+      contributor.state.energy.creditFromPool(share);
+      uncredited -= share;
+      console.log(`[ARENA] Royalty: ${agentId} ← ${share.toLocaleString()} TEQ (signal contributor)`);
+    }
+
+    // Return any unspent royalty (dead contributors, floor rounding) to the pool
+    if (uncredited > 0) {
+      this.teqPool.deposit(uncredited, "royalty-unspent");
+    }
   }
 
   private async handleForkRequest(id: string, directive?: string): Promise<string> {
