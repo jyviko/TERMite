@@ -6,18 +6,16 @@ import { DIFFICULTY_EXPECTED_COST } from "../arena/challenge-generator.js";
 export interface ResolveResult {
   outcome: Outcome;
   lesson: string;
-  goalRelevance: number;
+  value: number;
   energyJustified: boolean;
-  goalComplete: boolean;
   usage: TokenUsage;
 }
 
 export const RESOLVE_ERROR_DEFAULT: ResolveResult = {
   outcome: "uncertain",
   lesson: "",
-  goalRelevance: 0,
+  value: 0,
   energyJustified: false,
-  goalComplete: false,
   usage: ZERO_USAGE,
 };
 
@@ -30,9 +28,8 @@ export function parseResolveResponse(text: string): Omit<ResolveResult, "usage">
     return {
       outcome: validateOutcome(parsed.outcome),
       lesson: typeof parsed.lesson === "string" ? parsed.lesson : "",
-      goalRelevance: clamp(Number(parsed.value ?? parsed.goalRelevance) || 0, 0, 1),
+      value: clamp(Number(parsed.value ?? parsed.goalRelevance) || 0, 0, 1),
       energyJustified: parsed.energyJustified === true || parsed.energy_justified === true,
-      goalComplete: parsed.goalComplete === true || parsed.goal_complete === true,
     };
   } catch {
     return RESOLVE_ERROR_DEFAULT;
@@ -77,7 +74,6 @@ export function lookupBountyMultiplier(model: string): number {
  * This forces agents to seek productive work or conserve energy.
  */
 export async function computeIncome(
-  _goalRelevance: number,
   _outcome: Outcome,
   taskReward: number | null,
   pool: TEQPool,

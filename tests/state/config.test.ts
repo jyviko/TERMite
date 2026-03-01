@@ -5,7 +5,7 @@ describe("Config", () => {
   it("initializes with default prompts", () => {
     const c = new Config();
     expect(c.systemPrompt).toContain("energy");
-    expect(c.resolvePrompt).toContain("accomplish");
+    expect(c.resolvePrompt).toContain("worth the cost");
     expect(c.memorizePrompt).toContain("worth keeping");
     expect(c.version).toBe(0);
   });

@@ -158,36 +158,40 @@ describe("DriveSystem", () => {
     expect(ds.drives.grow.level).toBeGreaterThan(ds2.drives.grow.level);
   });
 
-  it("coordinate activates with recent successes and maturity", () => {
+  it("coordinate activates when grow exceeds threshold and agent is mature", () => {
     const ds = new DriveSystem();
-    const energy = new EnergyLedger({ budget: 10000 });
+    const energy = new EnergyLedger({ budget: 100000, reserves: 50000, capacity: 100000 });
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
 
-    // No successes at cycle 5 → coordinate should decay
+    // No profitable cycles → grow stays low → coordinate should decay
     ds.update(energy, [], 5, 0);
-    const levelNoSuccesses = ds.drives.coordinate.level;
+    const levelNoGrow = ds.drives.coordinate.level;
 
-    // Add successes to history
-    for (let i = 0; i < 3; i++) {
+    // Profitable cycles push grow above threshold
+    for (let i = 0; i < 10; i++) {
       energy.burn(h, u);
-      energy.credit(200);
-      energy.endCycle(i, "success", "");
+      energy.credit(5000);
+      energy.endCycle(i, "partial", "");
     }
 
-    // Fresh system with successes at cycle 3 → coordinate gate opens
+    // Fresh system with profitable history → grow pressure opens coordinate gate
     const ds2 = new DriveSystem();
-    ds2.update(energy, [], 3, 0);
-    expect(ds2.drives.coordinate.level).toBeGreaterThan(levelNoSuccesses);
+    ds2.update(energy, [], 10, 0);
+    expect(ds2.drives.coordinate.level).toBeGreaterThan(levelNoGrow);
   });
 
   it("coordinate gate relaxes with split history", () => {
-    const energy = new EnergyLedger({ budget: 10000 });
+    const energy = new EnergyLedger({ budget: 100000, reserves: 50000, capacity: 100000 });
     const h = "claude-haiku-4-5-20251001";
     const u = { input: 100, output: 0, cacheCreation: 0, cacheRead: 0 };
-    energy.burn(h, u);
-    energy.credit(200);
-    energy.endCycle(0, "success", "");
+
+    // Profitable cycles to push grow above threshold
+    for (let i = 0; i < 10; i++) {
+      energy.burn(h, u);
+      energy.credit(5000);
+      energy.endCycle(i, "partial", "");
+    }
 
     // Cycle 2: gen-0 gate needs cycleCount >= 3 → FAILS at cycle 2
     const ds0 = new DriveSystem();

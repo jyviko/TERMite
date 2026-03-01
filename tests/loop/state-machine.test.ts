@@ -422,7 +422,7 @@ describe("AgentStateMachine", () => {
     // Find first resolve and memorize post-turn calls by message content
     const resolveMsg = capturedMessages
       .map((msgs) => lastUserText(msgs))
-      .find((t) => t.includes("accomplish"));
+      .find((t) => t.includes("worth the cost"));
     const memorizeMsg = capturedMessages
       .map((msgs) => lastUserText(msgs))
       .find((t) => t.includes("worth keeping"));

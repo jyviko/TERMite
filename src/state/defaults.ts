@@ -6,16 +6,16 @@ Between cycles, context resets. Only memories persist.
 
 Your workspace contains tools and data. Use them.`;
 
-export const DEFAULT_RESOLVE_PROMPT = `What did this cycle actually accomplish?
+export const DEFAULT_RESOLVE_PROMPT = `Was this cycle worth the cost?
 
-Goal: {goal}
 What happened:
 {actions}
 Cost: {cycleCost} TEQ
 {stateBlock}
 
-Be honest. Talking about doing something is not doing it.
-Tool errors and empty results mean failure, not progress.
+Judge on evidence. What did the agent actually produce or learn?
+Tool errors and empty results are not progress.
+Use "uncertain" only when you genuinely cannot tell if work was completed.
 
 Bonus factors (add 0.1-0.3 to value for each that applies):
 - Created a new reusable tool or script
@@ -28,8 +28,7 @@ Respond JSON:
   "outcome": "success|partial|failure|uncertain",
   "value": 0.0-1.0,
   "energyJustified": true|false,
-  "lesson": "one concrete thing learned — include file paths, commands, or errors",
-  "goalComplete": true|false
+  "lesson": "one concrete thing learned — include file paths, commands, or errors"
 }`;
 
 export const DEFAULT_MEMORIZE_PROMPT = `What from this cycle is worth keeping?

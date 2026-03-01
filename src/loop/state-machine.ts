@@ -112,7 +112,6 @@ export class AgentStateMachine {
     // 1. Resolve — post-turn in the agentic loop conversation (cached prefix)
     yield { type: "phase_change", phase: "resolving" };
     const resolveMessage = this.state.config.resolvePrompt
-      .replace("{goal}", goal)
       .replace("{actions}", actions)
       .replace("{cycleCost}", String(this.state.energy.currentCycleCost))
       .replace("{stateBlock}", stateBlock);
@@ -128,7 +127,7 @@ export class AgentStateMachine {
 
     // Update cycle context from resolve
     this.cycleCtx.outcome = resolveResult.outcome;
-    this.cycleCtx.relevance = resolveResult.goalRelevance;
+    this.cycleCtx.relevance = resolveResult.value;
 
     // 2. Store cycle as user/agent memory pair (SHORT TERM — accumulates)
     const context = `Cycle ${this.state.cycleCount}. Goal: ${goal}. Energy: ${this.state.energy.remaining}/${this.state.energy.capacity}`;
@@ -140,7 +139,6 @@ export class AgentStateMachine {
 
     // 3. Compute and credit income
     const income = await computeIncome(
-      resolveResult.goalRelevance,
       resolveResult.outcome,
       this.taskReward,
       this.teqPool,

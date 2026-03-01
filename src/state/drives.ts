@@ -89,13 +89,10 @@ export class DriveSystem {
       grow.level -= grow.decayRate;
     }
 
-    // ── Coordinate: rises with recent successes ──
-    const recentSuccesses = energy.cycleHistory.slice(-10)
-      .filter((c) => c.outcome === "success").length;
-
+    // ── Coordinate: rises when grow is sustained above threshold ──
     const coordinateGate = hasPostSplitContext
-      ? (recentSuccesses >= 1 && cycleCount >= 2)
-      : (recentSuccesses >= 1 && cycleCount >= 3);
+      ? (grow.level >= grow.threshold && cycleCount >= 2)
+      : (grow.level >= grow.threshold && cycleCount >= 3);
 
     if (coordinateGate) {
       coordinate.level += coordinate.growthRate;
@@ -167,7 +164,7 @@ export class DriveSystem {
     const goals: Record<DriveName, string> = {
       explore: "Unmapped territory detected.",
       acquire: "Energy deficit.",
-      grow: "Conditions favor division.",
+      grow: "Sustained surplus.",
       coordinate: "Other agents detected.",
     };
     return goals[drive.name];
