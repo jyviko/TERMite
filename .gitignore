@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.agent-files/
+.DS_Store
+saves/
+*.log
+.env
+
+.pnp.*
+.yarn/install-state.gz
+arena-workspace/
+.claude-o/
+worktrees/
+*.pyc
+__pycache__/
+viewer/
+docs/

@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// description: census - Census of agents and their states. No input needed.
+const fs = require("fs");
+try {
+  const data = JSON.parse(fs.readFileSync("/shared/_census.json", "utf-8"));
+  const lines = ["CENSUS (updated " + data.updated + ")", ""];
+  lines.push("#     ID              Active  Energy  Level  Cycles  Config  Streak  Gen  Source");
+  lines.push("----  --------------  ------  ------  -----  ------  ------  ------  ---  --------------");
+  data.agents.forEach(function(o, i) {
+    lines.push([
+      String(i + 1).padStart(4),
+      o.id.padEnd(14),
+      (o.active ? "YES" : "NO").padEnd(6),
+      (o.energyPct + "%").padStart(6),
+      String(o.level).padStart(5),
+      String(o.cycleCount).padStart(6),
+      ("v" + o.configVersion).padStart(6),
+      String(o.streak).padStart(6),
+      String(o.generation != null ? o.generation : "?").padStart(3),
+      (o.sourceId || "-").padEnd(14),
+    ].join("  "));
+  });
+  console.log(lines.join("\n"));
+} catch (e) {
+  console.log("Census not available yet: " + e.message);
+}
